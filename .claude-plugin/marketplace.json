@@ -1,0 +1,13 @@
+{
+  "name": "coworker",
+  "owner": {
+    "name": "LeeShinYeoung"
+  },
+  "plugins": [
+    {
+      "name": "coworker",
+      "source": "./",
+      "description": "Skills that hand work to coworker: record a problem (issue), decide a direction (discuss), file a PRD (prd)"
+    }
+  ]
+}
