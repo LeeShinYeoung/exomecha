@@ -181,6 +181,99 @@ func TestHeadAndIsAncestor(t *testing.T) {
 	}
 }
 
+func TestBaseFile(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n", "conf/a.txt": "base\n"})
+	gittest.Commit(t, f.origin, "feature", "main", map[string]string{"conf/a.txt": "feature\n", "conf/b.txt": "feature\n"})
+
+	wt, err := f.git.OpenBranch(t.Context(), "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wt.Remove()
+	if got, ok, err := wt.BaseFile(t.Context(), "conf/a.txt"); err != nil || !ok || got != "base\n" {
+		t.Errorf("BaseFile(conf/a.txt) = %q, %v, %v, want the base branch's copy", got, ok, err)
+	}
+	if got, ok, err := wt.BaseFile(t.Context(), "conf/b.txt"); err != nil || ok {
+		t.Errorf("BaseFile(conf/b.txt) = %q, %v, %v, want nothing for a file only the branch has", got, ok, err)
+	}
+	if got, ok, err := wt.BaseFile(t.Context(), "conf/missing.txt"); err != nil || ok {
+		t.Errorf("BaseFile(conf/missing.txt) = %q, %v, %v, want nothing for a file no branch has", got, ok, err)
+	}
+}
+
+func TestBaseFileOfADirectoryIsNoFile(t *testing.T) {
+	f := setup(t, map[string]string{"conf/a.txt": "base\n"})
+	wt, err := f.git.OpenBase(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wt.Remove()
+	if got, ok, err := wt.BaseFile(t.Context(), "conf"); err != nil || ok {
+		t.Errorf("BaseFile(conf) = %q, %v, %v, want nothing for a directory", got, ok, err)
+	}
+}
+
+func TestChangesKeepsNonASCIINames(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n"})
+	wt, err := f.git.OpenBase(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wt.Remove()
+	writeFile(t, filepath.Join(wt.Dir, "한글.txt"), "new\n")
+
+	if got, err := wt.Changes(t.Context()); err != nil || got != "?? 한글.txt" {
+		t.Errorf("Changes = %q, %v", got, err)
+	}
+}
+
+// git runs the command named in core.fsmonitor on every status. Such a command must not find
+// the token in its environment: only the calls that talk to GitHub carry it.
+func TestStatusDoesNotCarryTheToken(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n"})
+	wt, err := f.git.OpenBase(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wt.Remove()
+	dump := filepath.Join(t.TempDir(), "env")
+	monitor := filepath.Join(t.TempDir(), "fsmonitor")
+	if err := os.WriteFile(monitor, []byte("#!/bin/sh\nenv > '"+dump+"'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, wt.Dir, "config", "core.fsmonitor", monitor)
+
+	if _, err := wt.HasChanges(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	env := readFile(t, dump)
+	if strings.Contains(env, "AUTHORIZATION") || strings.Contains(env, "extraheader") {
+		t.Errorf("a command git status started saw the auth header:\n%s", env)
+	}
+}
+
+// coworker's own push carries the token in its environment, so it must not run the project's hooks.
+func TestPushDoesNotRunProjectHooks(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n"})
+	wt, err := f.git.NewBranch(t.Context(), "coworker/task-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wt.Remove()
+	hooks := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hooks, "pre-push"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gittest.Run(t, wt.Dir, "config", "core.hooksPath", hooks)
+	writeFile(t, filepath.Join(wt.Dir, "new.txt"), "new\n")
+	gittest.CommitAll(t, wt.Dir, "new work")
+
+	if err := wt.Push(t.Context()); err != nil {
+		t.Fatalf("Push ran the project's pre-push hook: %v", err)
+	}
+}
+
 func TestStartMergeConflict(t *testing.T) {
 	f := setup(t, map[string]string{"한글.txt": "base\n", "gone.txt": "base\n"})
 	gittest.Commit(t, f.origin, "feature", "main", map[string]string{"한글.txt": "feature\n", "gone.txt": "feature\n"})

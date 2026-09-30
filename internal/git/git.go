@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -43,20 +44,29 @@ func (g *Git) repoDir() string { return filepath.Join(g.root, "repo") }
 // dead connection would otherwise hold mu and stall every worker that needs a worktree.
 var lowSpeedTime = "30"
 
-// The token goes in as an auth header through env vars on every call, never into .git/config or argv.
+// The token goes in as an auth header through env vars, never into .git/config or argv. Anything
+// git starts inherits those env vars, so only the commands that talk to GitHub get the header,
+// and none of these calls run the project's hooks. The AI's own git commands do not come through
+// here, and the project's commit checks still run on them.
 func (g *Git) run(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_CONFIG_COUNT=3",
-		"GIT_CONFIG_KEY_0=http.https://github.com/.extraheader",
-		"GIT_CONFIG_VALUE_0="+g.header,
-		"GIT_CONFIG_KEY_1=http.lowSpeedLimit",
-		"GIT_CONFIG_VALUE_1=1000",
-		"GIT_CONFIG_KEY_2=http.lowSpeedTime",
-		"GIT_CONFIG_VALUE_2="+lowSpeedTime,
-		"GIT_TERMINAL_PROMPT=0",
-	)
+	config := []string{
+		"http.lowSpeedLimit", "1000",
+		"http.lowSpeedTime", lowSpeedTime,
+		"core.hooksPath", os.DevNull,
+		// File names come out as they are instead of quoted byte by byte.
+		"core.quotePath", "false",
+	}
+	switch args[0] {
+	case "clone", "fetch", "push":
+		config = append(config, "http.https://github.com/.extraheader", g.header)
+	}
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_COUNT="+strconv.Itoa(len(config)/2))
+	for i := 0; i < len(config); i += 2 {
+		n := strconv.Itoa(i / 2)
+		cmd.Env = append(cmd.Env, "GIT_CONFIG_KEY_"+n+"="+config[i], "GIT_CONFIG_VALUE_"+n+"="+config[i+1])
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

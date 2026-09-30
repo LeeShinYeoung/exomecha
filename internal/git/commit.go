@@ -7,12 +7,19 @@ import (
 	"strings"
 )
 
-func (w *Worktree) HasChanges(ctx context.Context) (bool, error) {
+// Changes lists what git sees as changed or untracked, one path per line. It is empty for a clean tree.
+func (w *Worktree) Changes(ctx context.Context) (string, error) {
 	out, err := w.git.run(ctx, w.Dir, "status", "--porcelain")
+	// Not TrimSpace: a line for an unstaged change starts with a space.
+	return strings.TrimRight(out, "\n"), err
+}
+
+func (w *Worktree) HasChanges(ctx context.Context) (bool, error) {
+	out, err := w.Changes(ctx)
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(out) != "", nil
+	return out != "", nil
 }
 
 func (w *Worktree) Head(ctx context.Context) (string, error) {

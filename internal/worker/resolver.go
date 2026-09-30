@@ -61,12 +61,21 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
-	conflicts, err := wt.StartMerge(ctx)
+	// The branch already has everything on the base branch. Leave before setup runs for nothing.
+	if upToDate, err := wt.IsAncestor(ctx, r.Git.BaseRef(), before); err != nil || upToDate {
+		return err
+	}
+	// Setup runs before the merge. Conflict markers in a manifest or lockfile would break an install.
+	ranSetup, problem, err := setup(ctx, wt, r.Git.BaseRef(), n)
 	if err != nil {
 		return err
 	}
-	if merging, err := wt.MergeInProgress(ctx); err != nil || !merging {
-		return err // the branch already has everything on the base branch
+	if problem != "" {
+		return toStuck(ctx, r.GitHub, n, label.Review, label.Review, problem)
+	}
+	conflicts, err := wt.StartMerge(ctx)
+	if err != nil {
+		return err
 	}
 
 	comments, err := issueComments(ctx, r.GitHub, n)
@@ -79,6 +88,9 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	}
 	var b strings.Builder
 	b.WriteString(taskText(task) + comments + prd)
+	if ranSetup {
+		b.WriteString(setupNote + " It ran before the merge started.\n\n")
+	}
 	fmt.Fprintf(&b, "## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())
 	if len(conflicts) == 0 {
 		b.WriteString("None. The merge only needs to be committed.\n")

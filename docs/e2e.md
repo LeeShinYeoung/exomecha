@@ -38,6 +38,7 @@ In the practice repository, in Claude Code:
 - `/coworker:issue` with a real problem from the project. A `type:problem` issue appears with Problem and Investigation notes, and no solution.
 - `/coworker:discuss <problem>`. The problem gets one comment with Direction, Re-checked on, Options considered, Decisions made, Open questions.
 - `/coworker:prd <problem>`. Check the plan file before approving: every ledger row is closed, and the draft has every section of the body format. After approval a `type:prd` issue appears as a sub-issue of the problem, with the same body.
+- `/coworker:setup`. `.coworker/setup.sh` appears and is not committed. The report says what ran in a fresh working copy and what the machine that runs coworker must have installed. No temporary working copy is left behind (`git worktree list`). Commit the script to `main`, together with `.gitignore` if it changed.
 
 ### 3. splitter and sequencer
 
@@ -123,3 +124,10 @@ In the practice repository, in Claude Code:
 
 - Start coworker with `COWORKER_FIVE_HOUR_LIMIT=1` and file a Task. The log says once that usage is over the limit, and the Task does not move.
 - Restart coworker without it. Within a minute the Task moves on.
+
+### 14. Setup script
+
+- With `.coworker/setup.sh` on `main` (scenario 2), file a Task. The log says the setup script ran for that Task before its PR opens. The PR holds none of the files the script created.
+- Stop coworker. Push a commit to `main` that adds `echo boom >&2; exit 1` as the first line of the script, then file another Task.
+- Start coworker. The Task goes `status:stuck`. The comment says the setup script failed, and `boom` is in the log, not in the comment.
+- Push a commit to `main` that removes the line, and relabel the Task `status:pending`. It goes through sequencer and builder again, and the PR opens.

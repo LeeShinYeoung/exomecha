@@ -1,5 +1,5 @@
 {
   "name": "coworker",
-  "version": "0.1.0",
-  "description": "Skills that hand work to coworker: record a problem (issue), decide a direction (discuss), file a PRD (prd)"
+  "version": "0.2.0",
+  "description": "Skills that hand work to coworker: record a problem (issue), decide a direction (discuss), file a PRD (prd), and write a project's setup script (setup)"
 }

@@ -63,6 +63,7 @@ func TestResolverPushesResolvedMerge(t *testing.T) {
 		t.Errorf("resolved merge left %d comments", n)
 	}
 	wantContains(t, "claude input", e.claude.lastInput(), "task body", "- app.txt")
+	wantNotContains(t, "claude input", e.claude.lastInput(), "## Setup")
 }
 
 func TestResolverStuckWhenMarkersRemain(t *testing.T) {

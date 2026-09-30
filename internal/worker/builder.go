@@ -88,6 +88,13 @@ func (b *builder) build(ctx context.Context, task github.Issue) error {
 		return err
 	}
 	defer wt.Remove()
+	ranSetup, problem, err := setup(ctx, wt, b.Git.BaseRef(), n)
+	if err != nil {
+		return err
+	}
+	if problem != "" {
+		return toStuck(ctx, b.GitHub, n, label.Working, label.Pending, problem)
+	}
 	before, err := wt.Head(ctx)
 	if err != nil {
 		return err
@@ -98,6 +105,9 @@ func (b *builder) build(ctx context.Context, task github.Issue) error {
 		return err
 	}
 	input := taskText(task) + comments
+	if ranSetup {
+		input += setupNote + " It ran before you started.\n\n"
+	}
 	if hasPR {
 		input += fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this Task. The current directory is its branch.\n\n", pr)
 		review, err := b.GitHub.LatestReview(ctx, pr)
