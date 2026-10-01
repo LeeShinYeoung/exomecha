@@ -2,8 +2,11 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
 	"github.com/LeeShinYeoung/coworker/internal/label"
 	"github.com/LeeShinYeoung/coworker/internal/sandbox"
+	"github.com/LeeShinYeoung/coworker/internal/template"
 )
 
 // TestRealBuilderRun takes a small Task through builder with the real sbx and the real claude,
@@ -20,15 +24,49 @@ func TestRealBuilderRun(t *testing.T) {
 	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
 		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
 	}
-	// sbx gives the sandbox the commit identity of this machine's git, which these tests point
-	// at a throwaway config. The setup script sets one for the sandbox's repository instead.
 	e := newEnv(t, map[string]string{
 		"README.md": "A practice project.\n",
-		setupScript: "git config user.name 'coworker test'\ngit config user.email test@example.com\n",
+		setupScript: gitIdentity,
 	})
+	runRealBuilder(t, e, fmt.Sprintf("impl-run-w%d-", time.Now().UnixNano()%100_000))
+}
+
+// sbx gives the sandbox the commit identity of this machine's git, which these tests point at a
+// throwaway config. The setup script sets one for the sandbox's repository instead.
+const gitIdentity = "git config user.name 'coworker test'\ngit config user.email test@example.com\n"
+
+// TestRealBuilderRunFromTemplate is TestRealBuilderRun with the environment main.go wires in, so
+// the project's Dockerfile is built into a template and the Task's sandbox starts from it.
+func TestRealBuilderRunFromTemplate(t *testing.T) {
+	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
+		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
+	}
+	dockerfile := "FROM docker/sandbox-templates:claude-code-docker\nUSER root\nRUN echo from-template > /etc/coworker-test-marker\nUSER agent\n"
+	e := newEnv(t, map[string]string{
+		"README.md":               "A practice project.\n",
+		".coworker/Dockerfile":    dockerfile,
+		".coworker/allowed-hosts": "example.com\n",
+		// Fails, which sends the Task to stuck, unless the sandbox came from the template.
+		setupScript: "grep -qx from-template /etc/coworker-test-marker\n" + gitIdentity,
+	})
+	owner, repo := "impl-int", fmt.Sprintf("t%d", time.Now().UnixNano()%100_000)
+	e.deps.Environment = template.New(e.deps.Git, owner, repo)
+	t.Cleanup(func() {
+		sum := sha256.Sum256([]byte(dockerfile))
+		ref := "docker.io/library/coworker-" + template.Slug(owner, repo, 32) + ":" + hex.EncodeToString(sum[:])[:12]
+		if out, err := exec.Command("sbx", "template", "rm", "--force", ref).CombinedOutput(); err != nil {
+			t.Errorf("remove template %s: %v %s", ref, err, out)
+		}
+	})
+	runRealBuilder(t, e, fmt.Sprintf("impl-int-w%d-", time.Now().UnixNano()%100_000))
+}
+
+// runRealBuilder takes a Task that asks for hello.txt through builder until its PR opens.
+func runRealBuilder(t *testing.T, e *env, prefix string) {
+	t.Helper()
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
-	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-w%d-", time.Now().UnixNano()%100_000)
+	e.deps.SandboxPrefix = prefix
 	e.box = newTaskbox(e.deps, nil)
 	task := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`. Commit it with the message `feat: add hello`.\n",
@@ -82,7 +120,7 @@ func TestRealResolverRun(t *testing.T) {
 	}
 	e := newEnv(t, map[string]string{
 		"greeting.txt": "hello\n",
-		setupScript:    "git config user.name 'coworker test'\ngit config user.email test@example.com\n",
+		setupScript:    gitIdentity,
 	})
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
