@@ -24,7 +24,11 @@ type env struct {
 	gh     *githubtest.Server
 	origin string
 	claude *fakeClaude
+	sbx    *fakeSandboxes
+	envr   *fakeEnvironment
+	clock  *clock
 	deps   Deps
+	box    *taskbox
 }
 
 func newEnv(t *testing.T, files map[string]string) *env {
@@ -38,13 +42,28 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		t.Fatal(err)
 	}
 	claude := &fakeClaude{t: t}
-	return &env{
+	e := &env{
 		t:      t,
 		gh:     s,
 		origin: origin,
 		claude: claude,
-		deps:   Deps{GitHub: client, Git: git.NewAt(t.TempDir(), origin, "main", "token"), Agent: claude},
+		sbx:    newFakeSandboxes(t),
+		envr:   &fakeEnvironment{},
+		clock:  newClock(),
 	}
+	e.deps = Deps{
+		GitHub:        client,
+		Git:           git.NewAt(t.TempDir(), origin, "main", "token"),
+		Agent:         claude,
+		Sandboxes:     e.sbx,
+		Environment:   e.envr,
+		SandboxDir:    t.TempDir(),
+		SandboxPrefix: "coworker-task-owner-repo-",
+		SandboxLimit:  2,
+	}
+	e.box = newTaskbox(e.deps, nil)
+	e.box.now = e.clock.now
+	return e
 }
 
 // fakeClaude answers with whatever the test sets in reply, and records every request.

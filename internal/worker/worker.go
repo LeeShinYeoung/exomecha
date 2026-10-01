@@ -14,6 +14,7 @@ import (
 	"github.com/LeeShinYeoung/coworker/internal/git"
 	"github.com/LeeShinYeoung/coworker/internal/github"
 	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/coworker/internal/sandbox"
 )
 
 type Worker interface {
@@ -21,7 +22,7 @@ type Worker interface {
 	// Pick returns issue numbers in ascending order.
 	Pick(ctx context.Context) ([]int, error)
 	// Handle sends a Task to stuck and returns nil when the Task itself is the problem. Any other error
-	// is an environment error: undo the status change and return it. The next check, a minute later, retries it.
+	// is an environment error: leave the Task where the next check can retry it, and return the error.
 	Handle(ctx context.Context, number int) error
 }
 
@@ -32,26 +33,63 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent
+	Agent  agent.Agent // runs claude on this machine, for splitter, sequencer and reviewer
+
+	// builder and resolver run claude in sandboxes.
+	Sandboxes   Sandboxes
+	Environment Environment
+	// SandboxDir holds one directory per task sandbox, shared with that sandbox.
+	SandboxDir string
+	// SandboxPrefix starts the name of every task sandbox of this repository and nothing else.
+	SandboxPrefix string
+	// SandboxLimit is how many task sandboxes may exist at once.
+	SandboxLimit int
+}
+
+type Sandboxes interface {
+	List(ctx context.Context) ([]sandbox.Box, error)
+	// Create makes a sandbox that keeps running with no exec session open. An empty template
+	// is sbx's own claude template. Hosts in deny are blocked from the start.
+	Create(ctx context.Context, name, template, workspace string, deny []string) error
+	Allow(ctx context.Context, name string, hosts []string) error
+	Exec(ctx context.Context, name, dir string, env []string, args ...string) ([]byte, error)
+	// Start returns at once and leaves args running after the exec session ends.
+	Start(ctx context.Context, name, dir string, args ...string) error
+	// Remove of a sandbox that does not exist is not an error.
+	Remove(ctx context.Context, name string) error
+	GitURL(name, dir string) string
+}
+
+// Environment is the sandbox setup the target project asks for on its base branch.
+// An error whose chain holds a value with a Why() string method is one only a person can fix,
+// and Why() is what to tell them.
+type Environment interface {
+	// ok is false when the project has no Dockerfile for coworker, and sbx's own template is used.
+	Template(ctx context.Context) (ref string, ok bool, err error)
+	AllowedHosts(ctx context.Context) ([]string, error)
 }
 
 const interval = 60 * time.Second
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
+	// builder and resolver check the gate themselves, only before they start a run, so runs
+	// already in sandboxes are still watched and finished while usage is over the limit.
+	box := newTaskbox(d, gate)
 	workers := []struct {
 		worker Worker
 		limit  int // 0 means no limit
+		gate   *Gate
 	}{
-		{&splitter{d}, 1},
-		{&sequencer{d}, 1},
-		{&builder{d}, 0},
-		{&reviewer{d}, 0},
-		{&resolver{d}, 0},
+		{&splitter{d}, 1, gate},
+		{&sequencer{d}, 1, gate},
+		{&builder{d, box}, 0, nil},
+		{&reviewer{d}, 0, gate},
+		{&resolver{d, box}, 0, nil},
 	}
 	var wg sync.WaitGroup
 	for _, w := range workers {
-		wg.Go(func() { loop(ctx, w.worker, w.limit, l, gate) })
+		wg.Go(func() { loop(ctx, w.worker, w.limit, l, w.gate) })
 	}
 	wg.Wait()
 }
@@ -93,11 +131,13 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 	if len(numbers) == 0 {
 		return
 	}
-	if open, err := gate.Open(ctx); err != nil || !open {
-		if err != nil && ctx.Err() == nil {
-			log.Error("usage check failed", "err", err)
+	if gate != nil {
+		if open, err := gate.Open(ctx); err != nil || !open {
+			if err != nil && ctx.Err() == nil {
+				log.Error("usage check failed", "err", err)
+			}
+			return
 		}
-		return
 	}
 	for _, n := range numbers {
 		if sem != nil {

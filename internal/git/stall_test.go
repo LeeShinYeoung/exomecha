@@ -45,3 +45,26 @@ func TestCloneGivesUpOnStalledServer(t *testing.T) {
 	}
 	t.Logf("gave up after %s: %v", time.Since(start).Round(time.Second), err)
 }
+
+func TestFetchFromGivesUpOnAHungSandbox(t *testing.T) {
+	gittest.Setup(t)
+	sandboxTransferTimeout = time.Second
+	t.Cleanup(func() { sandboxTransferTimeout = 5 * time.Minute })
+	origin := gittest.NewOrigin(t, map[string]string{"README.md": "hello\n"})
+	g := NewAt(t.TempDir(), origin, "main", "token")
+	if err := g.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	// An ext command that never speaks, as an sbx exec that hangs would.
+	if _, err := g.FetchFrom(t.Context(), "ext::sleep 30", "box"); err == nil {
+		t.Fatal("FetchFrom succeeded from a sandbox that never answers")
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Errorf("FetchFrom waited %v", took)
+	}
+	if err := g.Sync(t.Context()); err != nil {
+		t.Errorf("Sync after a hung fetch: %v", err)
+	}
+}

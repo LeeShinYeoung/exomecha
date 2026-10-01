@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Git struct {
@@ -44,13 +45,32 @@ func (g *Git) repoDir() string { return filepath.Join(g.root, "repo") }
 // dead connection would otherwise hold mu and stall every worker that needs a worktree.
 var lowSpeedTime = "30"
 
-// The token goes in as an auth header through env vars, never into .git/config or argv. Anything
-// git starts inherits those env vars, so only the commands that talk to GitHub get the header,
-// and none of these calls run the project's hooks. The AI's own git commands do not come through
-// here, and the project's commit checks still run on them.
+// run is for every call that does not talk to GitHub. None of coworker's calls run the project's
+// hooks. The AI's own git commands do not come through here, and the project's commit checks
+// still run on them.
 func (g *Git) run(ctx context.Context, dir string, args ...string) (string, error) {
+	return g.command(ctx, dir, nil, args...)
+}
+
+// The token goes in as an auth header through env vars, never into .git/config or argv. Anything
+// git starts inherits those env vars, so only the calls that talk to GitHub get the header.
+func (g *Git) runGitHub(ctx context.Context, dir string, args ...string) (string, error) {
+	return g.command(ctx, dir, []string{"http.https://github.com/.extraheader", g.header}, args...)
+}
+
+// runSandbox is for transfers with a sandbox's repository, which git reaches by running a command
+// named in the URL. Only coworker builds those URLs, and only these calls may run one. What comes
+// back was made by the AI, so it is checked like anything from an untrusted server.
+func (g *Git) runSandbox(ctx context.Context, dir string, args ...string) (string, error) {
+	return g.command(ctx, dir, []string{"protocol.ext.allow", "always", "fetch.fsckObjects", "true"}, args...)
+}
+
+func (g *Git) command(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// A command git started, such as the one in a sandbox URL, can keep git's output open after
+	// git is killed. Wait must still return, or the caller holds mu forever.
+	cmd.WaitDelay = 5 * time.Second
 	config := []string{
 		"http.lowSpeedLimit", "1000",
 		"http.lowSpeedTime", lowSpeedTime,
@@ -58,10 +78,7 @@ func (g *Git) run(ctx context.Context, dir string, args ...string) (string, erro
 		// File names come out as they are instead of quoted byte by byte.
 		"core.quotePath", "false",
 	}
-	switch args[0] {
-	case "clone", "fetch", "push":
-		config = append(config, "http.https://github.com/.extraheader", g.header)
-	}
+	config = append(config, extra...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_COUNT="+strconv.Itoa(len(config)/2))
 	for i := 0; i < len(config); i += 2 {
 		n := strconv.Itoa(i / 2)

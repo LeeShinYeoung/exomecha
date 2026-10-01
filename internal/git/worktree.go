@@ -10,12 +10,11 @@ import (
 )
 
 // Worktrees sit on a detached commit, not a local branch, so no local branch can go stale or stay
-// checked out in a leftover worktree. The branch name is only used to push.
+// checked out in a leftover worktree. Only the workers that read code use them. The AI changes
+// code in sandboxes.
 type Worktree struct {
-	Dir    string
-	git    *Git
-	branch string // empty means read-only: Push refuses
-	fresh  bool   // branched off base just now, so Push overwrites an old remote branch of the same name
+	Dir string
+	git *Git
 }
 
 func (g *Git) sync(ctx context.Context) error {
@@ -25,13 +24,13 @@ func (g *Git) sync(ctx context.Context) error {
 		if err := os.MkdirAll(g.root, 0o755); err != nil {
 			return err
 		}
-		_, err := g.run(ctx, g.root, "clone", "--no-checkout", g.url, dir)
+		_, err := g.runGitHub(ctx, g.root, "clone", "--no-checkout", g.url, dir)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	_, err = g.run(ctx, dir, "fetch", "--prune", "origin")
+	_, err = g.runGitHub(ctx, dir, "fetch", "--prune", "origin")
 	return err
 }
 

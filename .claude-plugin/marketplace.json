@@ -7,7 +7,7 @@
     {
       "name": "coworker",
       "source": "./",
-      "description": "Skills that hand work to coworker: record a problem (issue), decide a direction (discuss), file a PRD (prd), and write a project's setup script (setup)"
+      "description": "Skills that hand work to coworker: record a problem (issue), decide a direction (discuss), file a PRD (prd), and set up a project's sandboxes (setup)"
     }
   ]
 }

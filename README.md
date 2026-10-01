@@ -1,6 +1,6 @@
 # coworker
 
-coworker watches the labels on a repository's GitHub issues. Five workers split each PRD into Tasks, put the Tasks in order, build them, review and merge the PRs, and resolve merge conflicts. A person only makes the decisions up front (three skills) and answers when a Task is blocked.
+coworker watches the labels on a repository's GitHub issues. Five workers split each PRD into Tasks, put the Tasks in order, build them, review and merge the PRs, and resolve merge conflicts. builder and resolver run claude in a Docker Sandboxes (sbx) sandbox of its own for each Task. A person only makes the decisions up front (three skills) and answers when a Task is blocked.
 
 ```
 [person] /coworker:issue   → type:problem issue (the problem only)
@@ -9,9 +9,9 @@ coworker watches the labels on a repository's GitHub issues. Five workers split 
 
 [splitter]  PRD without tasked → create Tasks (status:pending), add tasked to the PRD
 [sequencer] pending Task → Blocked by any overlapping Task from another PRD → status:queued
-[builder]   queued, all blockers closed → working → code and PR → status:review
+[builder]   queued, all blockers closed → working → code in a sandbox and PR → status:review
 [reviewer]  review → check CI → AI review → queued if something needs fixing, otherwise merge → Task closed
-[resolver]  review with a conflicting PR → merge the base branch and resolve → stays in review (stuck if it can't)
+[resolver]  review with a conflicting PR → merge the base branch and resolve in a sandbox → stays in review (stuck if it can't)
 Any worker blocked by the Task itself → status:stuck + a comment with the reason → a person closes it, or answers and sets pending
 ```
 
@@ -27,10 +27,22 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
    /plugin marketplace add LeeShinYeoung/coworker
    /plugin install coworker@coworker
    ```
-3. Prepare the target project:
-   - Write how to install dependencies and run the tests in its CLAUDE.md. builder follows it to run the tests it can run in its working copy.
-   - Run `/coworker:setup` in the project and commit what it writes to the base branch: `.coworker/setup.sh`, and `.gitignore` if it changed. coworker runs that script in a fresh working copy before builder or resolver starts the AI, so dependencies and ignored config files are already in place. Without the script, the AI installs on its own, following CLAUDE.md.
-4. Install and run coworker:
+3. Set up sbx on the same machine. Docker Desktop is not needed.
+   - Install sbx and sign in to Docker: `sbx login`.
+   - Start from the balanced network policy: `sbx policy init balanced`. A sandbox reaches only the hosts that policy allows, plus the ones the project lists in `.coworker/allowed-hosts`.
+   - Sign in to Claude once from inside a sandbox. sbx keeps the login on this machine, and every sandbox gets a placeholder instead of the real token. Use the same Claude account as this machine's claude login, because the usage limits in step 5 are read from that login.
+     ```
+     mkdir -p /tmp/sbx-login
+     sbx run -d --name sbx-login claude /tmp/sbx-login
+     sbx exec -it sbx-login claude auth login
+     sbx rm --force sbx-login
+     ```
+     `sbx secret ls` then lists `anthropic` as `(oauth configured)`. A token from `claude setup-token` does not work, because sbx does not pass a credential it did not issue on to Anthropic. An Anthropic API key works (`sbx secret set anthropic`), but the usage limits in step 5 do not count what it spends.
+   - Do not keep a global `github` secret in sbx. Every sandbox could use it, so the AI could push past coworker's checks. coworker refuses to start while one exists. Remove it with `sbx secret rm github`.
+4. Prepare the target project:
+   - Write how to install dependencies and run the tests in its CLAUDE.md. builder follows it to run the tests it can run in its sandbox.
+   - Run `/coworker:setup` in the project and commit what it writes to the base branch: `.coworker/Dockerfile`, `.coworker/setup.sh`, `.coworker/allowed-hosts` (only when a check needs a host the sandbox policy blocks), and `.gitignore` if it changed. The skill proves the files in a real sandbox before it hands them over. With them, a Task's sandbox already has the tools, dependencies, ignored config files and services the project needs when the AI starts. Without them, the sandbox starts from sbx's default claude template with only the code, and the AI installs what it needs on its own, following CLAUDE.md.
+5. Install and run coworker:
    - Install from this repository: `go install ./cmd/coworker` (or `go build -o coworker ./cmd/coworker`)
    - Copy `.env.example` to `<project>.env`, fill in the three environment variables, and add the `.env` file to `.gitignore`.
      ```
@@ -39,6 +51,7 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
      COWORKER_GITHUB_TOKEN=github_pat_...
      ```
    - Optional: `COWORKER_FIVE_HOUR_LIMIT` (default 90) and `COWORKER_WEEKLY_LIMIT` (default 80), in percent of the Claude plan's 5-hour and weekly limits. coworker starts no new work at or above them.
+   - Optional: `COWORKER_SANDBOX_LIMIT` (default 2), how many Task sandboxes builder and resolver may have at once, together.
    - Run:
      ```
      set -a; source <project>.env; set +a; coworker
@@ -47,11 +60,16 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
 
 ## Notes
 
-- coworker uses the claude login already on this machine.
+- splitter, sequencer, reviewer and the usage check use the claude login on this machine. builder and resolver run claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
 - When there is work to start, coworker first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
-- If the base branch has `.coworker/setup.sh`, coworker runs it with `bash -eo pipefail` at the root of a fresh working copy before builder or resolver starts the AI, with the Task number in `COWORKER_TASK`. reviewer, splitter and sequencer only read the code and do not run it. The script must end within 10 minutes, must leave nothing git can see, and must not commit. coworker does not pass it the GitHub token.
-- coworker always runs the base branch's copy of the script, even in a PR's working copy, so a fix to the script reaches every open Task. A branch older than the script can still fail it, for example when the branch lacks a `.gitignore` entry the script relies on. Such a branch needs the base branch merged into it.
-- coworker's own git commands (clone, fetch, push) carry the token, so they run none of the project's git hooks. The AI's git commands run the hooks as usual. A repository that uses Git LFS is not supported, because LFS uploads its files from a pre-push hook.
+- coworker sends a Task's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. Task sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
+- A run keeps going in its sandbox while coworker is stopped. Ctrl-C leaves working Tasks as they are, and coworker picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.coworker/<owner>/<repo>/sandboxes/`.
+- If the base branch has `.coworker/Dockerfile`, coworker builds it into an sbx template the first time a Task needs a sandbox after the file changed. The build runs in a sandbox of its own and takes a few minutes (about 2 to 3 for a Dockerfile that installs Playwright browsers), and the first sandbox from a new template takes about 25 seconds more to start. Tasks that need a sandbox during a build wait for it. Once the new template is in, coworker removes the project's older ones.
+- Only a change to the Dockerfile rebuilds the template. To pick up a newer base image or claude, remove the template with `sbx template rm --force`, and the next Task builds it again.
+- `.coworker/allowed-hosts` lists the hosts that Task sandboxes and the template build may reach beyond sbx's network policy, one per line. `**` (every host) is rejected. Other sandboxes on this machine are not affected.
+- If the base branch has `.coworker/setup.sh`, coworker runs it with `bash -eo pipefail` in the Task's sandbox, at the root of the code (`/home/agent/repo`), before builder or resolver starts the AI, with the Task number in `COWORKER_TASK`. reviewer, splitter and sequencer only read the code and do not run it. The script may leave services running as Docker containers started with `--restart unless-stopped`, which come back when a stopped sandbox starts again. It must end within 10 minutes, must leave nothing git can see, and must not commit. coworker does not pass it the GitHub token.
+- coworker always runs the base branch's copy of the script, even for a PR's branch, so a fix to the script reaches every open Task. A branch older than the script can still fail it, for example when the branch lacks a `.gitignore` entry the script relies on. Such a branch needs the base branch merged into it.
+- coworker's own git commands (clone, fetch, push, and moving code in and out of sandboxes) run none of the project's git hooks. The AI commits in a repository coworker creates inside the sandbox, so the project's git hooks run there only if setup turns them on. A repository that uses Git LFS is not supported.
 - The AI in builder and resolver makes the commits, following the project's commit message rules and commit checks (in CLAUDE.md, or enforced by a check). Without rules, a commit looks like `feat: add greeting` with `Task: #12` as its last line.
 - The token owner is both the PR author and the reviewer, so a "require approval" protection rule on the base branch blocks the automatic merge.
 - coworker only acts on issues, comments and reviews written by the repository's owners, members and collaborators. On a public repository, anything an outsider writes is ignored. GitHub may report a member who keeps their organization membership private as an outsider, so their comments can be left out.
@@ -66,4 +84,17 @@ The worker's comment says why it is blocked and what needs deciding.
 - Otherwise, answer in a comment and relabel it the way the comment says. That sends it back to the worker that owns the problem:
   - `status:pending` when builder got stuck. It goes through sequencer and builder again, and builder continues on the existing PR branch.
   - `status:review` when resolver got stuck on a conflict. resolver merges the base branch again and settles the conflict the way you answered.
+- When the AI says the sandbox blocked a host, add that host to `.coworker/allowed-hosts` on the base branch if the Task really needs it. Then relabel the Task the way the comment says.
 - When `.coworker/setup.sh` failed, there is nothing to answer. The script's output is in coworker's log. Fix the script on the base branch, or merge the base branch into the Task's branch if the comment says the branch is behind. Then relabel the Task the way the comment says.
+- When `.coworker/Dockerfile` failed to build or ran over 30 minutes, or `.coworker/allowed-hosts` has a bad line, there is nothing to answer either. The build output is only in coworker's log. Fix the file on the base branch, then relabel the Task the way the comment says.
+- When the AI's run failed 3 times in a row (the sandbox stopped or went away, claude's output did not change for 15 minutes, or claude ended without a usable result), the Task goes to stuck with the last reason. The details are in coworker's log, and the last failed run's files are in `~/.coworker/<owner>/<repo>/sandboxes/failed/`. A run that ended at the Claude usage limit does not count, and neither does a failure in coworker's own steps (sbx, git, GitHub). Those wait and try again.
+
+## Removing a project
+
+Stop coworker, then remove what it keeps on this machine for the project:
+
+- its sandboxes, named `coworker-task-<slug>-...` and `coworker-build-<slug>`, with `sbx rm --force`
+- its templates, `coworker-<slug>` with any tag, with `sbx template rm --force`
+- `~/.coworker/<owner>/<repo>`
+
+`<slug>` is `owner-repo` in lowercase, with every run of characters other than letters and digits turned into one `-`. A slug longer than 32 characters is cut and ends with a short hash of the repository's name. `sbx ls` and `sbx template ls` show the exact names.
