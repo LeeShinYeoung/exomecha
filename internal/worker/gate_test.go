@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -164,4 +165,12 @@ func TestRoundSkipsWorkOverTheLimit(t *testing.T) {
 	w := &pickOnly{picks: []int{1, 2}}
 	runRound(t, w, f.gate)
 	wantInts(t, "handled", w.handled, nil)
+}
+
+// builder and resolver run with no gate in round, and check it themselves before a start.
+func TestRoundWithoutGateHandlesEverything(t *testing.T) {
+	w := &pickOnly{picks: []int{1, 2}}
+	runRound(t, w, nil)
+	slices.Sort(w.handled)
+	wantInts(t, "handled", w.handled, []int{1, 2})
 }

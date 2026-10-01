@@ -22,7 +22,7 @@ type Worker interface {
 	// Pick returns issue numbers in ascending order.
 	Pick(ctx context.Context) ([]int, error)
 	// Handle sends a Task to stuck and returns nil when the Task itself is the problem. Any other error
-	// is an environment error: undo the status change and return it. The next check, a minute later, retries it.
+	// is an environment error: leave the Task where the next check can retry it, and return the error.
 	Handle(ctx context.Context, number int) error
 }
 

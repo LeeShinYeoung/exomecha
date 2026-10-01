@@ -19,6 +19,8 @@ The current directory is a working copy of the PR branch, in the middle of mergi
 - Change only what resolving the conflicts needs. Do not add features or fix unrelated things.
 - Follow the project's CLAUDE.md. If the tests still need something installed, such as a dependency the merge brought in, install it as CLAUDE.md says.
 - Run the tests you can run in this directory.
+- Run commands in the foreground. When you give your result, claude ends and stops anything still running in the background.
+- A 403 response that says "Approval required for <host>" means the sandbox's network policy blocked that host. Report stuck and name the host, so a person can add it to `.coworker/allowed-hosts`.
 - Do not use `git push`, `gh`, or `git merge --abort`, and do not amend, rebase, or reset commits that are already on the branch. coworker pushes.
 - If the two sides contradict each other and a person has to choose, stop and report stuck without committing.
 
