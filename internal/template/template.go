@@ -274,7 +274,8 @@ func (e *Env) removeOld(ctx context.Context, ref string) {
 			continue
 		}
 		old := img.Repository + ":" + img.Tag
-		if err := e.sbx(ctx, "template", "rm", old); err != nil {
+		// Without --force, sbx asks for confirmation and fails when stdin is not a terminal.
+		if err := e.sbx(ctx, "template", "rm", "--force", old); err != nil {
 			slog.Warn("remove old template failed", "ref", old, "err", err)
 			continue
 		}
