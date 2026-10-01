@@ -30,7 +30,14 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
 3. Set up sbx on the same machine. Docker Desktop is not needed.
    - Install sbx and sign in to Docker: `sbx login`.
    - Start from the balanced network policy: `sbx policy init balanced`. A sandbox reaches only the hosts that policy allows, plus the ones the project lists in `.coworker/allowed-hosts`.
-   - Store the Claude credential the sandboxes sign in with: `sbx secret set anthropic`. Use the same Claude account as this machine's claude login, because the usage limits in step 5 are read from that login.
+   - Sign in to Claude once from inside a sandbox. sbx keeps the login on this machine, and every sandbox gets a placeholder instead of the real token. Use the same Claude account as this machine's claude login, because the usage limits in step 5 are read from that login.
+     ```
+     mkdir -p /tmp/sbx-login
+     sbx run -d --name sbx-login claude /tmp/sbx-login
+     sbx exec -it sbx-login claude auth login
+     sbx rm --force sbx-login
+     ```
+     `sbx secret ls` then lists `anthropic` as `(oauth configured)`. A token from `claude setup-token` does not work, because sbx does not pass a credential it did not issue on to Anthropic. An Anthropic API key works (`sbx secret set anthropic`), but the usage limits in step 5 do not count what it spends.
    - Do not keep a global `github` secret in sbx. Every sandbox could use it, so the AI could push past coworker's checks. coworker refuses to start while one exists. Remove it with `sbx secret rm github`.
 4. Prepare the target project:
    - Write how to install dependencies and run the tests in its CLAUDE.md. builder follows it to run the tests it can run in its sandbox.
@@ -53,7 +60,7 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
 
 ## Notes
 
-- splitter, sequencer, reviewer and the usage check use the claude login on this machine. builder and resolver run claude in sandboxes, signed in with sbx's `anthropic` secret.
+- splitter, sequencer, reviewer and the usage check use the claude login on this machine. builder and resolver run claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
 - When there is work to start, coworker first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
 - coworker sends a Task's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. Task sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
 - A run keeps going in its sandbox while coworker is stopped. Ctrl-C leaves working Tasks as they are, and coworker picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.coworker/<owner>/<repo>/sandboxes/`.

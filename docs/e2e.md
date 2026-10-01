@@ -15,7 +15,7 @@ The first takes about 2 minutes. The second spends a little Claude usage and tak
 
 1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule. No GitHub Actions workflow on `main` at the start.
 2. A fine-grained token for that repository only: Issues read and write, Pull requests read and write, Contents read and write, Actions read.
-3. sbx set up as in the README: signed in, the balanced network policy, the `anthropic` secret, and no global `github` secret.
+3. sbx set up as in the README: signed in to Docker, the balanced network policy, the Claude login, and no global `github` secret.
 4. Install coworker and fill `<name>.env` (see the README). Run coworker in its own terminal and keep the log in view:
    ```
    go install ./cmd/coworker
