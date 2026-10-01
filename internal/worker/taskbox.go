@@ -31,6 +31,9 @@ const (
 	minBackoff  = time.Minute
 	maxBackoff  = 30 * time.Minute
 
+	// A create takes seconds. The first one may pull sbx's own template, which takes longer.
+	createTimeout = 15 * time.Minute
+
 	// Far more than any run writes. It only bounds what a misbehaving run can make coworker read.
 	streamLimit = 256 << 20
 	tailLimit   = 4000
@@ -360,7 +363,10 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 		err = errNoSlot
 	}
 	if err == nil {
-		err = t.Sandboxes.Create(ctx, l.name, ref, ctl, deniedHosts)
+		// Every other start waits on the slot lock, so a create that hangs must give up.
+		createCtx, cancel := context.WithTimeout(ctx, createTimeout)
+		err = t.Sandboxes.Create(createCtx, l.name, ref, ctl, deniedHosts)
+		cancel()
 	}
 	t.slots.Unlock()
 	if err != nil {
