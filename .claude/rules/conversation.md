@@ -12,3 +12,4 @@ The user works with many sessions and people at once. A long reply hides the poi
 - Do not write to memory unless the user asks.
 - Write so each sentence has only one meaning. Do not compress or talk around it. Say plainly what will be done.
 - Write each line as a complete sentence.
+- Do not put a file path inside a sentence. Finish the sentence without it, then list the path below as its own list item.
