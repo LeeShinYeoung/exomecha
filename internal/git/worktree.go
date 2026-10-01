@@ -25,13 +25,13 @@ func (g *Git) sync(ctx context.Context) error {
 		if err := os.MkdirAll(g.root, 0o755); err != nil {
 			return err
 		}
-		_, err := g.run(ctx, g.root, "clone", "--no-checkout", g.url, dir)
+		_, err := g.runGitHub(ctx, g.root, "clone", "--no-checkout", g.url, dir)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	_, err = g.run(ctx, dir, "fetch", "--prune", "origin")
+	_, err = g.runGitHub(ctx, dir, "fetch", "--prune", "origin")
 	return err
 }
 

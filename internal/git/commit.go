@@ -52,6 +52,6 @@ func (w *Worktree) Push(ctx context.Context) error {
 	if w.fresh {
 		ref = "+" + ref
 	}
-	_, err := w.git.run(ctx, w.Dir, "push", "origin", ref)
+	_, err := w.git.runGitHub(ctx, w.Dir, "push", "origin", ref)
 	return err
 }
