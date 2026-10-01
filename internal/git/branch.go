@@ -36,7 +36,6 @@ func (g *Git) OpenBranch(ctx context.Context, branch string) (*Worktree, error) 
 	return w, nil
 }
 
-// BaseFile reads a file from the base branch, whatever the worktree has checked out.
 func (w *Worktree) BaseFile(ctx context.Context, path string) (content string, ok bool, err error) {
 	// ls-tree prints "<mode> <type> <object>\t<path>", or nothing, still exiting 0, for a missing path.
 	out, err := w.git.run(ctx, w.Dir, "ls-tree", w.git.BaseRef(), "--", path)

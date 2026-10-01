@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// A script that starts a child and records its pid in $SETUP_PID.
 const spawnChild = "sleep 60 &\necho $! > \"$SETUP_PID\"\n"
 
 func pidFile(t *testing.T) string {

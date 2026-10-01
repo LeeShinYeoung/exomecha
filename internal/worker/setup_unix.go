@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-// ownGroup gives cmd a process group of its own, so everything it starts can be killed with it.
+// Everything cmd starts joins its group, so all of it can be killed together.
 func ownGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killGroup(cmd) }

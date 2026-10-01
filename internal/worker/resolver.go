@@ -61,11 +61,11 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
-	// The branch already has everything on the base branch. Leave before setup runs for nothing.
+	// Leave before setup runs for nothing.
 	if upToDate, err := wt.IsAncestor(ctx, r.Git.BaseRef(), before); err != nil || upToDate {
 		return err
 	}
-	// Setup runs before the merge. Conflict markers in a manifest or lockfile would break an install.
+	// Not after the merge: conflict markers in a manifest or lockfile would break an install.
 	ranSetup, problem, err := setup(ctx, wt, r.Git.BaseRef(), n)
 	if err != nil {
 		return err

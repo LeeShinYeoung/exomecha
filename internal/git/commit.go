@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// Changes lists what git sees as changed or untracked, one path per line. It is empty for a clean tree.
 func (w *Worktree) Changes(ctx context.Context) (string, error) {
 	out, err := w.git.run(ctx, w.Dir, "status", "--porcelain")
 	// Not TrimSpace: a line for an unstaged change starts with a space.

@@ -17,7 +17,7 @@ const setupScript = ".coworker/setup.sh"
 
 const setupFix = " Fix the script on the base branch, then relabel this issue as below. You don't need to answer."
 
-// What the AI is told when setup ran. Each worker adds when it ran.
+// Each worker adds when it ran.
 const setupNote = "## Setup\n\ncoworker ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
 
 var (
@@ -29,9 +29,7 @@ var (
 	setupShell     = "bash"
 )
 
-// setup runs the project's setup script in a fresh worktree, so installs and ignored config files
-// are in place before the AI starts. It always runs the base branch's copy, even on a PR branch,
-// so a fix to the script reaches every open Task.
+// Always the base branch's copy, even on a PR branch, so a fix to the script reaches every open Task.
 //
 // The script has two rules: it ends cleanly on its own, and it leaves the working copy as git had
 // it. problem is set when it breaks either one, which only a person can fix.
@@ -109,7 +107,7 @@ func setup(ctx context.Context, wt *git.Worktree, baseRef string, task int) (ran
 	return false, fmt.Sprintf("`%s` %s The details are in coworker's log.", setupScript, what) + fix, nil
 }
 
-// tailBuffer keeps only the end of what is written to it. A script can print without limit.
+// A script can print without limit.
 type tailBuffer struct{ b []byte }
 
 const tailLimit = 4000

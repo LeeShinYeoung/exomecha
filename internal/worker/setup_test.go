@@ -22,12 +22,10 @@ import (
 // The file the test setup scripts write. Git ignores it, the way it ignores what a real setup script creates.
 const setupMarker = ".setup-ran"
 
-// setupRepo is a repository whose base branch has a setup script.
 func setupRepo(script string) map[string]string {
 	return map[string]string{"app.txt": "v1\n", ".gitignore": setupMarker + "\n", setupScript: script}
 }
 
-// freshWorktree is the worktree builder would make for Task 1.
 func (e *env) freshWorktree() *git.Worktree {
 	e.t.Helper()
 	wt, err := e.deps.Git.NewBranch(e.t.Context(), branchName(1))
