@@ -4,7 +4,7 @@ The user works with many sessions and people at once. A long reply hides the poi
 
 - Start every reply with three sections. Each starts with a heading on its own line (`**[ Goal ]**`, `**[ Recap ]**`, `**[ Next ]**`), followed by one to three lines. Keep these headings in English whatever language the reply is in. After the three sections, put a line with only `---`, with a blank line before and after it.
 - Recap sums up the reply. Keep any unfinished state in it, such as uncommitted changes or failures.
-- Below the `---` line, write only the explanation the user needs. Do not repeat the Recap.
+- Below the `---` line, put the conclusion first, then only the explanation the user needs. The body must make sense without the Recap.
 - Write only what the user needs to decide or act. Give details when asked.
 - When a decision is needed, ask one question, with the options.
 - Do not drop failures, risks or skipped steps to keep a reply short. State each in one line.
