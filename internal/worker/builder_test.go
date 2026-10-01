@@ -15,6 +15,7 @@ import (
 	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
 	"github.com/LeeShinYeoung/coworker/internal/github"
 	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/coworker/internal/template"
 )
 
 const builderDone = `{"result": "done", "summary": "did it", "stuck_reason": ""}`
@@ -283,6 +284,22 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 	comment := e.lastComment(task)
 	wantStuckComment(t, comment, "The Dockerfile on the base branch does not build.", label.Pending)
 	wantNotContains(t, "stuck comment", comment, "a secret in the build output", "step 3/5")
+}
+
+// The environment main.go wires in. A bad allowed-hosts line fails before any sbx call.
+func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".coworker/allowed-hosts": "api.example.com\n**\n"})
+	e.deps.Environment = template.New(e.deps.Git, "owner", "repo")
+	e.box = newTaskbox(e.deps, nil)
+	e.box.now = e.clock.now
+	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+
+	e.step(task)
+
+	e.wantStatus(task, label.Stuck)
+	reason := "`.coworker/allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it on the base branch."
+	wantStuckComment(t, e.lastComment(task), reason, label.Pending)
+	e.wantRemoved(e.builderBox(task))
 }
 
 func TestBuilderRequeuesWorkingTaskWithoutSandbox(t *testing.T) {
