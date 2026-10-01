@@ -44,7 +44,13 @@ func (e *Env) sbxJSON(ctx context.Context, v any, args ...string) error {
 	if err != nil {
 		return sbxError(args, err, output)
 	}
-	if err := json.Unmarshal(out.Bytes(), v); err != nil {
+	// Plain sbx ls prints "No sandboxes found." for an empty list. Whether --json does the same
+	// is unmeasured, and an empty list must not fail the build.
+	text := bytes.TrimSpace(out.Bytes())
+	if len(text) == 0 || bytes.HasPrefix(text, []byte("No ")) {
+		return nil
+	}
+	if err := json.Unmarshal(text, v); err != nil {
 		return fmt.Errorf("sbx %s: %w", strings.Join(args, " "), err)
 	}
 	return nil

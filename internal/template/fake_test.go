@@ -23,6 +23,8 @@ type fakeSbx struct {
 	policyOut string
 	policyErr error
 	createErr error
+	// What sbx ls prints for no sandboxes, in place of JSON.
+	emptyList string
 }
 
 var errExit = errors.New("exit status 1")
@@ -66,7 +68,12 @@ func (f *fakeSbx) run(ctx context.Context, in io.Reader, out io.Writer, args ...
 		for name := range f.sandboxes {
 			list = append(list, map[string]string{"name": name})
 		}
+		empty := f.emptyList
 		f.mu.Unlock()
+		if len(list) == 0 && empty != "" {
+			io.WriteString(out, empty)
+			break
+		}
 		b, _ := json.Marshal(map[string]any{"sandboxes": list})
 		out.Write(b)
 	case args[0] == "create":

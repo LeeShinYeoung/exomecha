@@ -164,6 +164,16 @@ func TestTemplateBuild(t *testing.T) {
 	}
 }
 
+func TestTemplateWithNoSandboxesListed(t *testing.T) {
+	for _, empty := range []string{"No sandboxes found.\n", "\n"} {
+		f := newFake()
+		f.emptyList = empty
+		if _, ok, err := newEnv(f, withDockerfile()).Template(t.Context()); !ok || err != nil {
+			t.Errorf("Template with sbx ls printing %q = %v, %v", empty, ok, err)
+		}
+	}
+}
+
 func TestTemplateRemovesLeftoverHelper(t *testing.T) {
 	f := newFake()
 	f.sandboxes[helper] = true
