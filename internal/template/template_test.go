@@ -277,6 +277,19 @@ func TestTemplateBuildTimeout(t *testing.T) {
 	}
 }
 
+func TestTemplateBuildEndingAtTheLimitIsNoTimeout(t *testing.T) {
+	defer func(d time.Duration) { buildTimeout = d }(buildTimeout)
+	buildTimeout = 50 * time.Millisecond
+	f := newFake()
+	f.onBuild = func(ctx context.Context) (string, error) {
+		<-ctx.Done()
+		return "", nil
+	}
+	if _, ok, err := newEnv(f, withDockerfile()).Template(t.Context()); !ok || err != nil {
+		t.Errorf("Template = %v, %v, want the build that exited 0", ok, err)
+	}
+}
+
 func TestTemplateCancelledStillRemovesHelper(t *testing.T) {
 	f := newFake()
 	ctx, cancel := context.WithCancel(t.Context())

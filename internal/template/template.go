@@ -204,6 +204,7 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 	// No build context: the Dockerfile arrives on stdin.
 	output, err := e.run(buildCtx, strings.NewReader(dockerfile), nil, "exec", "-i", helper, "docker", "build", "-t", ref, "-")
 	switch {
+	case err == nil:
 	case ctx.Err() != nil:
 		return ctx.Err()
 	case buildCtx.Err() != nil:
@@ -211,7 +212,7 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 			Reason: fmt.Sprintf("`%s` did not build within %d minutes. The build output is in coworker's log. Fix it on the base branch.", dockerfilePath, int(buildTimeout.Minutes())),
 			Output: output,
 		}
-	case err != nil:
+	default:
 		return &Problem{
 			Reason: fmt.Sprintf("`%s` failed to build (%v). The build output is in coworker's log. Fix it on the base branch.", dockerfilePath, err),
 			Output: output,
