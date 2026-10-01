@@ -213,6 +213,51 @@ func TestBaseFileOfADirectoryIsNoFile(t *testing.T) {
 	}
 }
 
+func TestGitBaseFile(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n", "conf/a.txt": "base\n"})
+	gittest.Commit(t, f.origin, "feature", "main", map[string]string{"conf/b.txt": "feature\n"})
+	wt, err := f.git.OpenBase(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.Remove()
+
+	if got, ok, err := f.git.BaseFile(t.Context(), "conf/a.txt"); err != nil || !ok || got != "base\n" {
+		t.Errorf("BaseFile(conf/a.txt) = %q, %v, %v, want the base branch's copy", got, ok, err)
+	}
+	if got, ok, err := f.git.BaseFile(t.Context(), "conf/b.txt"); err != nil || ok {
+		t.Errorf("BaseFile(conf/b.txt) = %q, %v, %v, want nothing for a file only another branch has", got, ok, err)
+	}
+	if got, ok, err := f.git.BaseFile(t.Context(), "conf/missing.txt"); err != nil || ok {
+		t.Errorf("BaseFile(conf/missing.txt) = %q, %v, %v, want nothing for a missing file", got, ok, err)
+	}
+	if got, ok, err := f.git.BaseFile(t.Context(), "conf"); err != nil || ok {
+		t.Errorf("BaseFile(conf) = %q, %v, %v, want nothing for a directory", got, ok, err)
+	}
+}
+
+func TestGitBaseFileReadsTheLastFetch(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n"})
+	wt, err := f.git.OpenBase(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.Remove()
+	gittest.Commit(t, f.origin, "main", "", map[string]string{"README.md": "changed\n"})
+
+	if got, ok, err := f.git.BaseFile(t.Context(), "README.md"); err != nil || !ok || got != "hello\n" {
+		t.Errorf("BaseFile before a fetch = %q, %v, %v, want the fetched copy", got, ok, err)
+	}
+	wt, err = f.git.OpenBase(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.Remove()
+	if got, ok, err := f.git.BaseFile(t.Context(), "README.md"); err != nil || !ok || got != "changed\n" {
+		t.Errorf("BaseFile after a fetch = %q, %v, %v, want the new commit", got, ok, err)
+	}
+}
+
 func TestChangesKeepsNonASCIINames(t *testing.T) {
 	f := setup(t, map[string]string{"README.md": "hello\n"})
 	wt, err := f.git.OpenBase(t.Context())
