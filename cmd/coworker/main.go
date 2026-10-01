@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -15,7 +16,7 @@ import (
 	"github.com/LeeShinYeoung/coworker/internal/agent"
 	"github.com/LeeShinYeoung/coworker/internal/git"
 	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/coworker/internal/sandbox"
 	"github.com/LeeShinYeoung/coworker/internal/worker"
 )
 
@@ -45,15 +46,31 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	sandboxes, err := sandboxLimit()
+	if err != nil {
+		return err
+	}
 	// Drop the token from the environment so child processes such as claude don't inherit it.
 	if err := os.Unsetenv("COWORKER_GITHUB_TOKEN"); err != nil {
 		return err
 	}
 
-	// SIGHUP too: closing the terminal must stop a running setup script, which has its own process group.
+	// Closing the terminal sends SIGHUP. Treat it like Ctrl-C, so a sandbox start in progress is
+	// undone instead of cut off.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	ctx = github.WaitForRateLimit(ctx)
+
+	if _, err := exec.LookPath("sbx"); err != nil {
+		return errors.New("sbx is not installed. builder and resolver run claude in Docker Sandboxes")
+	}
+	sbx := sandbox.CLI{}
+	if has, err := sbx.GlobalGitHubSecret(ctx); err != nil {
+		return fmt.Errorf("check sbx secrets: %w", err)
+	} else if has {
+		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past coworker's checks.
+		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github")
+	}
 
 	gh, err := github.New(owner, name, token)
 	if err != nil {
@@ -63,7 +80,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	g := git.New(filepath.Join(home, ".coworker", owner, name), owner, name, base, token)
+	root := filepath.Join(home, ".coworker", owner, name)
+	deps := worker.Deps{
+		GitHub:       gh,
+		Git:          git.New(root, owner, name, base, token),
+		Agent:        agent.Claude{},
+		Sandboxes:    sbx,
+		SandboxDir:   filepath.Join(root, "sandboxes"),
+		SandboxLimit: sandboxes,
+	}
+	if deps.Environment == nil || deps.SandboxPrefix == "" {
+		return errors.New("this build has no sandbox environment or sandbox name prefix wired in")
+	}
 
 	created, err := gh.EnsureLabels(ctx)
 	if err != nil {
@@ -73,21 +101,9 @@ func run() error {
 		slog.Info("created label", "label", l)
 	}
 
-	// Only one coworker runs at a time, so a Task still in working was left by a run that stopped mid-task.
-	working, err := gh.ListOpen(ctx, label.Task, string(label.Working))
-	if err != nil {
-		return fmt.Errorf("list working tasks: %w", err)
-	}
-	for _, t := range working {
-		if err := gh.SetStatus(ctx, t.Number, label.Working, label.Queued); err != nil {
-			return fmt.Errorf("requeue task #%d: %w", t.Number, err)
-		}
-		slog.Info("requeued task left working by a previous run", "task", t.Number)
-	}
-
-	slog.Info("coworker started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly)
+	slog.Info("coworker started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly, "sandbox_limit", sandboxes)
 	gate := &worker.Gate{Check: agent.Claude{}.Usage, FiveHour: fiveHour, Weekly: weekly}
-	worker.Run(ctx, worker.Deps{GitHub: gh, Git: g, Agent: agent.Claude{}}, gate)
+	worker.Run(ctx, deps, gate)
 	slog.Info("coworker stopped")
 	return nil
 }
@@ -103,4 +119,17 @@ func usageLimit(name string, fallback int) (float64, error) {
 		return 0, fmt.Errorf("%s must be a whole number from 1 to 100: %q", name, v)
 	}
 	return float64(n) / 100, nil
+}
+
+// sandboxLimit reads how many task sandboxes may exist at once.
+func sandboxLimit() (int, error) {
+	v := os.Getenv("COWORKER_SANDBOX_LIMIT")
+	if v == "" {
+		return 2, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("COWORKER_SANDBOX_LIMIT must be a whole number of at least 1: %q", v)
+	}
+	return n, nil
 }
