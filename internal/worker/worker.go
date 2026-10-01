@@ -73,19 +73,23 @@ const interval = 60 * time.Second
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
+	// builder and resolver check the gate themselves, only before they start a run, so runs
+	// already in sandboxes are still watched and finished while usage is over the limit.
+	box := newTaskbox(d, gate)
 	workers := []struct {
 		worker Worker
 		limit  int // 0 means no limit
+		gate   *Gate
 	}{
-		{&splitter{d}, 1},
-		{&sequencer{d}, 1},
-		{&builder{d}, 0},
-		{&reviewer{d}, 0},
-		{&resolver{d}, 0},
+		{&splitter{d}, 1, gate},
+		{&sequencer{d}, 1, gate},
+		{&builder{d, box}, 0, nil},
+		{&reviewer{d}, 0, gate},
+		{&resolver{d}, 0, gate},
 	}
 	var wg sync.WaitGroup
 	for _, w := range workers {
-		wg.Go(func() { loop(ctx, w.worker, w.limit, l, gate) })
+		wg.Go(func() { loop(ctx, w.worker, w.limit, l, w.gate) })
 	}
 	wg.Wait()
 }
@@ -127,11 +131,13 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 	if len(numbers) == 0 {
 		return
 	}
-	if open, err := gate.Open(ctx); err != nil || !open {
-		if err != nil && ctx.Err() == nil {
-			log.Error("usage check failed", "err", err)
+	if gate != nil {
+		if open, err := gate.Open(ctx); err != nil || !open {
+			if err != nil && ctx.Err() == nil {
+				log.Error("usage check failed", "err", err)
+			}
+			return
 		}
-		return
 	}
 	for _, n := range numbers {
 		if sem != nil {
