@@ -14,9 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/LeeShinYeoung/coworker/internal/agent"
+	"github.com/LeeShinYeoung/coworker/internal/github"
+	"github.com/LeeShinYeoung/coworker/internal/label"
 	"github.com/LeeShinYeoung/coworker/internal/sandbox"
 )
 
@@ -232,6 +235,15 @@ func (t *taskbox) strikeLocked(name string) *tries {
 	return tr
 }
 
+func (t *taskbox) failures(name string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if tr := t.tries[name]; tr != nil {
+		return tr.failures
+	}
+	return 0
+}
+
 // fail counts a failed run and returns how many failed in a row.
 func (t *taskbox) fail(name string) int {
 	t.mu.Lock()
@@ -307,7 +319,8 @@ func (t *taskbox) slotFree(ctx context.Context) (bool, error) {
 	}
 	used := 0
 	for _, b := range boxes {
-		if strings.HasPrefix(b.Name, t.SandboxPrefix) {
+		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
+		if _, _, ok := sandbox.ParseTask(t.SandboxPrefix, b.Name); ok {
 			used++
 		}
 	}
@@ -437,6 +450,16 @@ func (t *taskbox) git(ctx context.Context, name, dir string, args ...string) (st
 	return string(out), err
 }
 
+const noCommit = "The AI left its repository with no commit checked out, so there is nothing to push."
+
+// committed reports whether the sandbox's repository has a commit checked out. Without one a fetch
+// fails the same way on every try, so it has to be caught before.
+func (t *taskbox) committed(ctx context.Context, name string) (bool, error) {
+	// rev-parse exits 1 for an unborn HEAD, which Exec would report as an error.
+	out, err := t.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", "git rev-parse -q --verify HEAD || true")
+	return strings.TrimSpace(string(out)) != "", err
+}
+
 func (t *taskbox) fetch(ctx context.Context, name string) (string, error) {
 	return t.Git.FetchFrom(ctx, t.Sandboxes.GitURL(name, repoDir), name)
 }
@@ -517,7 +540,9 @@ func openCtl(ctl, file string) (*os.File, error) {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := root.Open(file)
+	// The file can still be swapped after Lstat. Non-blocking, an open of a FIFO returns at once
+	// and fails the check below.
+	f, err := root.OpenFile(file, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -559,6 +584,26 @@ func (t *taskbox) remove(ctx context.Context, name string, keep bool) error {
 	t.mu.Unlock()
 	slog.Info("removed sandbox", "sandbox", name)
 	return nil
+}
+
+// holds reports whether the Task is an open Task whose status labels are all among statuses.
+// SetStatus adds the new label before it removes the old one, so any other status means the Task
+// is on its way somewhere else, to stuck or back to a person.
+func holds(task github.Issue, statuses ...label.Status) bool {
+	if !task.Open || !task.HasLabel(label.Task) {
+		return false
+	}
+	found := false
+	for _, l := range task.Labels {
+		if !label.IsStatus(l) {
+			continue
+		}
+		if !slices.Contains(statuses, label.Status(l)) {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 func failedReason(count int, why string) string {

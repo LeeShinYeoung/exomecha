@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -534,4 +535,43 @@ func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want one", n)
 	}
+}
+
+func TestBuilderRemovesTheRunOfARequeuedTask(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, name := e.startedTask()
+	e.relabel(task, label.Working, label.Queued)
+
+	e.step(task)
+
+	e.wantRemoved(name)
+	e.wantStatus(task, label.Queued)
+}
+
+// A failed GitHub call can leave both labels while the Task goes to stuck. builder must not take it back.
+func TestBuilderLetsATaskOnItsWayToStuckGo(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, name := e.startedTask()
+	if err := e.deps.GitHub.AddLabel(t.Context(), task, string(label.Stuck)); err != nil {
+		t.Fatal(err)
+	}
+
+	e.step(task)
+
+	e.wantRemoved(name)
+	if got := e.statuses(task); !slices.Contains(got, string(label.Stuck)) || slices.Contains(got, string(label.Queued)) {
+		t.Errorf("status labels = %q, want stuck kept and no requeue", got)
+	}
+}
+
+func TestBuilderStuckWhenNoCommitIsCheckedOut(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, name := e.startedTask()
+	e.play(name, func(repo string) { gittest.Run(t, repo, "checkout", "-q", "--orphan", "empty") }, builderDone)
+
+	e.step(task)
+
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "no commit checked out", label.Pending)
+	e.wantRemoved(name)
 }

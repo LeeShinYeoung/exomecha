@@ -81,7 +81,7 @@ func (r *resolver) handle(ctx context.Context, n int, name string) error {
 	if err != nil {
 		return err
 	}
-	if !task.Open || !task.HasLabel(label.Task) || !task.HasLabel(string(label.Review)) {
+	if !holds(task, label.Review) {
 		r.box.forget(name)
 		if run.state == none {
 			return nil
@@ -251,6 +251,11 @@ func (r *resolver) harvest(ctx context.Context, name string, s started, n int) e
 		return r.failed(ctx, n, name, "the AI's result was not in the expected form", fmt.Sprintf("result %q", out.Result))
 	}
 
+	if committed, err := r.box.committed(ctx, name); err != nil {
+		return err
+	} else if !committed {
+		return r.stuck(ctx, n, name, noCommit+"\n\n"+out.Reason)
+	}
 	head, err := r.box.fetch(ctx, name)
 	if err != nil {
 		return err
@@ -325,14 +330,18 @@ func (r *resolver) stuck(ctx context.Context, n int, name, reason string) error 
 // Task stays in review, so resolver starts over at a later round.
 func (r *resolver) failed(ctx context.Context, n int, name, why, detail string) error {
 	slog.Warn("resolver run failed", "task", n, "sandbox", name, "why", why, "detail", detail, "stderr", r.box.tail(name, "stderr.log"))
-	if err := r.box.remove(ctx, name, true); err != nil {
-		return err
-	}
-	if count := r.box.fail(name); count >= maxFailures {
+	// Stuck goes first. With the sandbox gone and the Task still in review, a failed GitHub call
+	// would start a fourth run.
+	if count := r.box.failures(name) + 1; count >= maxFailures {
 		if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, failedReason(count, why)); err != nil {
 			return err
 		}
 		r.box.forget(name)
+		return r.box.remove(ctx, name, true)
 	}
+	if err := r.box.remove(ctx, name, true); err != nil {
+		return err
+	}
+	r.box.fail(name)
 	return nil
 }

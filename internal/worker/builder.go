@@ -104,8 +104,7 @@ func (b *builder) handle(ctx context.Context, n int, name string) error {
 	if err != nil {
 		return err
 	}
-	queued, working := task.HasLabel(string(label.Queued)), task.HasLabel(string(label.Working))
-	if !task.Open || !task.HasLabel(label.Task) || !queued && !working {
+	if !holds(task, label.Queued, label.Working) {
 		b.box.forget(name)
 		if r.state == none {
 			return nil
@@ -113,13 +112,16 @@ func (b *builder) handle(ctx context.Context, n int, name string) error {
 		slog.Info("removing the sandbox of a Task that left builder", "task", n, "state", r.state)
 		return b.box.remove(ctx, name, false)
 	}
+	working := task.HasLabel(string(label.Working))
+	// A queued Task with a sandbox was sent back by a person, and its run holds a slot for nothing.
+	if !working && r.state != none {
+		slog.Info("removing the sandbox of a Task that was requeued", "task", n, "state", r.state)
+		return b.box.remove(ctx, name, false)
+	}
 	if r.state == running || !b.box.due(name) {
 		return nil
 	}
 	if !working {
-		if r.state != none {
-			return b.box.remove(ctx, name, false)
-		}
 		return b.start(ctx, task, name)
 	}
 
@@ -263,6 +265,11 @@ func (b *builder) harvest(ctx context.Context, task github.Issue, name string, s
 		return b.failed(ctx, n, name, "the AI's result was not in the expected form", fmt.Sprintf("result %q", out.Result))
 	}
 
+	if committed, err := b.box.committed(ctx, name); err != nil {
+		return err
+	} else if !committed {
+		return b.stuck(ctx, n, name, noCommit+"\n\n"+out.Summary)
+	}
 	head, err := b.box.fetch(ctx, name)
 	if err != nil {
 		return err
@@ -333,15 +340,17 @@ func (b *builder) stuck(ctx context.Context, n int, name, reason string) error {
 // failed removes a run that failed and starts the Task over, or after maxFailures in a row sends it to stuck.
 func (b *builder) failed(ctx context.Context, n int, name, why, detail string) error {
 	slog.Warn("builder run failed", "task", n, "sandbox", name, "why", why, "detail", detail, "stderr", b.box.tail(name, "stderr.log"))
-	if err := b.box.remove(ctx, name, true); err != nil {
-		return err
-	}
-	if count := b.box.fail(name); count >= maxFailures {
+	// Stuck goes first. A Task left working with no sandbox by a failed GitHub call would start again.
+	if count := b.box.failures(name) + 1; count >= maxFailures {
 		if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, failedReason(count, why)); err != nil {
 			return err
 		}
 		b.box.forget(name)
-		return nil
+		return b.box.remove(ctx, name, true)
 	}
+	if err := b.box.remove(ctx, name, true); err != nil {
+		return err
+	}
+	b.box.fail(name)
 	return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
 }

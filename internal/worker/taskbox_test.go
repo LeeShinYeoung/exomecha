@@ -246,3 +246,14 @@ func TestSlotsCountEveryTaskSandbox(t *testing.T) {
 		t.Errorf("ready with both slots used = %v, %v", ok, err)
 	}
 }
+
+// owner/repo-v2's sandboxes start with owner/repo's prefix too, and must not take owner/repo's slots.
+func TestSlotsCountOnlyThisRepository(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.sbx.add(e.deps.SandboxPrefix + "1-builder")
+	e.sbx.add(e.deps.SandboxPrefix + "v2-3-builder")
+	e.sbx.add(e.deps.SandboxPrefix + "v2-4-resolver")
+	if ok, err := e.box.ready(t.Context()); err != nil || !ok {
+		t.Errorf("ready with one slot of this repository used = %v, %v", ok, err)
+	}
+}

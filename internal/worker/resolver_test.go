@@ -258,3 +258,17 @@ func TestResolverStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 		t.Errorf("a branch change counted as a failed run")
 	}
 }
+
+func TestResolverStuckWhenNoCommitIsCheckedOut(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, name, _ := e.conflicted()
+	e.play(name, func(repo string) {
+		gittest.Run(t, repo, "merge", "--abort")
+		gittest.Run(t, repo, "checkout", "-q", "--orphan", "empty")
+	}, resolverDone)
+
+	e.resolve(task)
+
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "no commit checked out", label.Review)
+}
