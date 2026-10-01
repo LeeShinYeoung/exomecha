@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // The functions here work in the shared clone itself. The AI never works in it, so its config
@@ -72,9 +73,15 @@ func hasConflictMarker(content string) bool {
 	return false
 }
 
+// A transfer with a sandbox moves the whole repository in well under a minute. One that hangs,
+// on an sbx that stopped answering, would otherwise hold mu and stall every worker.
+var sandboxTransferTimeout = 5 * time.Minute
+
 // SendTo pushes the base branch's commit as origin/<base>, and commit as branch, into the
 // repository at url.
 func (g *Git) SendTo(ctx context.Context, url, baseCommit, branch, commit string) error {
+	ctx, cancel := context.WithTimeout(ctx, sandboxTransferTimeout)
+	defer cancel()
 	_, err := g.runSandbox(ctx, g.repoDir(), "push", "--quiet", url,
 		baseCommit+":refs/remotes/origin/"+g.base,
 		commit+":refs/heads/"+branch)
@@ -86,7 +93,9 @@ func (g *Git) FetchFrom(ctx context.Context, url, name string) (string, error) {
 	ref := "refs/coworker/" + name
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if _, err := g.runSandbox(ctx, g.repoDir(), "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", url, "+HEAD:"+ref); err != nil {
+	fetchCtx, cancel := context.WithTimeout(ctx, sandboxTransferTimeout)
+	defer cancel()
+	if _, err := g.runSandbox(fetchCtx, g.repoDir(), "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", url, "+HEAD:"+ref); err != nil {
 		return "", err
 	}
 	commit, ok, err := g.Rev(ctx, ref)

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Git struct {
@@ -67,6 +68,9 @@ func (g *Git) runSandbox(ctx context.Context, dir string, args ...string) (strin
 func (g *Git) command(ctx context.Context, dir string, extra []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// A command git started, such as the one in a sandbox URL, can keep git's output open after
+	// git is killed. Wait must still return, or the caller holds mu forever.
+	cmd.WaitDelay = 5 * time.Second
 	config := []string{
 		"http.lowSpeedLimit", "1000",
 		"http.lowSpeedTime", lowSpeedTime,
