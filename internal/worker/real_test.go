@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,4 +73,56 @@ func TestRealBuilderRun(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRealResolverRun is TestRealBuilderRun for resolver: a PR that conflicts with main on one line.
+func TestRealResolverRun(t *testing.T) {
+	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
+		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
+	}
+	e := newEnv(t, map[string]string{
+		"greeting.txt": "hello\n",
+		setupScript:    "git config user.name 'coworker test'\ngit config user.email test@example.com\n",
+	})
+	sbx := sandbox.CLI{}
+	e.deps.Sandboxes = sbx
+	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-r%d-", time.Now().UnixNano()%100_000)
+	e.box = newTaskbox(e.deps, nil)
+	task, _, head := e.conflictTask(map[string]string{"greeting.txt": "hello\nfrom the feature\n"}, map[string]string{"greeting.txt": "hello\nfrom main\n"})
+	e.gh.AddComment(task, "If greeting.txt conflicts, keep both added lines, main's line first.")
+	name := e.resolverBox(task)
+	t.Cleanup(func() {
+		if err := sbx.Remove(context.Background(), name); err != nil {
+			t.Errorf("remove %s: %v", name, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	for {
+		if err := e.resolver().Handle(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		if gittest.Head(e.origin, branchName(task)) != head || len(e.gh.Issue(task).Comments) > 1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("not resolved after 10 minutes. stderr: %s", e.box.tail(name, "stderr.log"))
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	if comments := e.gh.Issue(task).Comments; len(comments) > 1 {
+		t.Fatalf("resolver commented: %q", comments[len(comments)-1].Body)
+	}
+	if n := len(gittest.Parents(t, e.origin, branchName(task))); n != 2 {
+		t.Errorf("branch head has %d parents, want a merge commit", n)
+	}
+	got := gittest.ReadFile(t, e.origin, branchName(task), "greeting.txt")
+	if strings.Contains(got, "<<<<<<<") || strings.Contains(got, ">>>>>>>") {
+		t.Errorf("greeting.txt still has conflict markers: %q", got)
+	}
+	t.Logf("greeting.txt after the merge: %q", got)
+	e.wantStatus(task, label.Review)
 }
