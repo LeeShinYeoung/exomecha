@@ -14,6 +14,7 @@ import (
 	"github.com/LeeShinYeoung/coworker/internal/git"
 	"github.com/LeeShinYeoung/coworker/internal/github"
 	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/coworker/internal/sandbox"
 )
 
 type Worker interface {
@@ -32,7 +33,40 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent
+	Agent  agent.Agent // runs claude on this machine, for splitter, sequencer and reviewer
+
+	// builder and resolver run claude in sandboxes.
+	Sandboxes   Sandboxes
+	Environment Environment
+	// SandboxDir holds one directory per task sandbox, shared with that sandbox.
+	SandboxDir string
+	// SandboxPrefix starts the name of every task sandbox of this repository and nothing else.
+	SandboxPrefix string
+	// SandboxLimit is how many task sandboxes may exist at once.
+	SandboxLimit int
+}
+
+type Sandboxes interface {
+	List(ctx context.Context) ([]sandbox.Box, error)
+	// Create makes a sandbox that keeps running with no exec session open. An empty template
+	// is sbx's own claude template. Hosts in deny are blocked from the start.
+	Create(ctx context.Context, name, template, workspace string, deny []string) error
+	Allow(ctx context.Context, name string, hosts []string) error
+	Exec(ctx context.Context, name, dir string, env []string, args ...string) ([]byte, error)
+	// Start returns at once and leaves args running after the exec session ends.
+	Start(ctx context.Context, name, dir string, args ...string) error
+	// Remove of a sandbox that does not exist is not an error.
+	Remove(ctx context.Context, name string) error
+	GitURL(name, dir string) string
+}
+
+// Environment is the sandbox setup the target project asks for on its base branch.
+// An error whose chain holds a value with a Why() string method is one only a person can fix,
+// and Why() is what to tell them.
+type Environment interface {
+	// ok is false when the project has no Dockerfile for coworker, and sbx's own template is used.
+	Template(ctx context.Context) (ref string, ok bool, err error)
+	AllowedHosts(ctx context.Context) ([]string, error)
 }
 
 const interval = 60 * time.Second

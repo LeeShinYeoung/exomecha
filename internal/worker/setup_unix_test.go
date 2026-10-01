@@ -36,7 +36,7 @@ func wantProcessGone(t *testing.T, pidFile string) {
 	}
 	// The kill is already sent. It only has to land.
 	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if gone(pid) {
+		if processGone(pid) {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -46,7 +46,7 @@ func wantProcessGone(t *testing.T, pidFile string) {
 	}
 }
 
-func gone(pid int) bool {
+func processGone(pid int) bool {
 	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return true
 	}
