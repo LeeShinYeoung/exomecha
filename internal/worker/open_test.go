@@ -205,12 +205,12 @@ func TestSetupFailure(t *testing.T) {
 	wantContains(t, "log", log.String(), "a secret in the output")
 }
 
-func TestSandboxSetupUsesPipefail(t *testing.T) {
+func TestSetupUsesPipefail(t *testing.T) {
 	e := newEnv(t, setupRepo("false | true\n"))
 	e.wantOpenProblem(e.testLaunch(), "did not end cleanly (exit status 1)")
 }
 
-func TestSandboxSetupTimesOut(t *testing.T) {
+func TestSetupTimesOut(t *testing.T) {
 	// 124 is what timeout exits with when it stops the script.
 	e := newEnv(t, setupRepo("exit 124\n"))
 	e.wantOpenProblem(e.testLaunch(), "ran past 10 minutes")

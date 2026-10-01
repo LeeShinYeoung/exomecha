@@ -47,7 +47,7 @@ func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
 	}
 	wantInts(t, "reviewer Pick", picked, []int{mergeable, computing})
 
-	picked, err = (&resolver{e.deps}).Pick(t.Context())
+	picked, err = e.resolver().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

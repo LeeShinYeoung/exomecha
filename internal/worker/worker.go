@@ -85,7 +85,7 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 		{&sequencer{d}, 1, gate},
 		{&builder{d, box}, 0, nil},
 		{&reviewer{d}, 0, gate},
-		{&resolver{d}, 0, gate},
+		{&resolver{d, box}, 0, nil},
 	}
 	var wg sync.WaitGroup
 	for _, w := range workers {
