@@ -142,7 +142,7 @@ func TestPushCommit(t *testing.T) {
 }
 
 // coworker's own push carries the token in its environment, so it must not run the project's hooks.
-func TestPushCommitDoesNotRunProjectHooks(t *testing.T) {
+func TestPushDoesNotRunProjectHooks(t *testing.T) {
 	f := setup(t, map[string]string{"README.md": "hello\n"})
 	if err := f.git.Sync(t.Context()); err != nil {
 		t.Fatal(err)

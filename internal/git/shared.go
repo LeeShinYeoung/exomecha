@@ -2,7 +2,9 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -54,14 +56,14 @@ func (g *Git) ConflictMarkers(ctx context.Context, commit string, files []string
 		if err != nil {
 			return nil, err
 		}
-		if ok && hasMarker(content) {
+		if ok && hasConflictMarker(content) {
 			left = append(left, name)
 		}
 	}
 	return left, nil
 }
 
-func hasMarker(content string) bool {
+func hasConflictMarker(content string) bool {
 	for line := range strings.Lines(content) {
 		if strings.HasPrefix(line, "<<<<<<< ") || strings.HasPrefix(line, ">>>>>>> ") {
 			return true
@@ -108,4 +110,17 @@ func (g *Git) PushCommit(ctx context.Context, commit, branch string, force bool)
 	}
 	_, err := g.runGitHub(ctx, g.repoDir(), "push", "--quiet", "origin", ref)
 	return err
+}
+
+// yesNo reads a git command that answers with its exit code: 0 for yes, 1 for no.
+func yesNo(err error) (bool, error) {
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return false, nil
+	default:
+		return false, err
+	}
 }
