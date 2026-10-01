@@ -2,7 +2,7 @@
 
 The user works with many sessions and people at once. A long reply hides the point and makes the user lose track of what is being built. Keep replies short.
 
-- Start every reply with three sections. Each starts with a bold heading on its own line (`**Goal**`, `**Status**`, `**Next**`), followed by one to three lines. Keep these headings in English whatever language the reply is in. After the three sections, put a line with only `---`, with a blank line before and after it.
+- Start every reply with three sections. Each starts with a heading on its own line (`<Goal>`, `<Status>`, `<Next>`), followed by one to three lines. Keep these headings in English whatever language the reply is in. After the three sections, put a line with only `---`, with a blank line before and after it.
 - After those sections, put the conclusion first: the answer, the result, or the decision needed. Give reasons after it, only when needed.
 - Write only what the user needs to decide or act. Give details when asked.
 - When a decision is needed, ask one question, with the options.
