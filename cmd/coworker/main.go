@@ -17,6 +17,7 @@ import (
 	"github.com/LeeShinYeoung/coworker/internal/git"
 	"github.com/LeeShinYeoung/coworker/internal/github"
 	"github.com/LeeShinYeoung/coworker/internal/sandbox"
+	"github.com/LeeShinYeoung/coworker/internal/template"
 	"github.com/LeeShinYeoung/coworker/internal/worker"
 )
 
@@ -81,16 +82,18 @@ func run() error {
 		return err
 	}
 	root := filepath.Join(home, ".coworker", owner, name)
+	g := git.New(root, owner, name, base, token)
 	deps := worker.Deps{
-		GitHub:       gh,
-		Git:          git.New(root, owner, name, base, token),
-		Agent:        agent.Claude{},
-		Sandboxes:    sbx,
-		SandboxDir:   filepath.Join(root, "sandboxes"),
-		SandboxLimit: sandboxes,
-	}
-	if deps.Environment == nil || deps.SandboxPrefix == "" {
-		return errors.New("this build has no sandbox environment or sandbox name prefix wired in")
+		GitHub:      gh,
+		Git:         g,
+		Agent:       agent.Claude{},
+		Sandboxes:   sbx,
+		Environment: template.New(g, owner, name),
+		SandboxDir:  filepath.Join(root, "sandboxes"),
+		// 32 leaves room for "9999999-resolver" in sbx's 63-character names, and is the max the
+		// template package uses, so the build sandbox and templates carry the same slug.
+		SandboxPrefix: "coworker-task-" + template.Slug(owner, name, 32) + "-",
+		SandboxLimit:  sandboxes,
 	}
 
 	created, err := gh.EnsureLabels(ctx)
