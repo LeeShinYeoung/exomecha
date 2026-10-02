@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"slices"
@@ -161,4 +163,75 @@ func TestRealResolverRun(t *testing.T) {
 	t.Logf("greeting.txt after the merge: %q", got)
 	e.wantAuthor(branchName(task))
 	e.wantStatus(task, label.Review)
+}
+
+// TestRealReviewerRun is TestRealBuilderRun for reviewer: a PR that adds hello.txt, reviewed in a
+// sandbox from sbx's default template and merged with the head the run reviewed.
+func TestRealReviewerRun(t *testing.T) {
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" || os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1 to run claude in a real sandbox")
+	}
+	e := newEnv(t, map[string]string{"README.md": "A practice project.\n"})
+	sbx := sandbox.CLI{}
+	e.deps.Sandboxes = sbx
+	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-v%d-", time.Now().UnixNano()%100_000)
+	e.runs = newRuns(e.deps, nil)
+	prd := e.gh.AddIssue("Greet visitors", "People who open the repository should find a greeting file at its root.\n", label.PRD, label.Tasked)
+	task := e.gh.AddIssue("Add hello.txt",
+		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`.\n\n"+
+			"## Acceptance criteria\n\n- `hello.txt` exists at the root and holds exactly the line `hello`.\n",
+		label.Task, string(label.Review))
+	e.gh.AddSubIssue(prd, task)
+	head := gittest.Commit(t, e.origin, branchName(task), "main", map[string]string{"hello.txt": "hello\n"})
+	pr := e.gh.AddPull(branchName(task), "main")
+	e.gh.SetMergeable(pr, new(true))
+	name := e.reviewerBox(task)
+	t.Cleanup(func() {
+		if err := sbx.Remove(context.Background(), name); err != nil {
+			t.Errorf("remove %s: %v", name, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	for {
+		if err := e.reviewer().Handle(ctx, task); err != nil {
+			t.Fatal(err)
+		}
+		status := e.statuses(task)
+		if e.gh.Pull(pr).Merged || len(status) != 1 || status[0] != string(label.Review) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("not reviewed after 10 minutes. stderr: %s", e.runs.tail(name, "stderr.log"))
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	p := e.gh.Pull(pr)
+	if !p.Merged {
+		var reviews []string
+		for _, r := range p.Reviews {
+			reviews = append(reviews, r.Body)
+		}
+		t.Fatalf("PR not merged: status %q, reviews %q, comments %q", e.statuses(task), reviews, e.gh.Issue(task).Comments)
+	}
+	if p.MergedSHA != head {
+		t.Errorf("merged %s, want the reviewed head %s", p.MergedSHA, head)
+	}
+	if i := e.gh.Issue(task); i.Open || i.StateReason != "completed" {
+		t.Errorf("Task open=%v reason=%q, want closed as completed", i.Open, i.StateReason)
+	}
+	e.wantStatus(task, label.None)
+	if _, err := os.Lstat(e.runs.dir(name)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("run directory left after the merge: %v", err)
+	}
+	if boxes, err := sbx.List(t.Context()); err == nil {
+		for _, b := range boxes {
+			if b.Name == name {
+				t.Errorf("sandbox %s left after the merge", name)
+			}
+		}
+	}
 }
