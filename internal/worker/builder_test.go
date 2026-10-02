@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +19,7 @@ import (
 
 const builderDone = `{"result": "done", "summary": "did it", "stuck_reason": ""}`
 
-func (e *env) builder() *builder { return &builder{e.deps, e.box} }
+func (e *env) builder() *builder { return &builder{e.deps, e.runs} }
 
 // step runs one builder round for the Task and fails the test on an error.
 func (e *env) step(n int) {
@@ -30,7 +29,7 @@ func (e *env) step(n int) {
 	}
 }
 
-func (e *env) builderBox(n int) string { return e.box.name(n, builderRole) }
+func (e *env) builderBox(n int) string { return e.runs.name(builderRole, n) }
 
 // play acts as the AI in a started sandbox: work changes the sandbox's repository, then claude
 // ends with the structured result.
@@ -63,8 +62,16 @@ func (e *env) wantRemoved(name string) {
 	if e.sbx.exists(name) {
 		e.t.Errorf("sandbox %s still exists", name)
 	}
-	if _, err := os.Stat(e.box.dir(name)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(e.runs.dir(name)); !errors.Is(err, os.ErrNotExist) {
 		e.t.Errorf("directory of %s still exists: %v", name, err)
+	}
+}
+
+// wantKept checks that the failed run's file was kept for a person to read.
+func (e *env) wantKept(name, file string) {
+	e.t.Helper()
+	if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name, file)); err != nil {
+		e.t.Errorf("the failed run's %s was not kept: %v", file, err)
 	}
 }
 
@@ -74,16 +81,6 @@ func (e *env) wantAuthor(ref string) {
 	want := e.deps.GitName + " <" + e.deps.GitEmail + ">"
 	if got := gittest.Run(e.t, e.origin, "log", "-1", "--format=%an <%ae>%n%cn <%ce>", ref); got != want+"\n"+want {
 		e.t.Errorf("author and committer of %s = %q, want %q for both", ref, got, want)
-	}
-}
-
-func (e *env) relabel(n int, from, to label.Status) {
-	e.t.Helper()
-	if err := e.deps.GitHub.RemoveLabel(e.t.Context(), n, string(from)); err != nil {
-		e.t.Fatal(err)
-	}
-	if err := e.deps.GitHub.AddLabel(e.t.Context(), n, string(to)); err != nil {
-		e.t.Fatal(err)
 	}
 }
 
@@ -99,7 +96,7 @@ func TestBuilderPicks(t *testing.T) {
 	working := e.gh.AddIssue("working", "", label.Task, string(label.Working))
 	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.Task, string(label.Review))
 	e.sbx.add(e.builderBox(reviewed))
-	e.sbx.add(e.box.name(waiting, "resolver"))
+	e.sbx.add(e.runs.name(resolverRole, waiting))
 
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
@@ -118,6 +115,34 @@ func TestBuilderIgnoresOutsiderTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantInts(t, "Pick", picked, []int{mine})
+}
+
+func TestBuilderPlace(t *testing.T) {
+	status := func(ss ...label.Status) []string {
+		out := []string{label.Task}
+		for _, s := range ss {
+			out = append(out, string(s))
+		}
+		return out
+	}
+	for _, c := range []struct {
+		open   bool
+		labels []string
+		want   place
+	}{
+		{true, status(label.Queued), ready},
+		{true, status(label.Working), working},
+		// exomecha moves a status in one call, so two are a person's doing.
+		{true, status(label.Queued, label.Working), away},
+		{true, status(label.Working, label.Stuck), away},
+		{true, status(label.Pending), away},
+		{true, []string{string(label.Working)}, away},
+		{false, status(label.Working), away},
+	} {
+		if got := (&builder{}).place(github.Issue{Open: c.open, Labels: c.labels}); got != c.want {
+			t.Errorf("place of an issue open %v with %q = %s, want %s", c.open, c.labels, placeNames[got], placeNames[c.want])
+		}
+	}
 }
 
 func TestBuilderPushesAndOpensPR(t *testing.T) {
@@ -278,13 +303,6 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 	if n := len(e.gh.Issue(task).Comments); n != 0 {
 		t.Errorf("an sbx error left %d comments", n)
 	}
-	// An error of exomecha's own is no failure of the run, but the next try waits.
-	if e.box.due(e.builderBox(task)) {
-		t.Error("no backoff after an error")
-	}
-	if got := e.box.fail(e.builderBox(task)); got != 1 {
-		t.Errorf("an sbx error counted as a failed run: %d", got-1)
-	}
 }
 
 func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
@@ -304,8 +322,8 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
 	e.deps.Environment = template.New(e.deps.Git, "owner", "repo")
-	e.box = newTaskbox(e.deps, nil)
-	e.box.now = e.clock.now
+	e.runs = newRuns(e.deps, nil)
+	e.runs.now = e.clock.now
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 
 	e.step(task)
@@ -314,29 +332,6 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	reason := "`.exomecha/allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it on the base branch."
 	wantStuckComment(t, e.lastComment(task), reason, label.Pending)
 	e.wantRemoved(e.builderBox(task))
-}
-
-func TestBuilderRequeuesWorkingTaskWithoutSandbox(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
-	e.step(task)
-	e.wantStatus(task, label.Queued)
-	if got := e.box.fail(e.builderBox(task)); got != 1 {
-		t.Errorf("a working Task with no sandbox counted as a failure")
-	}
-}
-
-func TestBuilderRemovesACutOffStart(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
-	name := e.builderBox(task)
-	e.sbx.add(name)
-	e.writeCtl(name, "run.sh", runScript)
-
-	e.step(task)
-
-	e.wantStatus(task, label.Queued)
-	e.wantRemoved(name)
 }
 
 // startedTask starts a builder run for a new queued Task and returns the Task and its sandbox.
@@ -349,48 +344,6 @@ func (e *env) startedTask() (int, string) {
 	return task, name
 }
 
-func TestBuilderStalledRun(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	e.writeCtl(name, "stream.jsonl", "{}\n")
-	e.step(task)
-
-	e.clock.advance(stallAfter - time.Second)
-	e.step(task)
-	e.wantStatus(task, label.Working)
-	e.wantState(name, running)
-	e.clock.advance(2 * time.Second)
-	e.step(task)
-
-	e.wantStatus(task, label.Queued)
-	e.wantRemoved(name)
-	if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name, "stream.jsonl")); err != nil {
-		t.Errorf("the stalled run's files were not kept: %v", err)
-	}
-}
-
-func TestBuilderDeadAndGoneRuns(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		kill func(e *env, name string)
-	}{
-		{"stopped", func(e *env, name string) { e.sbx.stop(name) }},
-		{"removed", func(e *env, name string) { e.sbx.drop(name) }},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-			task, name := e.startedTask()
-			c.kill(e, name)
-			e.step(task)
-			e.wantStatus(task, label.Queued)
-			e.wantRemoved(name)
-			if got := e.box.fail(name); got != 2 {
-				t.Errorf("the run was counted %d times, want once", got-1)
-			}
-		})
-	}
-}
-
 func TestBuilderRunNotInAutoModeFails(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, name := e.startedTask()
@@ -399,75 +352,90 @@ func TestBuilderRunNotInAutoModeFails(t *testing.T) {
 
 	e.step(task)
 
-	e.wantStatus(task, label.Queued)
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "claude did not run in auto permission mode", label.Pending)
 	if head := gittest.Head(e.origin, branchName(task)); head != "" {
 		t.Errorf("work from a run outside auto mode was pushed: %s", head)
 	}
 }
 
-func TestBuilderThreeFailuresGoStuck(t *testing.T) {
+func TestBuilderFailedRunGoesStuck(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, name := e.startedTask()
-	for i := 1; i <= 3; i++ {
-		e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
-			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"secret detail"}`+"\n")
-		e.writeCtl(name, "exit", "1\n")
-		e.step(task)
-		e.wantRemoved(name)
-		if i == 3 {
-			break
-		}
-		e.wantStatus(task, label.Queued)
-		e.step(task)
-		if e.sbx.exists(name) {
-			t.Fatalf("restarted before the backoff passed, after failure %d", i)
-		}
-		e.clock.advance(maxBackoff)
-		e.step(task)
-		e.wantState(name, running)
-	}
+	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
+		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"secret detail"}`+"\n")
+	e.writeCtl(name, "exit", "1\n")
+
+	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "failed 3 times in a row", label.Pending)
-	wantContains(t, "stuck comment", comment, "claude ended with an error")
+	wantStuckComment(t, comment, "The AI's run failed because claude ended with an error", label.Pending)
 	wantNotContains(t, "stuck comment", comment, "secret detail")
 	wantContains(t, "log", log.String(), "secret detail")
+	e.wantRemoved(name)
+	e.wantKept(name, "stream.jsonl")
 }
 
-func TestBuilderUsageLimitEndIsNotCounted(t *testing.T) {
+func TestBuilderResultInAnotherFormFails(t *testing.T) {
+	for _, c := range []struct{ name, result string }{
+		{"unknown result", `{"result": "maybe", "summary": "", "stuck_reason": ""}`},
+		{"not an object", `["done"]`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+			task, name := e.startedTask()
+			e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), c.result)
+
+			e.step(task)
+
+			e.wantStatus(task, label.Stuck)
+			wantStuckComment(t, e.lastComment(task), "The AI's run failed because "+badResult, label.Pending)
+			e.wantKept(name, "stream.jsonl")
+			if head := gittest.Head(e.origin, branchName(task)); head != "" {
+				t.Errorf("work from a result in another form was pushed: %s", head)
+			}
+		})
+	}
+}
+
+// The reading the start passed missed the limit the run hit. The next start reads usage again and
+// waits for the reset, instead of starting a run that would hit the limit too.
+func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	f := newFakeUsage()
+	e.runs.gate = f.gate
 	task, name := e.startedTask()
 	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
 		`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}`+"\n"+
 		`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit"}`+"\n")
 	e.writeCtl(name, "exit", "1\n")
+	f.usage.FiveHour.Used = 1
 
 	e.step(task)
 
 	e.wantStatus(task, label.Queued)
 	e.wantRemoved(name)
-	if got := e.box.fail(name); got != 1 {
-		t.Errorf("a usage limit end counted as a failed run")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a usage limit end left %d comments", n)
 	}
-}
-
-func TestBuilderRemovesTheSandboxWhenTheLabelChanges(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	e.relabel(task, label.Working, label.Pending)
-
 	e.step(task)
+	f.wantChecks(t, 2)
+	if e.sbx.exists(name) {
+		t.Fatal("started again over the limit")
+	}
 
-	e.wantRemoved(name)
-	e.wantStatus(task, label.Pending)
+	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.Add(5 * time.Hour)}
+	f.clock = f.clock.Add(2 * time.Hour)
+	e.step(task)
+	e.wantState(name, running)
 }
 
 func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
-	e.sbx.add(e.box.name(99, "resolver"))
+	e.runs.ProjectLimit = 1
+	e.sbx.add(e.runs.name(resolverRole, 99))
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 
 	e.step(task)
@@ -481,7 +449,7 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 // A template build takes minutes before the sandbox exists. The start must hold its slot all along.
 func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
+	e.runs.ProjectLimit = 1
 	e.envr.wait = make(chan chan struct{})
 	first := e.gh.AddIssue("First", "", label.Task, string(label.Queued))
 	second := e.gh.AddIssue("Second", "", label.Task, string(label.Queued))
@@ -517,7 +485,7 @@ func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	running, name := e.startedTask()
-	e.box.gate = &Gate{
+	e.runs.gate = &Gate{
 		Check: func(context.Context) (agent.Usage, error) {
 			return agent.Usage{Known: true, FiveHour: agent.Window{Used: 0.99}}, nil
 		},
@@ -543,8 +511,8 @@ func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 	task, name := e.startedTask()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
 
-	e.box = newTaskbox(e.deps, nil)
-	e.box.now = e.clock.now
+	e.runs = newRuns(e.deps, nil)
+	e.runs.now = e.clock.now
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -574,8 +542,8 @@ func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	if got := gittest.Head(e.origin, branch); got != pushed {
 		t.Errorf("branch = %s, want the person's push %s left alone", got, pushed)
 	}
-	if got := e.box.fail(name); got != 1 {
-		t.Errorf("a branch change counted as a failed run")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a branch change left %d comments", n)
 	}
 }
 
@@ -600,33 +568,6 @@ func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
 	e.wantStatus(task, label.Review)
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want one", n)
-	}
-}
-
-func TestBuilderRemovesTheRunOfARequeuedTask(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	e.relabel(task, label.Working, label.Queued)
-
-	e.step(task)
-
-	e.wantRemoved(name)
-	e.wantStatus(task, label.Queued)
-}
-
-// A failed GitHub call can leave both labels while the Task goes to stuck. builder must not take it back.
-func TestBuilderLetsATaskOnItsWayToStuckGo(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	if err := e.deps.GitHub.AddLabel(t.Context(), task, string(label.Stuck)); err != nil {
-		t.Fatal(err)
-	}
-
-	e.step(task)
-
-	e.wantRemoved(name)
-	if got := e.statuses(task); !slices.Contains(got, string(label.Stuck)) || slices.Contains(got, string(label.Queued)) {
-		t.Errorf("status labels = %q, want stuck kept and no requeue", got)
 	}
 }
 

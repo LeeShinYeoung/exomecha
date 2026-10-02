@@ -3,12 +3,11 @@ package worker
 import (
 	"context"
 	"errors"
-	"slices"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 // fakeUsage is a Gate whose clock the test moves and whose readings the test sets.
@@ -125,52 +124,71 @@ func TestGateCheckError(t *testing.T) {
 	}
 }
 
-// pickOnly is a Worker that picks fixed numbers and records what it handles.
-type pickOnly struct {
-	picks   []int
-	mu      sync.Mutex
-	handled []int
-}
-
-func (*pickOnly) Name() string                          { return "test" }
-func (p *pickOnly) Pick(context.Context) ([]int, error) { return p.picks, nil }
-func (p *pickOnly) Handle(_ context.Context, n int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.handled = append(p.handled, n)
-	return nil
-}
-
-func runRound(t *testing.T, w *pickOnly, gate *Gate) {
-	t.Helper()
-	var wg sync.WaitGroup
-	round(t.Context(), w, nil, &locks{held: map[int]bool{}}, &wg, gate)
-	wg.Wait()
-}
-
-func TestRoundChecksUsageOnlyWithWork(t *testing.T) {
+// A run ended at the limit, so the reading missed it. The next start reads again, and the gate
+// then stays closed until the reset.
+func TestGateReadsAgainWhenStale(t *testing.T) {
 	f := newFakeUsage()
-	runRound(t, &pickOnly{}, f.gate)
-	f.wantChecks(t, 0)
+	f.wantOpen(t, true)
+	f.usage.FiveHour.Used = 0.95
+	f.gate.stale()
+	f.wantOpen(t, false)
+	f.wantChecks(t, 2)
 
-	w := &pickOnly{picks: []int{1}}
-	runRound(t, w, f.gate)
-	f.wantChecks(t, 1)
-	wantInts(t, "handled", w.handled, []int{1})
+	f.clock = f.clock.Add(time.Hour)
+	f.wantOpen(t, false)
+	f.wantChecks(t, 2)
 }
 
-func TestRoundSkipsWorkOverTheLimit(t *testing.T) {
+// Only a start reads usage, so a step that starts nothing spends none of it.
+func TestUsageIsReadOnlyForAStart(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	f := newFakeUsage()
+	e.runs.gate = f.gate
+	alone := e.gh.AddIssue("Task with nothing to wait for", "", label.Task, string(label.Pending))
+	task, pr, _ := e.reviewTask()
+	e.gh.SetMergeable(pr, nil)
+
+	e.sequence(alone)
+	e.review(task)
+	f.wantChecks(t, 0)
+	e.wantStatus(alone, label.Queued)
+
+	e.gh.SetMergeable(pr, new(true))
+	e.review(task)
+	f.wantChecks(t, 1)
+	e.wantState(e.reviewerBox(task), running)
+
+	f.clock = f.clock.Add(usageFresh)
+	e.review(task)
+	f.wantChecks(t, 1)
+}
+
+// Over the limit no run starts, a project run or a reader's. A step without claude still goes on.
+func TestNoRunStartsOverTheLimit(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	f := newFakeUsage()
 	f.usage.FiveHour.Used = 0.95
-	w := &pickOnly{picks: []int{1, 2}}
-	runRound(t, w, f.gate)
-	wantInts(t, "handled", w.handled, nil)
-}
+	e.runs.gate = f.gate
+	alone := e.gh.AddIssue("Task with nothing to wait for", "", label.Task, string(label.Pending))
+	prd := e.gh.AddIssue("PRD", "", label.PRD)
+	queued := e.gh.AddIssue("queued", "", label.Task, string(label.Queued))
+	pending := e.gh.AddIssue("pending", "", label.Task, string(label.Pending))
+	review, _, _ := e.reviewTask()
+	conflict, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
-// builder and resolver run with no gate in round, and check it themselves before a start.
-func TestRoundWithoutGateHandlesEverything(t *testing.T) {
-	w := &pickOnly{picks: []int{1, 2}}
-	runRound(t, w, nil)
-	slices.Sort(w.handled)
-	wantInts(t, "handled", w.handled, []int{1, 2})
+	e.sequence(alone)
+	e.split(prd)
+	e.step(queued)
+	e.sequence(pending)
+	e.review(review)
+	e.resolve(conflict)
+
+	e.wantStatus(alone, label.Queued)
+	for _, name := range []string{e.splitterBox(prd), e.builderBox(queued), e.sequencerBox(pending), e.reviewerBox(review), e.resolverBox(conflict)} {
+		if e.sbx.exists(name) {
+			t.Errorf("%s started over the limit", name)
+		}
+	}
+	e.wantStatus(queued, label.Queued)
+	e.wantStatus(pending, label.Pending)
 }

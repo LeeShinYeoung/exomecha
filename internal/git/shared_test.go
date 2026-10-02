@@ -47,7 +47,7 @@ func TestSendToAndFetchFrom(t *testing.T) {
 	writeFile(t, filepath.Join(box, "new.txt"), "new\n")
 	gittest.CommitAll(t, box, "add new.txt")
 
-	head, err := f.git.FetchFrom(t.Context(), box, "exomecha-task-x-1-builder")
+	head, err := f.git.FetchFrom(t.Context(), box, "exomecha-run-x-1-builder")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,11 +67,27 @@ func TestSendToAndFetchFrom(t *testing.T) {
 		t.Errorf("Show(new.txt) on base = %q, %v, %v, want no file", got, ok, err)
 	}
 
-	if err := f.git.DropRef(t.Context(), "exomecha-task-x-1-builder"); err != nil {
+	if err := f.git.DropRef(t.Context(), "exomecha-run-x-1-builder"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := f.git.Rev(t.Context(), "refs/exomecha/exomecha-task-x-1-builder"); err != nil || ok {
+	if _, ok, err := f.git.Rev(t.Context(), "refs/exomecha/exomecha-run-x-1-builder"); err != nil || ok {
 		t.Errorf("ref left after DropRef: %v, %v", ok, err)
+	}
+}
+
+func TestSendToWithoutABranch(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n"})
+	if err := f.git.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	base := f.rev(t, "origin/main")
+	box := sandboxRepo(t)
+
+	if err := f.git.SendTo(t.Context(), box, base, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := gittest.Run(t, box, "for-each-ref", "--format=%(refname) %(objectname)"); got != "refs/remotes/origin/main "+base {
+		t.Errorf("refs in the sandbox = %q, want only origin/main at %s", got, base)
 	}
 }
 
@@ -171,19 +187,5 @@ func TestConflictMarkers(t *testing.T) {
 	left, err := f.git.ConflictMarkers(t.Context(), commit, []string{"한글.txt", "b.txt", "gone.txt"})
 	if err != nil || !slices.Equal(left, []string{"한글.txt"}) {
 		t.Errorf("ConflictMarkers = %q, %v, want only 한글.txt", left, err)
-	}
-}
-
-func TestOpenBranch(t *testing.T) {
-	f := setup(t, map[string]string{"README.md": "hello\n"})
-	gittest.Commit(t, f.origin, "feature", "main", map[string]string{"a.txt": "a\n"})
-
-	wt, err := f.git.OpenBranch(t.Context(), "feature")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wt.Remove()
-	if got := readFile(t, filepath.Join(wt.Dir, "a.txt")); got != "a\n" {
-		t.Errorf("worktree is not on the feature branch: a.txt = %q", got)
 	}
 }

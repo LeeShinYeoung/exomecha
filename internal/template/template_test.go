@@ -2,8 +2,6 @@ package template
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"slices"
 	"strings"
@@ -11,53 +9,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestSlug(t *testing.T) {
-	tests := []struct {
-		owner, repo string
-		max         int
-		want        string
-	}{
-		{"LeeShinYeoung", "jazzing", 32, "leeshinyeoung-jazzing"},
-		{"owner", "my.repo_name", 32, "owner-my-repo-name"},
-		{"owner", "a..--b", 32, "owner-a-b"},
-		{"-owner-", ".repo.", 32, "owner-repo"},
-		{"o", strings.Repeat("r", 61), 63, "o-" + strings.Repeat("r", 61)},
-	}
-	for _, tt := range tests {
-		if got := Slug(tt.owner, tt.repo, tt.max); got != tt.want {
-			t.Errorf("Slug(%q, %q, %d) = %q, want %q", tt.owner, tt.repo, tt.max, got, tt.want)
-		}
-	}
-}
-
-func TestSlugTooLong(t *testing.T) {
-	owner, repo := "o", strings.Repeat("r", 62)
-	sum := sha256.Sum256([]byte("o/" + repo))
-	hash := hex.EncodeToString(sum[:])[:8]
-
-	got := Slug(owner, repo, 63)
-	if want := "o-" + strings.Repeat("r", 52) + "-" + hash; got != want {
-		t.Errorf("Slug of 64 chars = %q, want %q", got, want)
-	}
-	if len(got) != 63 {
-		t.Errorf("len = %d, want 63", len(got))
-	}
-	if other := Slug(owner, repo+"x", 63); other == got {
-		t.Errorf("two repos with the same first 54 chars share the slug %q", got)
-	}
-	if upper := Slug("O", strings.ToUpper(repo), 63); upper != got {
-		t.Errorf("Slug in upper case = %q, want the same as lower case %q", upper, got)
-	}
-}
-
-func TestSlugCutAtADash(t *testing.T) {
-	// The cut lands right after "owner-", which must not leave "--" before the hash.
-	got := Slug("owner", strings.Repeat("r", 30), 6+9)
-	if strings.Contains(got, "--") || !strings.HasPrefix(got, "owner-") || len(got) != 14 {
-		t.Errorf("Slug = %q, want owner-<hash>", got)
-	}
-}
 
 func TestNames(t *testing.T) {
 	e := New(fakeFiles{}, "LeeShinYeoung", "jazzing")
@@ -71,11 +22,6 @@ func TestNames(t *testing.T) {
 	}
 	if other := e.ref("FROM docker/sandbox-templates:claude-code-docker\nRUN true\n"); other == ref {
 		t.Errorf("two Dockerfiles share the ref %q", ref)
-	}
-
-	long := New(fakeFiles{}, "some-organization", strings.Repeat("long-repository-name-", 3))
-	if n := len("exomecha-task-" + long.slug + "-9999999-resolver"); n > 63 {
-		t.Errorf("task sandbox name is %d chars, sbx allows 63", n)
 	}
 }
 
@@ -95,9 +41,9 @@ func withDockerfile() fakeFiles { return fakeFiles{dockerfilePath: dockerfile} }
 
 func TestTemplateWithoutDockerfile(t *testing.T) {
 	f := newFake()
-	ref, ok, err := newEnv(f, fakeFiles{}).Template(t.Context())
-	if ref != "" || ok || err != nil {
-		t.Errorf("Template = %q, %v, %v, want no template", ref, ok, err)
+	ref, err := newEnv(f, fakeFiles{}).Template(t.Context())
+	if ref != "" || err != nil {
+		t.Errorf("Template = %q, %v, want no template", ref, err)
 	}
 	if len(f.calls) != 0 {
 		t.Errorf("sbx calls = %q, want none", f.calls)
@@ -111,9 +57,9 @@ func TestTemplateAlreadyLoaded(t *testing.T) {
 	_, tag, _ := strings.Cut(want, ":")
 	f.images = []image{{ID: "abc", Repository: repository, Tag: tag}}
 
-	ref, ok, err := e.Template(t.Context())
-	if ref != want || !ok || err != nil {
-		t.Errorf("Template = %q, %v, %v, want %q", ref, ok, err, want)
+	ref, err := e.Template(t.Context())
+	if ref != want || err != nil {
+		t.Errorf("Template = %q, %v, want %q", ref, err, want)
 	}
 	if !slices.Equal(f.calls, []string{"template ls --json"}) {
 		t.Errorf("sbx calls = %q, want only the template list", f.calls)
@@ -127,9 +73,9 @@ func TestTemplateBuild(t *testing.T) {
 	e := newEnv(f, files)
 	ref := e.ref(dockerfile)
 
-	got, ok, err := e.Template(t.Context())
-	if got != ref || !ok || err != nil {
-		t.Fatalf("Template = %q, %v, %v, want %q", got, ok, err, ref)
+	got, err := e.Template(t.Context())
+	if got != ref || err != nil {
+		t.Fatalf("Template = %q, %v, want %q", got, err, ref)
 	}
 	want := []string{
 		"template ls --json",
@@ -168,8 +114,8 @@ func TestTemplateWithNoSandboxesListed(t *testing.T) {
 	for _, empty := range []string{"No sandboxes found.\n", "\n"} {
 		f := newFake()
 		f.emptyList = empty
-		if _, ok, err := newEnv(f, withDockerfile()).Template(t.Context()); !ok || err != nil {
-			t.Errorf("Template with sbx ls printing %q = %v, %v", empty, ok, err)
+		if ref, err := newEnv(f, withDockerfile()).Template(t.Context()); ref == "" || err != nil {
+			t.Errorf("Template with sbx ls printing %q = %q, %v", empty, ref, err)
 		}
 	}
 }
@@ -177,7 +123,7 @@ func TestTemplateWithNoSandboxesListed(t *testing.T) {
 func TestTemplateRemovesLeftoverHelper(t *testing.T) {
 	f := newFake()
 	f.sandboxes[helper] = true
-	if _, _, err := newEnv(f, withDockerfile()).Template(t.Context()); err != nil {
+	if _, err := newEnv(f, withDockerfile()).Template(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	rm, create := f.index("rm --force "+helper), f.index("create --name "+helper+" claude")
@@ -200,7 +146,7 @@ func startTogether(t *testing.T, e *Env, f *fakeSbx, n int, build func() (string
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Go(func() {
-			_, _, errs[i] = e.Template(t.Context())
+			_, errs[i] = e.Template(t.Context())
 		})
 	}
 	<-started
@@ -261,8 +207,8 @@ func TestTemplateBuildFailure(t *testing.T) {
 	}
 
 	f.onBuild = nil
-	if _, ok, err := e.Template(t.Context()); !ok || err != nil {
-		t.Fatalf("Template after a fix = %v, %v", ok, err)
+	if ref, err := e.Template(t.Context()); ref == "" || err != nil {
+		t.Fatalf("Template after a fix = %q, %v", ref, err)
 	}
 	if n := f.count("create "); n != 2 {
 		t.Errorf("%d creates, want the next call to build again", n)
@@ -277,7 +223,7 @@ func TestTemplateBuildTimeout(t *testing.T) {
 		<-ctx.Done()
 		return "still downloading", ctx.Err()
 	}
-	_, _, err := newEnv(f, withDockerfile()).Template(t.Context())
+	_, err := newEnv(f, withDockerfile()).Template(t.Context())
 	var p *Problem
 	if !errors.As(err, &p) || !strings.Contains(p.Why(), "did not build within") || p.Output != "still downloading" {
 		t.Fatalf("Template = %v, want a timeout Problem", err)
@@ -295,8 +241,8 @@ func TestTemplateBuildEndingAtTheLimitIsNoTimeout(t *testing.T) {
 		<-ctx.Done()
 		return "", nil
 	}
-	if _, ok, err := newEnv(f, withDockerfile()).Template(t.Context()); !ok || err != nil {
-		t.Errorf("Template = %v, %v, want the build that exited 0", ok, err)
+	if ref, err := newEnv(f, withDockerfile()).Template(t.Context()); ref == "" || err != nil {
+		t.Errorf("Template = %q, %v, want the build that exited 0", ref, err)
 	}
 }
 
@@ -307,7 +253,7 @@ func TestTemplateCancelledStillRemovesHelper(t *testing.T) {
 		cancel()
 		return "", context.Canceled
 	}
-	_, _, err := newEnv(f, withDockerfile()).Template(ctx)
+	_, err := newEnv(f, withDockerfile()).Template(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Template = %v, want the cancellation", err)
 	}
@@ -331,13 +277,13 @@ func TestTemplateWaiterBuildsWhenTheBuilderLeft(t *testing.T) {
 	}
 	builder := make(chan error)
 	go func() {
-		_, _, err := e.Template(builderCtx)
+		_, err := e.Template(builderCtx)
 		builder <- err
 	}()
 	<-started
 	waiter := make(chan error)
 	go func() {
-		_, _, err := e.Template(t.Context())
+		_, err := e.Template(t.Context())
 		waiter <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -367,7 +313,7 @@ func TestTemplateRemovesOnlyOldTags(t *testing.T) {
 		{ID: "222222222222", Repository: "docker.io/library/exomecha-owner-other", Tag: "aaaaaaaaaaaa"},
 		{ID: "549730947ed8", Repository: "docker.io/docker/sandbox-templates", Tag: "claude-code-docker"},
 	}
-	if _, _, err := e.Template(t.Context()); err != nil {
+	if _, err := e.Template(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	var removed []string
@@ -385,7 +331,7 @@ func TestTemplateHostsProblemStopsBeforeCreate(t *testing.T) {
 	f := newFake()
 	files := withDockerfile()
 	files[hostsPath] = "**\n"
-	_, _, err := newEnv(f, files).Template(t.Context())
+	_, err := newEnv(f, files).Template(t.Context())
 	if _, ok := errors.AsType[*Problem](err); !ok {
 		t.Fatalf("Template = %v, want a Problem", err)
 	}
@@ -400,7 +346,7 @@ func TestTemplateHostsRejectedBySbx(t *testing.T) {
 	f.policyErr = errExit
 	files := withDockerfile()
 	files[hostsPath] = "a.example.com:x\n"
-	_, _, err := newEnv(f, files).Template(t.Context())
+	_, err := newEnv(f, files).Template(t.Context())
 	p, ok := errors.AsType[*Problem](err)
 	if !ok || !strings.Contains(p.Why(), `invalid network pattern "a.example.com:x": bad port.`) {
 		t.Fatalf("Template = %v, want a Problem quoting sbx", err)
@@ -413,7 +359,7 @@ func TestTemplateHostsRejectedBySbx(t *testing.T) {
 func TestTemplateSbxFailureIsNoProblem(t *testing.T) {
 	f := newFake()
 	f.createErr = errExit
-	_, _, err := newEnv(f, withDockerfile()).Template(t.Context())
+	_, err := newEnv(f, withDockerfile()).Template(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "create failed") {
 		t.Fatalf("Template = %v, want the create error", err)
 	}

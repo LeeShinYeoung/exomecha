@@ -39,6 +39,16 @@ type Server struct {
 	labels []string
 	runs   map[string][]Run
 	times  map[string]time.Time
+
+	routes   map[string]bool
+	fails    map[string]int // route to the status it answers with
+	refusals map[int]refusal
+	closes   map[int]int // PR to the issue its merge closes
+}
+
+type refusal struct {
+	message   string
+	mergeable *bool
 }
 
 type Issue struct {
@@ -110,6 +120,11 @@ func New(t *testing.T) *Server {
 		pulls:  map[int]*Pull{},
 		runs:   map[string][]Run{},
 		times:  map[string]time.Time{},
+
+		routes:   map[string]bool{},
+		fails:    map[string]int{},
+		refusals: map[int]refusal{},
+		closes:   map[int]int{},
 	}
 	mux := http.NewServeMux()
 	const repo = "/repos/{owner}/{repo}"
@@ -123,7 +138,7 @@ func New(t *testing.T) *Server {
 	s.route(mux, "GET "+repo+"/labels", s.listLabels)
 	s.route(mux, "POST "+repo+"/labels", s.createLabel)
 	s.route(mux, "POST "+repo+"/issues/{n}/labels", s.addLabels)
-	s.route(mux, "DELETE "+repo+"/issues/{n}/labels/{name}", s.removeLabel)
+	s.route(mux, "PUT "+repo+"/issues/{n}/labels", s.setLabels)
 	s.route(mux, "GET "+repo+"/issues/{n}/sub_issues", s.listSubIssues)
 	s.route(mux, "POST "+repo+"/issues/{n}/sub_issues", s.addSubIssue)
 	s.route(mux, "GET "+repo+"/issues/{n}/parent", s.getParent)
@@ -151,6 +166,7 @@ func New(t *testing.T) *Server {
 type handler func(r *http.Request) (int, any)
 
 func (s *Server) route(mux *http.ServeMux, pattern string, h handler) {
+	s.routes[pattern] = true
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(pattern, "{owner}") && (r.PathValue("owner") != s.Owner || r.PathValue("repo") != s.Repo) {
 			s.t.Errorf("githubtest: request for another repository: %s", r.URL.Path)
@@ -158,7 +174,10 @@ func (s *Server) route(mux *http.ServeMux, pattern string, h handler) {
 			return
 		}
 		s.mu.Lock()
-		status, body := h(r)
+		status, body := s.fails[pattern], message("githubtest: failed on purpose")
+		if status == 0 {
+			status, body = h(r)
+		}
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -251,7 +270,7 @@ func (s *Server) pullJSON(p *Pull) any {
 	if !p.Open {
 		state = "closed"
 	}
-	return map[string]any{
+	m := map[string]any{
 		"number":    p.Number,
 		"state":     state,
 		"title":     p.Title,
@@ -261,6 +280,10 @@ func (s *Server) pullJSON(p *Pull) any {
 		"mergeable": p.Mergeable,
 		"merged":    p.Merged,
 	}
+	if p.Merged {
+		m["merged_at"] = commentEpoch.Format(time.RFC3339)
+	}
+	return m
 }
 
 func (s *Server) getUser(*http.Request) (int, any) {
@@ -418,16 +441,16 @@ func (s *Server) addLabels(r *http.Request) (int, any) {
 	return http.StatusOK, labelsJSON(i.Labels)
 }
 
-func (s *Server) removeLabel(r *http.Request) (int, any) {
+func (s *Server) setLabels(r *http.Request) (int, any) {
 	i := s.pathIssue(r)
 	if i == nil {
 		return notFound()
 	}
-	k := slices.Index(i.Labels, r.PathValue("name"))
-	if k < 0 {
-		return http.StatusNotFound, message("Label does not exist")
+	var names []string
+	if !s.decode(r, &names) {
+		return http.StatusBadRequest, message("bad body")
 	}
-	i.Labels = slices.Delete(i.Labels, k, k+1)
+	i.Labels = slices.Compact(names)
 	return http.StatusOK, labelsJSON(i.Labels)
 }
 
@@ -513,7 +536,8 @@ func (s *Server) listPulls(r *http.Request) (int, any) {
 		}
 		numbers = append(numbers, n)
 	}
-	slices.Sort(numbers)
+	// GitHub lists newest first.
+	slices.SortFunc(numbers, func(a, b int) int { return cmp.Compare(b, a) })
 	out := []any{}
 	for _, n := range numbers {
 		out = append(out, s.pullJSON(s.pulls[n]))
@@ -608,6 +632,11 @@ func (s *Server) merge(r *http.Request) (int, any) {
 	if !p.Open {
 		return http.StatusMethodNotAllowed, message("Pull Request is not mergeable")
 	}
+	if rf, ok := s.refusals[p.Number]; ok {
+		delete(s.refusals, p.Number)
+		p.Mergeable = rf.mergeable
+		return http.StatusMethodNotAllowed, message(rf.message)
+	}
 	if req.SHA != "" && req.SHA != s.head(p) {
 		return http.StatusConflict, message("Head branch was modified. Review and try the merge again.")
 	}
@@ -615,6 +644,10 @@ func (s *Server) merge(r *http.Request) (int, any) {
 	p.Merged = true
 	p.MergeMethod = req.MergeMethod
 	p.MergedSHA = req.SHA
+	if n, ok := s.closes[p.Number]; ok {
+		s.issues[n].Open = false
+		s.issues[n].StateReason = "completed"
+	}
 	return http.StatusOK, map[string]any{"merged": true, "sha": "merge-commit", "message": "Pull Request successfully merged"}
 }
 
@@ -638,6 +671,38 @@ func (s *Server) getCommit(r *http.Request) (int, any) {
 		at = time.Now().Add(-time.Hour)
 	}
 	return http.StatusOK, map[string]any{"sha": sha, "committer": map[string]string{"date": at.Format(time.RFC3339)}}
+}
+
+// Fail makes every request to route answer status, until Fail(route, 0). route is a pattern as New
+// registers it, such as "PUT /repos/{owner}/{repo}/pulls/{n}/merge".
+func (s *Server) Fail(route string, status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.routes[route] {
+		s.t.Fatalf("githubtest: no route %q", route)
+	}
+	if status == 0 {
+		delete(s.fails, route)
+		return
+	}
+	s.fails[route] = status
+}
+
+// RefuseMerge makes GitHub refuse the next merge of PR n with 405 and message, the way it refuses
+// a PR that conflicts or that a rule of the base branch blocks. From then on, the PR's mergeable
+// is mergeable, as GitHub has worked it out again.
+func (s *Server) RefuseMerge(n int, message string, mergeable *bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refusals[n] = refusal{message: message, mergeable: mergeable}
+}
+
+// CloseOnMerge makes the merge of PR pr close issue n as completed, the way GitHub closes the issue
+// a PR body names with "Closes".
+func (s *Server) CloseOnMerge(pr, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closes[pr] = n
 }
 
 func (s *Server) AddIssue(title, body string, labels ...string) int {
@@ -677,6 +742,18 @@ func (s *Server) AddBlockedBy(n, blocker int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.issues[n].BlockedBy = append(s.issues[n].BlockedBy, blocker)
+}
+
+// Relabel takes label from off issue n and puts to on, as a person does by hand. An empty from or
+// to only adds or only removes.
+func (s *Server) Relabel(n int, from, to string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.issues[n]
+	i.Labels = slices.DeleteFunc(i.Labels, func(l string) bool { return l == from })
+	if to != "" && !slices.Contains(i.Labels, to) {
+		i.Labels = append(i.Labels, to)
+	}
 }
 
 func (s *Server) CloseIssue(n int) {

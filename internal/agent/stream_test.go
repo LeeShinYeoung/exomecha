@@ -20,12 +20,12 @@ func TestReadStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.PermissionMode != "auto" || !s.Ended || s.Rejected {
+	if s.PermissionMode != "auto" || !s.ended || s.Rejected {
 		t.Errorf("stream = %+v, want an ended auto run", s)
 	}
-	res, err := s.Result(true)
-	if err != nil || string(res.Structured) != `{"result":"done"}` {
-		t.Errorf("Result = %s, %v, want the structured output", res.Structured, err)
+	res, err := s.Result()
+	if err != nil || string(res) != `{"result":"done"}` {
+		t.Errorf("Result = %s, %v, want the structured output", res, err)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestReadStreamErrorResult(t *testing.T) {
 	if !s.Rejected {
 		t.Error("a rejected rate limit event was not noticed")
 	}
-	if _, err := s.Result(true); err == nil || !strings.Contains(err.Error(), "You've hit your limit") {
+	if _, err := s.Result(); err == nil || !strings.Contains(err.Error(), "You've hit your limit") {
 		t.Errorf("Result error = %v, want claude's error", err)
 	}
 }
@@ -62,10 +62,10 @@ func TestReadStreamWithoutResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.PermissionMode != "auto" || s.Ended {
+	if s.PermissionMode != "auto" || s.ended {
 		t.Errorf("stream = %+v, want an auto run with no result", s)
 	}
-	if _, err := s.Result(false); err == nil {
+	if _, err := s.Result(); err == nil {
 		t.Error("Result succeeded without a result line")
 	}
 }
@@ -76,11 +76,8 @@ func TestReadStreamWithoutStructuredResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Result(true); err == nil {
+	if _, err := s.Result(); err == nil {
 		t.Error("Result succeeded without the structured output the schema asks for")
-	}
-	if res, err := s.Result(false); err != nil || res.Text != "plain text" {
-		t.Errorf("Result without a schema = %+v, %v", res, err)
 	}
 }
 
@@ -88,22 +85,24 @@ func TestReadStreamSkipsLinesOfOtherShapes(t *testing.T) {
 	stream := `{"type":"tool_progress","result":{"not":"a string"}}
 ` + streamDone
 	s, err := ReadStream(strings.NewReader(stream))
-	if err != nil || !s.Ended {
+	if err != nil || !s.ended {
 		t.Errorf("stream = %+v, %v, want the result after a line of another shape", s, err)
 	}
 }
 
 func TestArgs(t *testing.T) {
-	args := Args(Request{Instructions: "be brief", Schema: `{"type":"object"}`})
-	for _, want := range [][]string{{"--permission-mode", "auto"}, {"--append-system-prompt", "be brief"}, {"--json-schema", `{"type":"object"}`}} {
+	args := Args("be brief", `{"type":"object"}`)
+	for _, want := range [][]string{
+		{"--permission-mode", "auto"}, {"--append-system-prompt", "be brief"}, {"--json-schema", `{"type":"object"}`}, {"--output-format", "stream-json"},
+	} {
 		i := slices.Index(args, want[0])
 		if i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
 			t.Errorf("args %q lack %q %q", args, want[0], want[1])
 		}
 	}
-	for _, a := range StreamArgs(Request{}) {
-		if strings.Contains(a, "dangerously") || strings.Contains(a, "bypass") || a == "--json-schema" {
-			t.Errorf("stream args contain %q: %q", a, StreamArgs(Request{}))
+	for _, a := range args {
+		if strings.Contains(a, "dangerously") || strings.Contains(a, "bypass") {
+			t.Errorf("args contain %q: %q", a, args)
 		}
 	}
 }

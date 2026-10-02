@@ -20,7 +20,7 @@ type Git struct {
 	base   string
 	header string
 
-	// mu serializes clone, fetch, and worktree add/remove on the shared clone. Work inside worktrees runs in parallel.
+	// mu serializes the clone and the fetches into the shared clone.
 	mu sync.Mutex
 }
 
@@ -42,7 +42,7 @@ func NewAt(root, url, base, token string) *Git {
 func (g *Git) repoDir() string { return filepath.Join(g.root, "repo") }
 
 // Give up on a transfer that stays under 1000 bytes/s for this many seconds. A fetch stuck on a
-// dead connection would otherwise hold mu and stall every worker that needs a worktree.
+// dead connection would otherwise hold mu and stall every worker that needs a fetch.
 var lowSpeedTime = "30"
 
 // run is for every call that does not talk to GitHub. None of exomecha's calls run the project's

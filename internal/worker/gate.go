@@ -57,6 +57,13 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 	return !closed, nil
 }
 
+// stale makes the next Open read usage again, after a run hit a limit the last reading did not show.
+func (g *Gate) stale() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.at = time.Time{}
+}
+
 // fresh turns false once a window resets, or the old reading would keep the gate closed after
 // the reset. Usage only goes down at a reset, so while closed a reading stays fresh until then.
 func (g *Gate) fresh(now time.Time) bool {

@@ -35,49 +35,39 @@ func (c *Client) EnsureLabels(ctx context.Context) ([]string, error) {
 	return created, nil
 }
 
-// Adding before removing also clears an old status a person left behind when relabeling by hand.
+// SetStatus replaces the issue's labels in one call, so a failure leaves the old status and never
+// two. A second status a person left goes too.
 func (c *Client) SetStatus(ctx context.Context, number int, from, to label.Status) error {
 	if !label.CanTransition(from, to) {
 		return fmt.Errorf("transition not allowed: %q → %q", from, to)
 	}
-	labels, _, err := c.api.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, number, []string{string(to)})
-	if err != nil {
-		return err
-	}
-	for _, l := range labels {
-		if name := l.GetName(); label.IsStatus(name) && name != string(to) {
-			if err := c.RemoveLabel(ctx, number, name); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return c.replaceStatus(ctx, number, to)
 }
 
 func (c *Client) ClearStatus(ctx context.Context, number int) error {
+	return c.replaceStatus(ctx, number, label.None)
+}
+
+func (c *Client) replaceStatus(ctx context.Context, number int, to label.Status) error {
 	issue, err := c.Issue(ctx, number)
 	if err != nil {
 		return err
 	}
+	// Not nil: an issue left with no label must still send GitHub an empty list.
+	labels := []string{}
 	for _, name := range issue.Labels {
-		if label.IsStatus(name) {
-			if err := c.RemoveLabel(ctx, number, name); err != nil {
-				return err
-			}
+		if !label.IsStatus(name) {
+			labels = append(labels, name)
 		}
 	}
-	return nil
+	if to != label.None {
+		labels = append(labels, string(to))
+	}
+	_, _, err = c.api.Issues.ReplaceLabelsForIssue(ctx, c.owner, c.repo, number, labels)
+	return err
 }
 
 func (c *Client) AddLabel(ctx context.Context, number int, name string) error {
 	_, _, err := c.api.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, number, []string{name})
-	return err
-}
-
-func (c *Client) RemoveLabel(ctx context.Context, number int, name string) error {
-	_, err := c.api.Issues.RemoveLabelForIssue(ctx, c.owner, c.repo, number, name)
-	if isNotFound(err) {
-		return nil
-	}
 	return err
 }

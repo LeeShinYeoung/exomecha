@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -15,7 +17,20 @@ import (
 func (g *Git) Sync(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.sync(ctx)
+	dir := g.repoDir()
+	_, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(g.root, 0o755); err != nil {
+			return err
+		}
+		_, err := g.runGitHub(ctx, g.root, "clone", "--no-checkout", g.url, dir)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	_, err = g.runGitHub(ctx, dir, "fetch", "--prune", "origin")
+	return err
 }
 
 // Rev returns the commit ref points at, with ok false when there is no such ref.
@@ -77,14 +92,16 @@ func hasConflictMarker(content string) bool {
 // on an sbx that stopped answering, would otherwise hold mu and stall every worker.
 var sandboxTransferTimeout = 5 * time.Minute
 
-// SendTo pushes the base branch's commit as origin/<base>, and commit as branch, into the
-// repository at url.
+// SendTo pushes the base branch's commit as origin/<base>, and commit as branch unless branch is
+// empty, into the repository at url.
 func (g *Git) SendTo(ctx context.Context, url, baseCommit, branch, commit string) error {
 	ctx, cancel := context.WithTimeout(ctx, sandboxTransferTimeout)
 	defer cancel()
-	_, err := g.runSandbox(ctx, g.repoDir(), "push", "--quiet", url,
-		baseCommit+":refs/remotes/origin/"+g.base,
-		commit+":refs/heads/"+branch)
+	refs := []string{baseCommit + ":refs/remotes/origin/" + g.base}
+	if branch != "" {
+		refs = append(refs, commit+":refs/heads/"+branch)
+	}
+	_, err := g.runSandbox(ctx, g.repoDir(), append([]string{"push", "--quiet", url}, refs...)...)
 	return err
 }
 

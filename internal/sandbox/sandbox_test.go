@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,12 +95,12 @@ func TestList(t *testing.T) {
 	f.answer("ls", `{
   "sandboxes": [
     {
-      "name": "exomecha-task-o-r-12-builder",
+      "name": "exomecha-run-o-r-12-builder",
       "id": "e6a2a78c-c537-45ef-b69d-54ad11643c2b",
       "agent": "claude",
       "status": "running",
       "last_used_at": "2026-10-01T09:19:41.677554Z",
-      "workspaces": ["/Users/me/.exomecha/o/r/sandboxes/exomecha-task-o-r-12-builder/box"],
+      "workspaces": ["/Users/me/.exomecha/o/r/sandboxes/exomecha-run-o-r-12-builder/box"],
       "created_at": "2026-10-01T09:19:37Z"
     },
     {"name": "other", "status": "stopped"}
@@ -108,7 +110,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Box{{Name: "exomecha-task-o-r-12-builder", Status: "running"}, {Name: "other", Status: "stopped"}}
+	want := []Box{{Name: "exomecha-run-o-r-12-builder", Status: "running"}, {Name: "other", Status: "stopped"}}
 	if !slices.Equal(boxes, want) {
 		t.Errorf("List = %+v, want %+v", boxes, want)
 	}
@@ -198,32 +200,93 @@ func TestGitURL(t *testing.T) {
 	}
 }
 
-func TestParseTask(t *testing.T) {
-	const prefix = "exomecha-task-o-r-"
+func TestSlug(t *testing.T) {
+	for _, c := range []struct{ owner, repo, want string }{
+		{"LeeShinYeoung", "jazzing", "leeshinyeoung-jazzing"},
+		{"owner", "my.repo_name", "owner-my-repo-name"},
+		{"owner", "a..--b", "owner-a-b"},
+		{"-owner-", ".repo.", "owner-repo"},
+		{"o", strings.Repeat("r", 30), "o-" + strings.Repeat("r", 30)},
+	} {
+		if got := Slug(c.owner, c.repo); got != c.want {
+			t.Errorf("Slug(%q, %q) = %q, want %q", c.owner, c.repo, got, c.want)
+		}
+	}
+}
+
+func TestSlugTooLong(t *testing.T) {
+	owner, repo := "o", strings.Repeat("r", 31)
+	sum := sha256.Sum256([]byte("o/" + repo))
+	hash := hex.EncodeToString(sum[:])[:8]
+
+	got := Slug(owner, repo)
+	if want := "o-" + strings.Repeat("r", 21) + "-" + hash; got != want {
+		t.Errorf("Slug of 33 chars = %q, want %q", got, want)
+	}
+	if other := Slug(owner, repo+"x"); other == got {
+		t.Errorf("two repos with the same first 23 chars share the slug %q", got)
+	}
+	if upper := Slug("O", strings.ToUpper(repo)); upper != got {
+		t.Errorf("Slug in upper case = %q, want the same as lower case %q", upper, got)
+	}
+}
+
+func TestSlugCutAtADash(t *testing.T) {
+	// The cut lands right after the owner's dash, which must not leave "--" before the hash.
+	owner := strings.Repeat("o", 22)
+	got := Slug(owner, strings.Repeat("r", 30))
+	if strings.Contains(got, "--") || !strings.HasPrefix(got, owner+"-") || len(got) != 31 {
+		t.Errorf("Slug = %q, want %s-<hash>", got, owner)
+	}
+}
+
+func TestPrefix(t *testing.T) {
+	if got := Prefix("LeeShinYeoung", "jazzing"); got != "exomecha-run-leeshinyeoung-jazzing-" {
+		t.Errorf("Prefix = %q", got)
+	}
+}
+
+func TestNameFits63(t *testing.T) {
+	prefix := Prefix("some-organization", strings.Repeat("long-repository-name-", 3))
+	for _, role := range []string{"builder", "resolver", "reviewer", "splitter", "sequencer"} {
+		if name := Name(prefix, 9999999, role); len(name) > 63 {
+			t.Errorf("%s is %d chars, sbx allows 63", name, len(name))
+		}
+	}
+}
+
+func TestParse(t *testing.T) {
+	prefix := Prefix("o", "r")
 	for _, c := range []struct {
-		name string
-		task int
-		role string
-		ok   bool
+		name  string
+		issue int
+		role  string
+		ok    bool
 	}{
-		{"exomecha-task-o-r-12-builder", 12, "builder", true},
-		{"exomecha-task-o-r-7-resolver", 7, "resolver", true},
+		{prefix + "12-builder", 12, "builder", true},
+		{prefix + "7-resolver", 7, "resolver", true},
+		{prefix + "8-reviewer", 8, "reviewer", true},
+		{prefix + "9-splitter", 9, "splitter", true},
+		{prefix + "10-sequencer", 10, "sequencer", true},
 		{Name(prefix, 9999999, "resolver"), 9999999, "resolver", true},
-		{"exomecha-task-o-r-012-builder", 0, "", false},
-		{"exomecha-task-o-r-0-builder", 0, "", false},
-		{"exomecha-task-o-r-12-reviewer", 0, "", false},
-		{"exomecha-task-o-r-12-builder-x", 0, "", false},
-		{"exomecha-task-o-r-x-12-builder", 0, "", false},
-		{"exomecha-task-o-r2-12-builder", 0, "", false},
+		{prefix + "012-builder", 0, "", false},
+		{prefix + "0-builder", 0, "", false},
+		{prefix + "12-", 0, "", false},
+		{prefix + "12-Builder", 0, "", false},
+		{prefix + "12-builder-x", 0, "", false},
+		{prefix + "x-12-builder", 0, "", false},
+		{Name(Prefix("o", "r2"), 12, "builder"), 0, "", false},
+		{Name(Prefix("o", "r-2"), 12, "builder"), 0, "", false},
+		{"exomecha-task-o-r-12-builder", 0, "", false},
 		{"exomecha-build-o-r", 0, "", false},
 		{"impl-run-12-builder", 0, "", false},
 	} {
-		task, role, ok := ParseTask(prefix, c.name)
-		if task != c.task || role != c.role || ok != c.ok {
-			t.Errorf("ParseTask(%q) = %d, %q, %v, want %d, %q, %v", c.name, task, role, ok, c.task, c.role, c.ok)
+		issue, role, ok := Parse(prefix, c.name)
+		if issue != c.issue || role != c.role || ok != c.ok {
+			t.Errorf("Parse(%q) = %d, %q, %v, want %d, %q, %v", c.name, issue, role, ok, c.issue, c.role, c.ok)
 		}
 	}
-	if _, _, ok := ParseTask("", "12-builder"); ok {
-		t.Error("ParseTask accepted an empty prefix")
+	if _, _, ok := Parse("", "12-builder"); ok {
+		t.Error("Parse accepted an empty prefix")
 	}
 }

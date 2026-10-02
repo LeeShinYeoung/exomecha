@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
@@ -20,83 +20,130 @@ const sequencerSchema = `{
   "additionalProperties": false
 }`
 
-type sequencer struct{ Deps }
+var sequencerRole = role{
+	name:   "sequencer",
+	schema: sequencerSchema,
+	from:   label.Pending,
+	back:   label.Pending,
+}
 
-func (*sequencer) Name() string { return "sequencer" }
+// begin queues a Task with no lower open Task without a run.
+var sequencerTable = table{
+	// none, preparing, running, stalled, dead, gone, finished
+	away:  {idle, drop, drop, drop, drop, drop, drop},
+	ready: {begin, restart, idle, fail, fail, fail, harvest},
+}
+
+// sequencer puts each Task in line in a sandbox of its own, which gets only the code.
+type sequencer struct {
+	Deps
+	runs *runs
+}
+
+func (*sequencer) Name() string { return sequencerRole.name }
 
 func (s *sequencer) Pick(ctx context.Context) ([]int, error) {
 	tasks, err := s.GitHub.ListOpen(ctx, label.Task, string(label.Pending))
 	if err != nil {
 		return nil, err
 	}
-	var out []int
+	var picked []int
 	for _, t := range tasks {
-		out = append(out, t.Number)
+		picked = append(picked, t.Number)
+	}
+	return s.runs.pick(ctx, sequencerRole, picked)
+}
+
+func (s *sequencer) Handle(ctx context.Context, n int) error {
+	task, err := s.GitHub.Issue(ctx, n)
+	if err != nil {
+		return err
+	}
+	return s.runs.step(ctx, sequencerRole, n, sequencerTable[s.place(task)],
+		func(ctx context.Context) error { return s.start(ctx, task) },
+		func(ctx context.Context, _ run) error { return s.collect(ctx, n) })
+}
+
+func (*sequencer) place(task github.Issue) place {
+	if holds(task, label.Task, label.Pending) {
+		return ready
+	}
+	return away
+}
+
+func (s *sequencer) start(ctx context.Context, task github.Issue) error {
+	n := task.Number
+	others, err := s.candidates(ctx, n)
+	if err != nil {
+		return err
+	}
+	// With no Task to wait for there is nothing for the AI to decide, so no run and no usage check.
+	if len(others) == 0 {
+		return s.queue(ctx, n, nil)
+	}
+	return s.runs.start(ctx, sequencerRole, n, func(ctx context.Context) (spec, error) {
+		base, err := baseCommit(ctx, s.Git)
+		if err != nil {
+			return spec{}, err
+		}
+		blockers, err := s.GitHub.BlockedBy(ctx, n)
+		if err != nil {
+			return spec{}, err
+		}
+		input, err := s.input(ctx, task, blockers, others)
+		if err != nil {
+			return spec{}, err
+		}
+		return spec{base: base, head: base, input: input}, nil
+	})
+}
+
+// candidates returns the open Tasks numbered below n. Only these can become n's blockers, so two
+// Tasks can never wait on each other.
+func (s *sequencer) candidates(ctx context.Context, n int) ([]github.Issue, error) {
+	open, err := s.GitHub.ListOpen(ctx, label.Task)
+	if err != nil {
+		return nil, err
+	}
+	var out []github.Issue
+	for _, o := range open {
+		if o.Number < n {
+			out = append(out, o)
+		}
 	}
 	return out, nil
 }
 
-func (s *sequencer) Handle(ctx context.Context, n int) error {
-	task, ok, err := reload(ctx, s.GitHub, n, label.Task, string(label.Pending))
-	if err != nil || !ok {
+func (s *sequencer) collect(ctx context.Context, n int) error {
+	var out struct {
+		BlockedBy []int `json:"blocked_by"`
+	}
+	if ok, err := s.runs.result(ctx, sequencerRole, n, &out); err != nil || !ok {
 		return err
 	}
-	blockers, err := s.GitHub.BlockedBy(ctx, n)
+	// Read again, since a candidate closed during the run is no longer worth waiting for.
+	others, err := s.candidates(ctx, n)
 	if err != nil {
 		return err
 	}
-	open, err := s.GitHub.ListOpen(ctx, label.Task)
-	if err != nil {
-		return err
-	}
-	// Only lower-numbered Tasks can become blockers, so two Tasks can never wait on each other.
-	candidates := map[int]github.Issue{}
-	var others []github.Issue
-	for _, o := range open {
-		if o.Number < n {
-			candidates[o.Number] = o
-			others = append(others, o)
-		}
-	}
-
 	var added []int
-	if len(others) > 0 {
-		input, err := s.input(ctx, task, blockers, others)
-		if err != nil {
+	for _, b := range out.BlockedBy {
+		i := slices.IndexFunc(others, func(o github.Issue) bool { return o.Number == b })
+		if i < 0 {
+			continue
+		}
+		if err := s.GitHub.AddBlockedBy(ctx, n, others[i]); err != nil {
 			return err
 		}
-		wt, err := s.Git.OpenBase(ctx)
-		if err != nil {
-			return err
-		}
-		defer wt.Remove()
-		res, err := s.Agent.Run(ctx, agent.Request{
-			Dir:          wt.Dir,
-			Instructions: prompt("sequencer"),
-			Input:        input,
-			Schema:       sequencerSchema,
-		})
-		if err != nil {
-			return err
-		}
-		var out struct {
-			BlockedBy []int `json:"blocked_by"`
-		}
-		if err := decode(res, &out); err != nil {
-			return err
-		}
-		for _, b := range out.BlockedBy {
-			o, ok := candidates[b]
-			if !ok {
-				continue
-			}
-			if err := s.GitHub.AddBlockedBy(ctx, n, o); err != nil {
-				return err
-			}
-			added = append(added, b)
-		}
+		added = append(added, b)
 	}
+	if err := s.queue(ctx, n, added); err != nil {
+		return err
+	}
+	return s.runs.done(ctx, sequencerRole, n)
+}
 
+func (s *sequencer) queue(ctx context.Context, n int, added []int) error {
 	if err := s.GitHub.SetStatus(ctx, n, label.Pending, label.Queued); err != nil {
 		return err
 	}

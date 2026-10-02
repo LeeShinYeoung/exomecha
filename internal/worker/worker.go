@@ -3,15 +3,14 @@ package worker
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -24,6 +23,8 @@ type Worker interface {
 	Pick(ctx context.Context) ([]int, error)
 	// Handle sends a Task to stuck and returns nil when the Task itself is the problem. Any other error
 	// is an environment error: leave the Task where the next check can retry it, and return the error.
+	// The loop puts off the next try after an error, longer each time in a row, so a Task that only
+	// has to wait returns nil.
 	Handle(ctx context.Context, number int) error
 }
 
@@ -34,18 +35,18 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent // runs claude on this machine, for splitter, sequencer and reviewer
 
-	// builder and resolver run claude in sandboxes.
+	// Every worker runs claude in sandboxes.
 	Sandboxes   Sandboxes
 	Environment Environment
-	// SandboxDir holds one directory per task sandbox, shared with that sandbox.
+	// SandboxDir holds one directory per run, shared with the run's sandbox.
 	SandboxDir string
-	// SandboxPrefix starts the name of every task sandbox of this repository and nothing else.
+	// SandboxPrefix starts the name of every run's sandbox of this repository and nothing else.
 	SandboxPrefix string
-	// SandboxLimit is how many task sandboxes may exist at once.
-	SandboxLimit int
-	// The commit identity for task sandboxes, the token owner's. A sandbox has none of its own.
+	// How many sandboxes of project runs, and of reader runs, may exist at once.
+	ProjectLimit int
+	ReadLimit    int
+	// The commit identity for project runs, the token owner's. A sandbox has none of its own.
 	GitName  string
 	GitEmail string
 }
@@ -68,47 +69,43 @@ type Sandboxes interface {
 // An error whose chain holds a value with a Why() string method is one only a person can fix,
 // and Why() is what to tell them.
 type Environment interface {
-	// ok is false when the project has no Dockerfile for exomecha, and sbx's own template is used.
-	Template(ctx context.Context) (ref string, ok bool, err error)
+	// An empty ref is sbx's own template, for a project with no Dockerfile for exomecha.
+	Template(ctx context.Context) (ref string, err error)
 	AllowedHosts(ctx context.Context) ([]string, error)
 }
 
-const interval = 60 * time.Second
+const (
+	interval = 60 * time.Second
+	// The wait after an error doubles with each error in a row, up to maxBackoff.
+	minBackoff = time.Minute
+	maxBackoff = 30 * time.Minute
+)
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	// builder and resolver check the gate themselves, only before they start a run, so runs
-	// already in sandboxes are still watched and finished while usage is over the limit.
-	box := newTaskbox(d, gate)
-	workers := []struct {
-		worker Worker
-		limit  int // 0 means no limit
-		gate   *Gate
-	}{
-		{&splitter{d}, 1, gate},
-		{&sequencer{d}, 1, gate},
-		{&builder{d, box}, 0, nil},
-		{&reviewer{d}, 0, gate},
-		{&resolver{d, box}, 0, nil},
+	runs := newRuns(d, gate)
+	workers := []Worker{
+		&splitter{d, runs},
+		&sequencer{d, runs},
+		&builder{d, runs},
+		&reviewer{d, runs},
+		&resolver{d, runs},
 	}
 	var wg sync.WaitGroup
 	for _, w := range workers {
-		wg.Go(func() { loop(ctx, w.worker, w.limit, l, w.gate) })
+		wg.Go(func() { loop(ctx, w, l) })
 	}
 	wg.Wait()
 }
 
-func loop(ctx context.Context, w Worker, limit int, l *locks, gate *Gate) {
-	var sem chan struct{}
-	if limit > 0 {
-		sem = make(chan struct{}, limit)
-	}
+func loop(ctx context.Context, w Worker, l *locks) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	d := &delays{now: time.Now, items: map[int]delay{}}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
-		round(ctx, w, sem, l, &wg, gate)
+		round(ctx, w, l, d, &wg)
 		select {
 		case <-ctx.Done():
 			return
@@ -117,7 +114,10 @@ func loop(ctx context.Context, w Worker, limit int, l *locks, gate *Gate) {
 	}
 }
 
-func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.WaitGroup, gate *Gate) {
+func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGroup) {
+	// A wait counts from here, not from when Handle returned, so a wait of a minute ends by the
+	// next round.
+	now := d.now()
 	log := slog.With("worker", w.Name())
 	if s, ok := w.(Sweeper); ok {
 		if err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
@@ -131,42 +131,72 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 		}
 		return
 	}
-	// Checking only when there is work keeps an idle exomecha from spending any Claude usage.
-	if len(numbers) == 0 {
-		return
-	}
-	if gate != nil {
-		if open, err := gate.Open(ctx); err != nil || !open {
-			if err != nil && ctx.Err() == nil {
-				log.Error("usage check failed", "err", err)
-			}
-			return
-		}
-	}
+	d.keep(numbers)
 	for _, n := range numbers {
-		if sem != nil {
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		release := func() {
-			if sem != nil {
-				<-sem
-			}
-		}
-		if !l.lock(n) {
-			release()
+		if !d.due(n, now) || !l.lock(n) {
 			continue
 		}
 		wg.Go(func() {
-			defer release()
 			defer l.unlock(n)
-			if err := w.Handle(ctx, n); err != nil {
-				log.Error("handle failed", "issue", n, "err", err)
+			err := w.Handle(ctx, n)
+			if err == nil {
+				d.forget(n)
+				return
 			}
+			// An error from shutdown says nothing about the issue.
+			if ctx.Err() == nil {
+				d.strike(n, now)
+			}
+			log.Error("handle failed", "issue", n, "err", err)
 		})
+	}
+}
+
+// delays holds one worker's issues whose last Handle failed, so the loop tries them again later.
+// It lives in memory only, and a restart tries every issue at once.
+type delays struct {
+	now   func() time.Time
+	mu    sync.Mutex
+	items map[int]delay
+}
+
+type delay struct {
+	strikes int // errors in a row
+	next    time.Time
+}
+
+func (d *delays) due(n int, now time.Time) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	it, ok := d.items[n]
+	// A round can start a moment less than interval after the one before, and must still find a
+	// wait of interval over.
+	return !ok || !now.Add(time.Second).Before(it.next)
+}
+
+func (d *delays) strike(n int, from time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	it := d.items[n]
+	it.strikes++
+	it.next = from.Add(min(maxBackoff, minBackoff<<min(it.strikes-1, 10)))
+	d.items[n] = it
+}
+
+func (d *delays) forget(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.items, n)
+}
+
+// keep forgets the issues Pick no longer returns, so one that comes back later starts with no wait.
+func (d *delays) keep(picked []int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for n := range d.items {
+		if !slices.Contains(picked, n) {
+			delete(d.items, n)
+		}
 	}
 }
 
@@ -201,29 +231,6 @@ func prompt(name string) string {
 		panic(err)
 	}
 	return string(b)
-}
-
-func decode(res agent.Result, v any) error {
-	if err := json.Unmarshal(res.Structured, v); err != nil {
-		return fmt.Errorf("read AI result: %w", err)
-	}
-	return nil
-}
-
-func reload(ctx context.Context, gh *github.Client, n int, labels ...string) (issue github.Issue, ok bool, err error) {
-	issue, err = gh.Issue(ctx, n)
-	if err != nil {
-		return issue, false, err
-	}
-	if !issue.Open {
-		return issue, false, nil
-	}
-	for _, name := range labels {
-		if !issue.HasLabel(name) {
-			return issue, false, nil
-		}
-	}
-	return issue, true, nil
 }
 
 // exomecha's own comments go in marked as its questions, because a person's answer often makes
@@ -268,29 +275,56 @@ func branchName(n int) string {
 	return fmt.Sprintf("exomecha/task-%d", n)
 }
 
-// prConflicted reports whether the Task's open PR is one GitHub marks as conflicting.
-// Only resolver handles those, so reviewer leaves them alone.
-func prConflicted(ctx context.Context, gh *github.Client, n int) (bool, error) {
+func baseCommit(ctx context.Context, g *git.Git) (string, error) {
+	if err := g.Sync(ctx); err != nil {
+		return "", err
+	}
+	base, ok, err := g.Rev(ctx, g.BaseRef())
+	if err == nil && !ok {
+		err = fmt.Errorf("no %s", g.BaseRef())
+	}
+	return base, err
+}
+
+func taskPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool, err error) {
 	number, ok, err := gh.OpenPR(ctx, branchName(n))
 	if err != nil || !ok {
-		return false, err
+		return pr, false, err
 	}
-	pr, err := gh.PR(ctx, number)
-	if err != nil {
-		return false, err
+	pr, err = gh.PR(ctx, number)
+	return pr, err == nil, err
+}
+
+// holds reports whether the issue is open, has the kind label, and has status as its only status.
+// exomecha changes a status in one call, so two statuses are a person's doing, and every worker
+// leaves the issue to them.
+func holds(i github.Issue, kind string, status label.Status) bool {
+	if !i.Open || !i.HasLabel(kind) {
+		return false
 	}
-	return pr.Mergeable != nil && !*pr.Mergeable, nil
+	statuses := 0
+	for _, l := range i.Labels {
+		if label.IsStatus(l) {
+			statuses++
+		}
+	}
+	return statuses == 1 && i.HasLabel(string(status))
 }
 
 // back is where the person sends the Task after answering, so it returns to the worker that
-// owns the problem: pending leads back to builder, review leads back to resolver.
+// owns the problem: pending leads back to builder, review leads back to resolver. A PRD has no
+// status to go back to, and splitter takes it again once the stuck label is gone.
 func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
 	trimmed := trimClosingTags(reason)
 	if trimmed != strings.TrimSpace(reason) {
 		slog.Warn("trimmed closing tags from a stuck reason", "task", n, "reason", reason)
 	}
-	body := "This Task is blocked and needs a person.\n\n" + trimmed +
-		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
+	issue, again := "Task", "relabel it `"+string(back)+"`"
+	if back == label.None {
+		issue, again = "PRD", "remove the `"+string(label.Stuck)+"` label"
+	}
+	body := "This " + issue + " is blocked and needs a person.\n\n" + trimmed +
+		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and " + again + "."
 	if err := gh.AddComment(ctx, n, body); err != nil {
 		return err
 	}

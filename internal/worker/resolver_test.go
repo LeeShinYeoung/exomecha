@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -24,7 +23,7 @@ func (e *env) conflictTask(feature, main map[string]string) (task, pr int, head 
 	return task, pr, head
 }
 
-func (e *env) resolver() *resolver { return &resolver{e.deps, e.box} }
+func (e *env) resolver() *resolver { return &resolver{e.deps, e.runs} }
 
 // resolve runs one resolver round for the Task and fails the test on an error.
 func (e *env) resolve(n int) {
@@ -34,7 +33,7 @@ func (e *env) resolve(n int) {
 	}
 }
 
-func (e *env) resolverBox(n int) string { return e.box.name(n, resolverRole) }
+func (e *env) resolverBox(n int) string { return e.runs.name(resolverRole, n) }
 
 // commitMerge commits the merge in progress the way the AI does, with git's merge message.
 func commitMerge(t *testing.T, repo string) {
@@ -65,7 +64,7 @@ func TestResolverPicks(t *testing.T) {
 	conflicting, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	mergeable, _, _ := e.reviewTask()
 	e.sbx.add(e.resolverBox(mergeable))
-	e.sbx.add(e.box.name(99, builderRole))
+	e.sbx.add(e.runs.name(builderRole, 99))
 
 	picked, err := e.resolver().Pick(t.Context())
 	if err != nil {
@@ -211,7 +210,6 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 		t.Errorf("an sbx error left %d comments", n)
 	}
 	e.sbx.failExec = ""
-	e.clock.advance(minBackoff)
 	e.resolve(task)
 	e.wantState(name, running)
 }
@@ -234,43 +232,10 @@ func TestResolverNothingToMerge(t *testing.T) {
 	e.wantStatus(task, label.Review)
 }
 
-func TestResolverRemovesTheSandboxWhenTheTaskLeavesReview(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name, _ := e.conflicted()
-	e.relabel(task, label.Review, label.Queued)
-
-	e.resolve(task)
-
-	e.wantRemoved(name)
-}
-
-func TestResolverThreeFailuresGoStuck(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name, _ := e.conflicted()
-	for i := 1; i <= 3; i++ {
-		e.writeCtl(name, "stream.jsonl", "{}\n")
-		e.resolve(task)
-		e.clock.advance(stallAfter)
-		e.resolve(task)
-		e.wantRemoved(name)
-		if i == 3 {
-			break
-		}
-		e.wantStatus(task, label.Review)
-		e.clock.advance(maxBackoff)
-		e.resolve(task)
-		e.wantState(name, running)
-	}
-
-	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "failed 3 times in a row", label.Review)
-	wantContains(t, "stuck comment", e.lastComment(task), "did not change for 15 minutes")
-}
-
 func TestResolverWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
-	e.sbx.add(e.box.name(99, builderRole))
+	e.runs.ProjectLimit = 1
+	e.sbx.add(e.runs.name(builderRole, 99))
 	task, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
 	e.resolve(task)
@@ -294,9 +259,8 @@ func TestResolverStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	if got := gittest.Head(e.origin, branchName(task)); got != pushed {
 		t.Errorf("branch = %s, want the person's push %s left alone", got, pushed)
 	}
-	e.clock.advance(time.Minute)
-	if got := e.box.fail(name); got != 1 {
-		t.Errorf("a branch change counted as a failed run")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a branch change left %d comments", n)
 	}
 }
 

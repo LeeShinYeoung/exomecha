@@ -1,11 +1,7 @@
 package git_test
 
 import (
-	"errors"
-	"io/fs"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/LeeShinYeoung/exomecha/internal/git"
@@ -39,45 +35,6 @@ func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestOpenAndRemove(t *testing.T) {
-	f := setup(t, map[string]string{"README.md": "hello\n"})
-	wt, err := f.git.OpenBase(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := readFile(t, filepath.Join(wt.Dir, "README.md")); got != "hello\n" {
-		t.Errorf("README.md = %q, want %q", got, "hello\n")
-	}
-
-	wt.Remove()
-	if _, err := os.Stat(wt.Dir); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("worktree dir still exists: %v", err)
-	}
-	list := gittest.Run(t, filepath.Join(f.root, "repo"), "worktree", "list", "--porcelain")
-	if n := strings.Count(list, "worktree "); n != 1 {
-		t.Errorf("git worktree list has %d entries, want only the main clone:\n%s", n, list)
-	}
-}
-
-func TestOpenFetchesLatest(t *testing.T) {
-	f := setup(t, map[string]string{"README.md": "hello\n"})
-	wt, err := f.git.OpenBase(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt.Remove()
-
-	gittest.Commit(t, f.origin, "main", "", map[string]string{"new.txt": "new\n"})
-	wt, err = f.git.OpenBase(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wt.Remove()
-	if got := readFile(t, filepath.Join(wt.Dir, "new.txt")); got != "new\n" {
-		t.Errorf("new.txt = %q, want the commit pushed after the first open", got)
 	}
 }
 

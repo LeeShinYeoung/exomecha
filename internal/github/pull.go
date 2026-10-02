@@ -2,7 +2,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v92/github"
@@ -26,6 +29,20 @@ func (c *Client) OpenPR(ctx context.Context, branch string) (number int, ok bool
 		return 0, false, nil
 	}
 	return prs[0].GetNumber(), true, nil
+}
+
+// Merged reports whether the newest closed PR from branch was merged.
+func (c *Client) Merged(ctx context.Context, branch string) (bool, error) {
+	// GitHub lists the newest first.
+	prs, _, err := c.api.PullRequests.List(ctx, c.owner, c.repo, &gh.PullRequestListOptions{
+		State:       "closed",
+		Head:        c.owner + ":" + branch,
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil || len(prs) == 0 {
+		return false, err
+	}
+	return prs[0].MergedAt != nil, nil
 }
 
 func (c *Client) CreatePR(ctx context.Context, branch, base, title, body string) (int, error) {
@@ -87,12 +104,34 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 	return latest, nil
 }
 
+// MergeRefused is GitHub refusing a merge for what the PR is. Status 409 means the head is no longer
+// the sha asked for. Status 405 means the PR cannot be merged as it is, for a conflict or for a rule
+// of the base branch alike.
+type MergeRefused struct {
+	Status  int
+	Message string
+}
+
+func (e *MergeRefused) Error() string {
+	return fmt.Sprintf("GitHub refused the merge (%d): %s", e.Status, e.Message)
+}
+
 // Passing the reviewed head SHA makes GitHub refuse the merge if anything was pushed since the review.
 func (c *Client) Merge(ctx context.Context, number int, sha string) error {
 	res, _, err := c.api.PullRequests.Merge(ctx, c.owner, c.repo, number, "", &gh.PullRequestOptions{
 		MergeMethod: "merge",
 		SHA:         sha,
 	})
+	var e *gh.ErrorResponse
+	if errors.As(err, &e) && e.Response != nil {
+		// GitHub answers 405 with these to a merge that raced another merge or push, and a later
+		// try goes through.
+		raced := strings.HasPrefix(e.Message, "Base branch was modified") || strings.HasPrefix(e.Message, "Head branch was modified")
+		switch status := e.Response.StatusCode; {
+		case status == http.StatusConflict, status == http.StatusMethodNotAllowed && !raced:
+			return &MergeRefused{Status: status, Message: e.Message}
+		}
+	}
 	if err != nil {
 		return err
 	}

@@ -9,13 +9,13 @@ EXOMECHA_TEST_SBX=1 go test ./internal/sandbox ./internal/template
 EXOMECHA_TEST_SBX=1 EXOMECHA_TEST_CLAUDE=1 go test -run TestReal ./internal/worker
 ```
 
-The first takes about 2 minutes. The second spends a little Claude usage and takes a few minutes. Both remove every sandbox and template they create.
+The first takes about 2 minutes. The second runs builder, resolver and reviewer, spends a little Claude usage, and takes about 3 minutes. Both remove every sandbox and template they create.
 
 ## Setup
 
 1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule. No GitHub Actions workflow on `main` at the start.
 2. A fine-grained token for that repository only: Issues read and write, Pull requests read and write, Contents read and write, Actions read.
-3. sbx set up as in the README: signed in to Docker, the balanced network policy, the Claude login, and no global `github` secret.
+3. sbx set up as in the README: signed in to Docker, the balanced network policy, the Claude login, and no global `github` secret. This machine's own claude login, with the same account, is only for the usage check.
 4. Install exomecha and fill `<name>.env` (see the README). Run exomecha in its own terminal and keep the log in view:
    ```
    go install ./cmd/exomecha
@@ -31,9 +31,11 @@ The first takes about 2 minutes. The second spends a little Claude usage and tak
    ```
    R=<owner>/<practice repository>
    ```
-   `<sandbox>` is a Task's sandbox as `sbx ls` shows it, `exomecha-task-<slug>-<task>-builder` (see the README for the slug).
+   `<sandbox>` is a Task's builder sandbox as `sbx ls` shows it, `exomecha-run-<slug>-<task>-builder` (see the README for the slug). Every worker's sandbox is named the same way, `exomecha-run-<slug>-<issue>-<worker>`: the PRD's number for splitter, the Task's for the others.
 
 Stopping exomecha with Ctrl-C pauses every worker. A run already in a sandbox keeps going, and exomecha picks it up when it starts again. Use this to line up the state a scenario needs, then start exomecha again.
+
+reviewer's, splitter's and sequencer's runs on a small practice project often end in under a minute. To hold one for a check, freeze its claude with `sbx exec <sandbox> pkill -STOP -f claude`. Let it go on with `pkill -CONT` within 15 minutes, before it counts as stalled.
 
 ## Scenarios
 
@@ -56,6 +58,8 @@ In the practice repository, in Claude Code:
 - Within a minute of the PRD appearing, Tasks appear as its sub-issues. Each body has To do, Files, Acceptance criteria, Test scenarios, Cautions, Out of scope, Context.
 - Order inside the PRD shows as Blocked by. The PRD gets `tasked` last.
 - Each Task goes `status:pending` then `status:queued`.
+- While the PRD is split, `sbx ls` shows `exomecha-run-<slug>-<prd>-splitter`. While a Task is put in line, it shows `exomecha-run-<slug>-<task>-sequencer`. Each is gone from `sbx ls` within a minute after its claude ends, and its folder under `~/.exomecha/<owner>/<repo>/sandboxes/` goes when the Tasks appear or the label changes.
+- A Task with no open Task numbered lower goes to `status:queued` without a sequencer sandbox.
 
 ### 4. Parallel builds and overlap
 
@@ -66,6 +70,7 @@ In the practice repository, in Claude Code:
 ### 5. Review, merge, and close
 
 - With no CI, reviewer waits five minutes after the PR's last commit, then reviews.
+- Within a minute after that, `sbx ls` shows `exomecha-run-<slug>-<task>-reviewer`. Within a minute after its claude ends, the sandbox is gone and the review or the merge follows.
 - On approve: the PR is merged with a merge commit, the Task closes as completed with no status label, and the PRD and then the problem close once all their sub-issues are closed.
 
 ### 6. Sent back by review
@@ -111,13 +116,15 @@ In the practice repository, in Claude Code:
 ### 9. Conflict
 
 - When a Task reaches `status:review`, stop exomecha and push a commit to `main` that changes the same lines its PR changes.
-- Start exomecha. Once GitHub marks the PR as conflicting, resolver merges `main` into the branch, resolves it, and pushes. The Task stays `status:review`, and reviewer reviews it again. reviewer never picks the Task while its PR is conflicting.
+- Start exomecha. Once GitHub marks the PR as conflicting, resolver merges `main` into the branch, resolves it, and pushes. The Task stays `status:review`, and reviewer reviews it again. reviewer never picks the Task while its PR is conflicting, so `sbx ls` shows no `exomecha-run-<slug>-<task>-reviewer` until resolver has pushed.
+- Repeat, but push the commit to `main` while the Task's reviewer sandbox shows in `sbx ls`. The PR is not merged. Within a minute of GitHub marking the PR as conflicting, the reviewer sandbox and its folder are gone, and resolver takes the Task as above.
 - Repeat with a commit on `main` that contradicts the PR (for example, it explicitly refuses the feature the PR adds). resolver sends the Task to `status:stuck` and asks which side wins. Answer in a comment and relabel it `status:review`. resolver merges again and settles the conflict the way you answered. builder is not involved.
 
 ### 10. Restart
 
 - While a Task is `status:working`, stop exomecha with Ctrl-C. The Task stays `status:working`, and `sbx ls` still shows its sandbox. Start exomecha again. Once claude finishes, exomecha collects the run and the PR opens.
 - Repeat, but kill exomecha hard (`kill -9 <pid>`) instead. Same result.
+- Stop exomecha while a Task's reviewer sandbox shows in `sbx ls`, and again while a PRD's splitter sandbox shows. Start it again. exomecha collects each run without starting claude again: the review or the merge follows, and the PRD gets its Tasks. This holds when claude ended while exomecha was stopped too, since the run's folder keeps the result.
 
 ### 11. PR closed by hand
 
@@ -136,8 +143,12 @@ In the practice repository, in Claude Code:
 
 ### 13. Claude usage limit
 
-- Start exomecha with `EXOMECHA_FIVE_HOUR_LIMIT=1` and file a Task. The log says once that usage is over the limit, and the Task does not move.
-- Restart exomecha without it. Within a minute the Task moves on.
+- Stop exomecha while a Task's reviewer sandbox shows in `sbx ls`. File a PRD, and line up a `status:queued` Task with no open blockers and a Task in `status:review` whose CI failed (as in scenario 7).
+- Start exomecha with `EXOMECHA_FIVE_HOUR_LIMIT=1`. The log says once that usage is over the limit. No new sandbox shows in `sbx ls`: the PRD gets no Tasks, and the queued Task stays `status:queued`.
+- The running review is still collected: the PR is merged, or the Task goes `status:queued` with a review.
+- The Task whose CI failed still gets a review listing the failed run and goes `status:queued`, since that needs no claude.
+- Stop exomecha, close every open Task, and file one Task with `status:pending`. Start exomecha with the setting again. The Task goes `status:queued` without a sequencer sandbox, since no open Task is numbered lower, and builder does not start it.
+- Restart exomecha without the setting. Within a minute the PRD's splitter sandbox and the queued Task's builder sandbox show in `sbx ls`.
 
 ### 14. Setup script
 
@@ -147,11 +158,13 @@ In the practice repository, in Claude Code:
 - Start exomecha. The Task goes `status:stuck`. The comment says the setup script failed, and `boom` is in the log, not in the comment.
 - Push a commit to `main` that removes the line, and relabel the Task `status:pending`. It goes through sequencer and builder again, and the PR opens.
 
-### 15. A Task's sandbox
+### 15. Every worker's sandbox
 
 - File a Task. `sbx ls` shows `<sandbox>`. While claude works, `stream.jsonl` in the sandbox's folder under `~/.exomecha/<owner>/<repo>/sandboxes/` grows.
 - After the PR opens, the sandbox is gone from `sbx ls`, and its folder is gone too.
 - The PR's commits have the token owner as author, with the address `<id>+<login>@users.noreply.github.com`.
+- Follow one PRD from split to merge, and a conflict as in scenario 9. Each of the five workers shows its own sandbox in `sbx ls` while its claude works, and the sandbox's folder has a growing `stream.jsonl` too. builder's and resolver's sandboxes go away once their result is pushed. reviewer's, splitter's and sequencer's go away within a minute after claude ends, even when exomecha cannot collect the result yet, and their folders once it does.
+- Afterwards `sbx ls` shows no sandbox of the project, and `~/.exomecha/<owner>/<repo>/sandboxes/` holds only `failed`, if a run failed.
 
 ### 16. Inside a Task's sandbox
 
@@ -165,13 +178,14 @@ With `.exomecha/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 17. Sandbox stopped or removed
 
-- While a Task is `status:working`, run `sbx stop <sandbox>`. Within a minute the Task goes back to `status:queued`, and builder starts it again a minute later.
-- Again, with `sbx rm --force <sandbox>`. Same result.
-- A third time in a row on the same Task. The Task goes `status:stuck`, and the comment says the run failed 3 times in a row. The last run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/<sandbox>`.
+- While a Task is `status:working`, run `sbx stop <sandbox>`. Within a minute the Task goes `status:stuck`, and the comment says the sandbox stopped while claude was running. The run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/<sandbox>`.
+- Relabel the Task `status:pending`. Once builder starts it again, run `sbx rm --force <sandbox>`. The Task goes `status:stuck` the same way, and the comment says the sandbox was removed.
+- While a Task's reviewer sandbox shows in `sbx ls`, stop it with `sbx stop`. Within a minute the Task goes `status:stuck`, the comment says to relabel it `status:review`, and the run's files are in `failed/`. Relabel it. reviewer reviews the PR again in a new sandbox.
+- While a PRD's splitter sandbox shows in `sbx ls`, remove it with `sbx rm --force`. Within a minute the PRD gets `status:stuck`, the comment says to remove that label, and the run's files are in `failed/`. Remove the label. splitter splits the PRD again in a new sandbox.
 
 ### 18. Stalled run
 
-- While a Task is `status:working`, freeze claude with `sbx exec <sandbox> pkill -STOP -f claude`. After 15 minutes the sandbox is removed and the Task goes back to `status:queued`.
+- While a Task is `status:working`, freeze claude with `sbx exec <sandbox> pkill -STOP -f claude`. After 15 minutes the sandbox is removed, and the Task goes `status:stuck` with a comment that claude's output did not change for 15 minutes. The run's files are in `failed/`.
 
 ### 19. A working Task relabeled
 
@@ -182,6 +196,7 @@ With `.exomecha/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 - With `.exomecha/Dockerfile` on `main`, stop exomecha and remove the project's template (`sbx template rm --force`), so exomecha starts with no template and builds it first. Line up three queued Tasks that do not block each other.
 - Start exomecha with `EXOMECHA_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and no more than two Tasks are `status:working` at once, during the build too. The third Task starts once one of the first two is done.
+- reviewer's, splitter's and sequencer's sandboxes that show at the same time do not count toward the two. They have a limit of their own (scenario 26).
 
 ### 21. Blocked host
 
@@ -204,3 +219,32 @@ With `.exomecha/Dockerfile` on `main` (scenario 2):
 
 - Push a commit to `main` that adds `RUN echo exomecha-secret && false` to the Dockerfile, and file a Task. The Task goes `status:stuck`, the comment names the Dockerfile, and `exomecha-secret` is only in the log. Revert the commit and relabel the Task `status:pending`. The PR opens.
 - Put `**` in `.exomecha/allowed-hosts` on `main`, and file a Task. The Task goes `status:stuck`, and the comment quotes that line. Revert it and relabel the Task. The PR opens.
+
+### 25. Reader sandboxes
+
+With `.exomecha/Dockerfile`, `.exomecha/setup.sh` and `.exomecha/allowed-hosts` on `main` (scenario 2), hold a Task's reviewer sandbox. Call it `<reader>`.
+
+- The log's "started claude in a sandbox" line for `<reader>` has an empty template, so it came from sbx's default claude template.
+- Its folder under `~/.exomecha/<owner>/<repo>/sandboxes/` has no `setup.sh`, and the log has no "ran setup script" line for it. `sbx exec -w /home/agent/repo <reader> git status --short --ignored` lists none of the files the setup script creates.
+- `sbx exec -w /home/agent/repo <reader> git config user.email` prints nothing, and `git remote -v` prints nothing.
+- `sbx exec <reader> env` shows no GitHub token other than sbx's placeholder.
+- `sbx policy ls` has no rule for `<reader>` that allows the listed host. `sbx exec <reader> curl -s https://<listed host>` gets a 403 with `Approval required for <host>:443.`, and `ssh.github.com` one with `Blocked by local rule for ssh.github.com:443`.
+- Hold a splitter or sequencer sandbox the same way. `sbx exec -w /home/agent/repo <sandbox> git status` says HEAD is detached at `origin/main`.
+
+### 26. Reader limit
+
+- Stop exomecha. Line up three Tasks in `status:review` with mergeable PRs whose last commits are more than five minutes old, a PRD without `tasked`, and one queued Task.
+- Start exomecha with `EXOMECHA_READ_SANDBOX_LIMIT=1`. `sbx ls` never shows more than one reviewer, splitter or sequencer sandbox at once. The reviews and the split run one after another.
+- The queued Task's builder sandbox shows next to the reader sandbox, since `EXOMECHA_SANDBOX_LIMIT` counts it apart.
+
+### 27. Push during review
+
+- Hold a Task's reviewer sandbox. Push a commit to the Task's branch that keeps the PR correct, for example one that adds a line to its README. Then let claude go on.
+- The PR is not merged and gets no review from that run. Five minutes after the new commit (the wait for CI), the log says the run starts over because the PR branch changed during the review, and its folder is gone.
+- Within a minute a new reviewer sandbox shows. On approve, the PR is merged with the commit you pushed.
+
+### 28. Merge refused by a rule
+
+- Add a branch protection rule for `main` that requires one approving review, and check "Do not allow bypassing the above settings". Otherwise the token owner, an admin of the repository, can merge past it.
+- Let a Task reach `status:review` with a PR the AI approves. GitHub refuses the merge, and the Task goes `status:stuck`. The comment quotes GitHub's message, such as `At least 1 approving review is required by reviewers with write access.`, and says to merge the PR yourself or change the rule. `sbx ls` shows no reviewer sandbox for the Task, and its folder is gone.
+- Remove the rule and relabel the Task `status:review`. reviewer reviews the PR again in a new sandbox and merges it, and the Task closes as completed.

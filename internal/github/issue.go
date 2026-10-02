@@ -115,6 +115,15 @@ func (c *Client) Close(ctx context.Context, number int, reason CloseReason) erro
 		State:       gh.Ptr("closed"),
 		StateReason: gh.Ptr(string(reason)),
 	})
+	if err == nil {
+		return nil
+	}
+	// GitHub closes a Task itself when a PR that says "Closes" merges, and can then refuse this
+	// close. An issue already closed must count, or the caller stops before what comes after the
+	// close, such as clearing the Task's status.
+	if i, rerr := c.Issue(ctx, number); rerr == nil && !i.Open {
+		return nil
+	}
 	return err
 }
 

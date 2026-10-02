@@ -36,9 +36,9 @@ func TestCloneGivesUpOnStalledServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	start := time.Now()
-	_, err = g.OpenBase(ctx)
+	err = g.Sync(ctx)
 	if err == nil {
-		t.Fatal("OpenBase succeeded against a server that never answers")
+		t.Fatal("Sync succeeded against a server that never answers")
 	}
 	if ctx.Err() != nil {
 		t.Fatalf("git kept waiting until the test deadline: %v", err)

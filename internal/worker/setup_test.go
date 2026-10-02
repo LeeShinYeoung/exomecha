@@ -47,50 +47,38 @@ func cancelWhenExists(ctx context.Context, cancel context.CancelFunc, path strin
 	}()
 }
 
-func TestSplitterDoesNotRunSetup(t *testing.T) {
-	e := newEnv(t, setupRepo("exit 1\n"))
-	prd := e.gh.AddIssue("PRD", "the plan", label.PRD)
-	e.claude.answer(`{"tasks": [{"title": "A", "body": "a", "blocked_by": []}]}`)
+// The workers that only read the code run in a sandbox without the setup script, so a broken
+// script must not get in their way.
+func TestReadersDoNotRunSetup(t *testing.T) {
+	for _, c := range []struct {
+		role role
+		// start starts the worker's run and returns its issue.
+		start func(e *env) int
+	}{
+		{reviewerRole, func(e *env) int {
+			task, _, _, _ := e.reviewing()
+			return task
+		}},
+		{splitterRole, func(e *env) int {
+			prd, _ := e.splitting()
+			return prd
+		}},
+		{sequencerRole, func(e *env) int {
+			task, _, _ := e.sequencing()
+			return task
+		}},
+	} {
+		t.Run(c.role.name, func(t *testing.T) {
+			e := newEnv(t, setupRepo("exit 1\n"))
+			name := e.runs.name(c.role, c.start(e))
 
-	if err := (&splitter{e.deps}).Handle(t.Context(), prd); err != nil {
-		t.Fatal(err)
+			e.wantState(name, running)
+			if _, err := os.Stat(filepath.Join(e.runs.ctl(name), "setup.sh")); err == nil {
+				t.Error("the setup script went into the run's directory")
+			}
+			wantNotContains(t, "claude input", e.readCtl(name, "input.md"), "## Setup")
+		})
 	}
-
-	if !e.gh.Issue(prd).HasLabel(label.Tasked) {
-		t.Errorf("PRD has no %s label", label.Tasked)
-	}
-}
-
-func TestSequencerDoesNotRunSetup(t *testing.T) {
-	e := newEnv(t, setupRepo("exit 1\n"))
-	e.gh.AddIssue("lower", "touches x.go", label.Task, string(label.Queued))
-	task := e.gh.AddIssue("this one", "also touches x.go", label.Task, string(label.Pending))
-	e.claude.answer(`{"blocked_by": []}`)
-
-	if err := (&sequencer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
-
-	if n := e.claude.callCount(); n != 1 {
-		t.Errorf("claude called %d times, want once", n)
-	}
-	e.wantStatus(task, label.Queued)
-}
-
-// reviewer only reads the code, so a broken setup script must not get in its way.
-func TestReviewerDoesNotRunSetup(t *testing.T) {
-	e := newEnv(t, setupRepo("exit 1\n"))
-	task, pr, _ := e.reviewTask()
-	e.claude.answer(`{"verdict": "approve", "body": "looks right"}`)
-
-	if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
-
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR was not merged")
-	}
-	wantNotContains(t, "claude input", e.claude.lastInput(), "## Setup")
 }
 
 func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
