@@ -162,6 +162,8 @@ func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 type fakeWorker struct {
 	picks []int
 	errs  map[int]error
+	// handling runs in every Handle, if set.
+	handling func()
 
 	mu      sync.Mutex
 	handled []int
@@ -170,6 +172,9 @@ type fakeWorker struct {
 func (*fakeWorker) Name() string                          { return "test" }
 func (w *fakeWorker) Pick(context.Context) ([]int, error) { return w.picks, nil }
 func (w *fakeWorker) Handle(_ context.Context, n int) error {
+	if w.handling != nil {
+		w.handling()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.handled = append(w.handled, n)
@@ -204,6 +209,9 @@ func (r *rounds) run(ctx context.Context) {
 	wg.Wait()
 }
 
+// early is how much sooner than interval after the last a round may start.
+const early = 10 * time.Millisecond
+
 func TestRoundSkipsAnItemThatIsNotDue(t *testing.T) {
 	c := newClock()
 	w := &fakeWorker{picks: []int{1, 2}, errs: map[int]error{1: errors.New("sbx down")}}
@@ -211,12 +219,24 @@ func TestRoundSkipsAnItemThatIsNotDue(t *testing.T) {
 
 	r.run(t.Context())
 	wantInts(t, "first round", w.took(), []int{1, 2})
-	c.advance(minBackoff - time.Second)
+	c.advance(minBackoff / 2)
 	r.run(t.Context())
 	wantInts(t, "before the wait passed", w.took(), []int{2})
-	c.advance(time.Second)
+	c.advance(minBackoff/2 - early)
 	r.run(t.Context())
 	wantInts(t, "after the wait", w.took(), []int{1, 2})
+}
+
+// A Handle that takes long does not push the next try back a round.
+func TestRoundWaitsFromTheRoundStart(t *testing.T) {
+	c := newClock()
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}, handling: func() { c.advance(10 * time.Second) }}
+	r := newRounds(w, c)
+
+	r.run(t.Context())
+	c.advance(interval - 10*time.Second - early)
+	r.run(t.Context())
+	wantInts(t, "tries", w.took(), []int{1, 1})
 }
 
 func TestRoundDelaysDouble(t *testing.T) {
@@ -227,12 +247,13 @@ func TestRoundDelaysDouble(t *testing.T) {
 	w.took()
 
 	for _, wait := range []time.Duration{1, 2, 4, 8, 16, 30, 30, 30} {
-		c.advance(wait*time.Minute - time.Second)
+		// The round before the wait ends, then the next one.
+		c.advance(wait*time.Minute - interval)
 		r.run(t.Context())
 		if got := w.took(); len(got) != 0 {
 			t.Fatalf("tried again before %v passed", wait*time.Minute)
 		}
-		c.advance(time.Second)
+		c.advance(interval - early)
 		r.run(t.Context())
 		if got := w.took(); len(got) != 1 {
 			t.Fatalf("not tried again after %v", wait*time.Minute)
@@ -323,12 +344,12 @@ func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	e.wantStatus(task, label.Queued)
 	e.wantRemoved(name)
 	delete(e.sbx.fail, "create")
-	e.clock.advance(minBackoff - time.Second)
+	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
 	if e.sbx.exists(name) {
 		t.Fatal("started again before a minute passed")
 	}
-	e.clock.advance(time.Second)
+	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
 	e.wantStatus(task, label.Working)
 	e.wantState(name, running)
@@ -345,12 +366,12 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 	r.run(t.Context())
 	e.wantStatus(task, label.Review)
 	e.gh.Fail(commentsRoute, 0)
-	e.clock.advance(minBackoff - time.Second)
+	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
 	if n := len(e.gh.Issue(task).Comments); n != 0 {
 		t.Fatal("tried again before a minute passed")
 	}
-	e.clock.advance(time.Second)
+	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
 	e.wantStatus(task, label.Stuck)
 }

@@ -117,6 +117,9 @@ func loop(ctx context.Context, w Worker, l *locks) {
 }
 
 func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGroup) {
+	// A wait counts from here, not from when Handle returned, so a wait of a minute ends by the
+	// next round.
+	now := d.now()
 	log := slog.With("worker", w.Name())
 	if s, ok := w.(Sweeper); ok {
 		if err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
@@ -132,7 +135,7 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 	}
 	d.keep(numbers)
 	for _, n := range numbers {
-		if !d.due(n) || !l.lock(n) {
+		if !d.due(n, now) || !l.lock(n) {
 			continue
 		}
 		wg.Go(func() {
@@ -144,7 +147,7 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 			}
 			// An error from shutdown says nothing about the issue.
 			if ctx.Err() == nil {
-				d.strike(n)
+				d.strike(n, now)
 			}
 			log.Error("handle failed", "issue", n, "err", err)
 		})
@@ -164,19 +167,21 @@ type delay struct {
 	next    time.Time
 }
 
-func (d *delays) due(n int) bool {
+func (d *delays) due(n int, now time.Time) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	it, ok := d.items[n]
-	return !ok || !d.now().Before(it.next)
+	// A round can start a moment less than interval after the one before, and must still find a
+	// wait of interval over.
+	return !ok || !now.Add(time.Second).Before(it.next)
 }
 
-func (d *delays) strike(n int) {
+func (d *delays) strike(n int, from time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	it := d.items[n]
 	it.strikes++
-	it.next = d.now().Add(min(maxBackoff, minBackoff<<min(it.strikes-1, 10)))
+	it.next = from.Add(min(maxBackoff, minBackoff<<min(it.strikes-1, 10)))
 	d.items[n] = it
 }
 
