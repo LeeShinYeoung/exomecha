@@ -66,7 +66,7 @@ func (e *env) readCtl(name, file string) string {
 
 func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.envr.ref, e.envr.ok = "docker.io/library/exomecha-owner-repo:0123456789ab", true
+	e.envr.ref = "docker.io/library/exomecha-owner-repo:0123456789ab"
 	e.envr.hosts = []string{"registry.npmjs.org", "*.pypi.org"}
 	l := e.testLaunch()
 
@@ -127,7 +127,6 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 
 func TestOpenWithoutDockerfileUsesTheDefaultTemplate(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.envr.ref, e.envr.ok = "left over", false
 	l := e.testLaunch()
 	e.open(l)
 	if got := e.sbx.box(l.name).template; got != "" {

@@ -24,15 +24,15 @@ func TestRealBuild(t *testing.T) {
 	t.Cleanup(func() { cleanUp(t, e, sandbox) })
 	ctx := t.Context()
 
-	first, ok, err := e.Template(ctx)
-	if err != nil || !ok || first != e.ref(files[dockerfilePath]) {
-		t.Fatalf("Template = %q, %v, %v", first, ok, err)
+	first, err := e.Template(ctx)
+	if err != nil || first != e.ref(files[dockerfilePath]) {
+		t.Fatalf("Template = %q, %v", first, err)
 	}
 	wantTags(t, e, first)
 	if exists, err := e.sandboxExists(ctx, e.helper()); err != nil || exists {
 		t.Errorf("helper left after a build: %v, %v", exists, err)
 	}
-	if again, _, err := e.Template(ctx); err != nil || again != first {
+	if again, err := e.Template(ctx); err != nil || again != first {
 		t.Errorf("Template again = %q, %v", again, err)
 	}
 
@@ -43,14 +43,14 @@ func TestRealBuild(t *testing.T) {
 	sbx(t, "rm", "--force", sandbox)
 
 	files[dockerfilePath] = from + "RUN true # changed\n"
-	second, ok, err := e.Template(ctx)
-	if err != nil || !ok || second == first {
-		t.Fatalf("Template after a change = %q, %v, %v", second, ok, err)
+	second, err := e.Template(ctx)
+	if err != nil || second == "" || second == first {
+		t.Fatalf("Template after a change = %q, %v", second, err)
 	}
 	wantTags(t, e, second)
 
 	files[dockerfilePath] = from + "RUN echo exomecha-test-output && false\n"
-	_, _, err = e.Template(ctx)
+	_, err = e.Template(ctx)
 	p, ok := errors.AsType[*Problem](err)
 	if !ok {
 		t.Fatalf("Template with RUN false = %v, want a Problem", err)

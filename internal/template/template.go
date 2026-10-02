@@ -69,10 +69,11 @@ func (e *Env) ref(dockerfile string) string {
 	return e.repository() + ":" + hex.EncodeToString(sum[:])[:12]
 }
 
-func (e *Env) Template(ctx context.Context) (ref string, ok bool, err error) {
+// An empty ref means the base branch has no Dockerfile for exomecha.
+func (e *Env) Template(ctx context.Context) (ref string, err error) {
 	dockerfile, ok, err := e.files.BaseFile(ctx, dockerfilePath)
 	if err != nil || !ok {
-		return "", false, err
+		return "", err
 	}
 	ref = e.ref(dockerfile)
 	for {
@@ -90,7 +91,7 @@ func (e *Env) Template(ctx context.Context) (ref string, ok bool, err error) {
 		select {
 		case <-b.done:
 		case <-ctx.Done():
-			return "", false, ctx.Err()
+			return "", ctx.Err()
 		}
 		// Waiters share a failed build's result, so Tasks picked together do not each start a
 		// build that fails the same way.
@@ -100,11 +101,11 @@ func (e *Env) Template(ctx context.Context) (ref string, ok bool, err error) {
 	}
 }
 
-func result(ref string, err error) (string, bool, error) {
+func result(ref string, err error) (string, error) {
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
-	return ref, true, nil
+	return ref, nil
 }
 
 func (e *Env) runBuild(ctx context.Context, b *build, dockerfile string) {

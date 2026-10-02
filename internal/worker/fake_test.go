@@ -233,7 +233,6 @@ func (f *fakeSandboxes) add(name string) {
 type fakeEnvironment struct {
 	mu    sync.Mutex
 	ref   string
-	ok    bool
 	hosts []string
 	err   error
 	// With wait set, Template is a build: it hands wait a channel when it starts, and returns once
@@ -241,7 +240,7 @@ type fakeEnvironment struct {
 	wait chan chan struct{}
 }
 
-func (f *fakeEnvironment) Template(ctx context.Context) (string, bool, error) {
+func (f *fakeEnvironment) Template(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	wait := f.wait
 	f.mu.Unlock()
@@ -250,17 +249,17 @@ func (f *fakeEnvironment) Template(ctx context.Context) (string, bool, error) {
 		select {
 		case wait <- built:
 		case <-ctx.Done():
-			return "", false, ctx.Err()
+			return "", ctx.Err()
 		}
 		select {
 		case <-built:
 		case <-ctx.Done():
-			return "", false, ctx.Err()
+			return "", ctx.Err()
 		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.ref, f.ok, f.err
+	return f.ref, f.err
 }
 
 func (f *fakeEnvironment) AllowedHosts(context.Context) ([]string, error) {

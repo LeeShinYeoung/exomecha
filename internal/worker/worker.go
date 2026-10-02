@@ -68,8 +68,8 @@ type Sandboxes interface {
 // An error whose chain holds a value with a Why() string method is one only a person can fix,
 // and Why() is what to tell them.
 type Environment interface {
-	// ok is false when the project has no Dockerfile for exomecha, and sbx's own template is used.
-	Template(ctx context.Context) (ref string, ok bool, err error)
+	// An empty ref is sbx's own template, for a project with no Dockerfile for exomecha.
+	Template(ctx context.Context) (ref string, err error)
 	AllowedHosts(ctx context.Context) ([]string, error)
 }
 

@@ -363,12 +363,9 @@ type launch struct {
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
 func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error) {
-	ref, hasTemplate, err := t.Environment.Template(ctx)
+	ref, err := t.Environment.Template(ctx)
 	if problem, err := needsPerson(l.task, err); problem != "" || err != nil {
 		return problem, err
-	}
-	if !hasTemplate {
-		ref = ""
 	}
 	hosts, err := t.Environment.AllowedHosts(ctx)
 	if problem, err := needsPerson(l.task, err); problem != "" || err != nil {
