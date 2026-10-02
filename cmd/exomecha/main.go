@@ -94,7 +94,6 @@ func run() error {
 	deps := worker.Deps{
 		GitHub:        gh,
 		Git:           g,
-		Agent:         agent.Claude{},
 		Sandboxes:     sbx,
 		Environment:   template.New(g, owner, name),
 		SandboxDir:    filepath.Join(root, "sandboxes"),

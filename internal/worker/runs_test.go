@@ -119,8 +119,8 @@ func TestOutcome(t *testing.T) {
 			if limited != c.limited || (c.failure == "") != (failure == "") || !strings.Contains(failure, c.failure) {
 				t.Errorf("outcome = failure %q, limited %v, want failure %q, limited %v", failure, limited, c.failure, c.limited)
 			}
-			if c.failure == "" && !c.limited && string(res.Structured) != `{"result":"done"}` {
-				t.Errorf("structured result = %s", res.Structured)
+			if c.failure == "" && !c.limited && string(res) != `{"result":"done"}` {
+				t.Errorf("structured result = %s", res)
 			}
 		})
 	}

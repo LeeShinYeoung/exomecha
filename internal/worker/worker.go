@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -36,7 +35,6 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent
 
 	// Every worker runs claude in sandboxes.
 	Sandboxes   Sandboxes

@@ -7,21 +7,15 @@ import (
 	"io"
 )
 
-// StreamArgs are Args for a run whose output is written to a file and read back after it ends.
-func StreamArgs(req Request) []string {
-	// Partial messages keep the output growing while the model writes a long answer, so a
-	// silent run can be told apart from a busy one.
-	return append(Args(req), "--output-format", "stream-json", "--verbose", "--include-partial-messages")
-}
-
 type Stream struct {
 	PermissionMode string // as claude's init line reports it
 	Rejected       bool   // claude reported a plan limit as used up
-	Ended          bool   // claude wrote its result line
-	IsError        bool
-	Subtype        string
-	Text           string
-	Structured     json.RawMessage
+
+	ended      bool // claude wrote its result line
+	isError    bool
+	subtype    string
+	text       string
+	structured json.RawMessage
 }
 
 // ReadStream reads the output of `claude -p --output-format stream-json --verbose`.
@@ -66,24 +60,24 @@ func ReadStream(r io.Reader) (Stream, error) {
 				s.Rejected = true
 			}
 		case "result":
-			s.Ended = true
-			s.IsError = line.IsError
-			s.Subtype = line.Subtype
-			s.Text = line.Result
-			s.Structured = line.StructuredOutput
+			s.ended = true
+			s.isError = line.IsError
+			s.subtype = line.Subtype
+			s.text = line.Result
+			s.structured = line.StructuredOutput
 		}
 	}
 }
 
-// Result checks the run's result the way Run does.
-func (s Stream) Result(schema bool) (Result, error) {
+// Result returns the structured output the run ended with.
+func (s Stream) Result() (json.RawMessage, error) {
 	switch {
-	case !s.Ended:
-		return Result{}, errors.New("claude ended without a result")
-	case s.IsError:
-		return Result{}, fmt.Errorf("claude returned an error (%s): %s", s.Subtype, s.Text)
-	case schema && !hasValue(s.Structured):
-		return Result{}, errors.New("claude output has no structured result")
+	case !s.ended:
+		return nil, errors.New("claude ended without a result")
+	case s.isError:
+		return nil, fmt.Errorf("claude returned an error (%s): %s", s.subtype, s.text)
+	case len(s.structured) == 0 || string(s.structured) == "null":
+		return nil, errors.New("claude output has no structured result")
 	}
-	return Result{Text: s.Text, Structured: s.Structured}, nil
+	return s.structured, nil
 }

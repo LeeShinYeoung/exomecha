@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
@@ -27,7 +25,6 @@ type env struct {
 	t      *testing.T
 	gh     *githubtest.Server
 	origin string
-	claude *fakeClaude
 	sbx    *fakeSandboxes
 	envr   *fakeEnvironment
 	clock  *clock
@@ -45,12 +42,10 @@ func newEnv(t *testing.T, files map[string]string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claude := &fakeClaude{t: t}
 	e := &env{
 		t:      t,
 		gh:     s,
 		origin: origin,
-		claude: claude,
 		sbx:    newFakeSandboxes(t),
 		envr:   &fakeEnvironment{},
 		clock:  newClock(),
@@ -58,7 +53,6 @@ func newEnv(t *testing.T, files map[string]string) *env {
 	e.deps = Deps{
 		GitHub:        client,
 		Git:           git.NewAt(t.TempDir(), origin, "main", "token"),
-		Agent:         claude,
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
@@ -71,53 +65,6 @@ func newEnv(t *testing.T, files map[string]string) *env {
 	e.runs = newRuns(e.deps, nil)
 	e.runs.now = e.clock.now
 	return e
-}
-
-// fakeClaude answers with whatever the test sets in reply, and records every request.
-// With no reply set, a call fails the test.
-type fakeClaude struct {
-	t     *testing.T
-	mu    sync.Mutex
-	reply func(req agent.Request) (string, error)
-	calls []agent.Request
-}
-
-func (f *fakeClaude) Run(_ context.Context, req agent.Request) (agent.Result, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, req)
-	reply := f.reply
-	f.mu.Unlock()
-	if reply == nil {
-		f.t.Errorf("unexpected claude call with input:\n%s", req.Input)
-		return agent.Result{}, errors.New("unexpected claude call")
-	}
-	if _, err := os.Stat(req.Dir); err != nil {
-		f.t.Errorf("claude runs in a missing worktree: %v", err)
-	}
-	out, err := reply(req)
-	if err != nil {
-		return agent.Result{}, err
-	}
-	return agent.Result{Structured: json.RawMessage(out)}, nil
-}
-
-func (f *fakeClaude) answer(out string) {
-	f.reply = func(agent.Request) (string, error) { return out, nil }
-}
-
-func (f *fakeClaude) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.calls)
-}
-
-func (f *fakeClaude) lastInput() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.calls) == 0 {
-		f.t.Fatal("claude was never called")
-	}
-	return f.calls[len(f.calls)-1].Input
 }
 
 func writeFile(t *testing.T, dir, name, content string) {

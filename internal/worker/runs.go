@@ -562,8 +562,7 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 	if err := os.WriteFile(filepath.Join(ctl, "input.md"), []byte(input), 0o644); err != nil {
 		return "", err
 	}
-	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"},
-		agent.StreamArgs(agent.Request{Instructions: prompt(ro.name), Schema: ro.schema})...)
+	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.Args(prompt(ro.name), ro.schema)...)
 	if err := r.Sandboxes.Start(ctx, name, repoDir, args...); err != nil {
 		return "", err
 	}
@@ -695,7 +694,7 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 	if failure != "" {
 		return false, r.failed(ctx, ro, n, failure, detail)
 	}
-	if err := json.Unmarshal(res.Structured, out); err != nil {
+	if err := json.Unmarshal(res, out); err != nil {
 		return false, r.failed(ctx, ro, n, badResult, err.Error())
 	}
 	return true, nil
@@ -703,7 +702,7 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 
 // outcome reads a finished run. failure says why the run failed, in words fit for a comment, and
 // detail adds what only the log gets. limited is set when the run ended at the Claude usage limit.
-func (r *runs) outcome(name string) (res agent.Result, failure, detail string, limited bool) {
+func (r *runs) outcome(name string) (res json.RawMessage, failure, detail string, limited bool) {
 	b, err := readCtl(r.ctl(name), "exit", 64)
 	if err != nil {
 		return res, "exomecha could not read how claude ended", err.Error(), false
@@ -721,7 +720,7 @@ func (r *runs) outcome(name string) (res agent.Result, failure, detail string, l
 	if err != nil {
 		return res, "exomecha could not read claude's output", err.Error(), false
 	}
-	res, err = s.Result(true)
+	res, err = s.Result()
 	if (err != nil || code != 0) && s.Rejected {
 		return res, "", "", true
 	}
