@@ -74,7 +74,8 @@ func (s state) String() string {
 
 // role is what runs needs to know about the worker a run belongs to.
 type role struct {
-	name string
+	name   string
+	schema string
 	// The labels builder moves a Task between when a run starts and when it starts over. Other
 	// workers leave the label alone.
 	queued, working label.Status
@@ -286,35 +287,76 @@ func (r *runs) slotFree(ctx context.Context, self string) (bool, error) {
 	return len(used) < r.SandboxLimit, nil
 }
 
-// launch is a run about to start.
-type launch struct {
-	task    int
-	name    string
-	branch  string
-	in      inputs
-	request agent.Request // Instructions and Schema. The input comes from input.
-	// input runs once setup has run, and builds claude's input. It may fill in the inputs, and
-	// it returns a problem the way open does.
-	input func(ctx context.Context, ranSetup bool, in *inputs) (input, problem string, err error)
+// spec is what a worker puts into a run.
+type spec struct {
+	branch string // checked out in the run's repository, and set to head
+	base   string // the base branch commit
+	head   string // the commit claude starts from
+	remote string // the Task branch on GitHub, "" when there is none
+	// merge merges the base branch after setup and lists the conflicts in the input.
+	merge bool
+	input string // claude's input. open adds what setup and the merge did.
+}
+
+// start starts a run of ro for issue n, when the usage gate is open and a slot is free. build
+// says what goes in. A start that does not get through is undone: a problem only a person can fix
+// sends the issue to stuck, and an error leaves builder's Task queued and returns the error.
+func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Context) (spec, error)) error {
+	name := r.name(ro, n)
+	if ready, err := r.reserve(ctx, name); err != nil || !ready {
+		return err
+	}
+	defer r.release(name)
+	if ro.working != label.None {
+		if err := r.GitHub.SetStatus(ctx, n, ro.queued, ro.working); err != nil {
+			return err
+		}
+	}
+	s, err := build(ctx)
+	problem := ""
+	if err == nil {
+		problem, err = r.open(ctx, ro, n, s)
+	}
+	if problem == "" && err == nil {
+		return nil
+	}
+	// Undo the start even when shutdown cancelled ctx.
+	cleanup := context.WithoutCancel(ctx)
+	if rerr := r.remove(cleanup, name, false); rerr != nil {
+		return errors.Join(err, rerr)
+	}
+	if problem != "" {
+		return toStuck(cleanup, r.GitHub, n, ro.from, ro.back, problem)
+	}
+	if ro.working != label.None {
+		if rerr := r.GitHub.SetStatus(cleanup, n, ro.working, ro.queued); rerr != nil {
+			return errors.Join(err, rerr)
+		}
+	}
+	if errors.Is(err, errNoSlot) {
+		return nil
+	}
+	return err
 }
 
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
-func (r *runs) open(ctx context.Context, l launch) (problem string, err error) {
+func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
+	name := r.name(ro, n)
 	ref, err := r.Environment.Template(ctx)
-	if problem, err := needsPerson(l.task, err); problem != "" || err != nil {
+	if problem, err := needsPerson(n, err); problem != "" || err != nil {
 		return problem, err
 	}
 	hosts, err := r.Environment.AllowedHosts(ctx)
-	if problem, err := needsPerson(l.task, err); problem != "" || err != nil {
+	if problem, err := needsPerson(n, err); problem != "" || err != nil {
 		return problem, err
 	}
-	script, hasScript, err := r.Git.Show(ctx, l.in.Base, setupScript)
+	script, hasScript, err := r.Git.Show(ctx, s.base, setupScript)
 	if err != nil {
 		return "", err
 	}
 
-	ctl := r.ctl(l.name)
+	ctl := r.ctl(name)
 	if err := os.MkdirAll(ctl, 0o755); err != nil {
 		return "", err
 	}
@@ -328,60 +370,120 @@ func (r *runs) open(ctx context.Context, l launch) (problem string, err error) {
 	}
 
 	r.slots.Lock()
-	free, err := r.slotFree(ctx, l.name)
+	free, err := r.slotFree(ctx, name)
 	if err == nil && !free {
 		err = errNoSlot
 	}
 	if err == nil {
 		// Every other start waits on the slot lock, so a create that hangs must give up.
 		createCtx, cancel := context.WithTimeout(ctx, createTimeout)
-		err = r.Sandboxes.Create(createCtx, l.name, ref, ctl, deniedHosts)
+		err = r.Sandboxes.Create(createCtx, name, ref, ctl, deniedHosts)
 		cancel()
 	}
 	r.slots.Unlock()
 	if err != nil {
 		return "", err
 	}
-	if err := r.Sandboxes.Allow(ctx, l.name, hosts); err != nil {
+	if err := r.Sandboxes.Allow(ctx, name, hosts); err != nil {
 		return "", err
 	}
-	if _, err := r.git(ctx, l.name, "", "init", "-q", repoDir); err != nil {
+	if _, err := r.git(ctx, name, "", "init", "-q", repoDir); err != nil {
 		return "", err
 	}
 	// Before setup, so the project's script can set another.
 	for _, kv := range [][2]string{{"user.name", r.GitName}, {"user.email", r.GitEmail}} {
-		if _, err := r.git(ctx, l.name, repoDir, "config", kv[0], kv[1]); err != nil {
+		if _, err := r.git(ctx, name, repoDir, "config", kv[0], kv[1]); err != nil {
 			return "", err
 		}
 	}
-	if err := r.Git.SendTo(ctx, r.Sandboxes.GitURL(l.name, repoDir), l.in.Base, l.branch, l.in.Head); err != nil {
+	if err := r.Git.SendTo(ctx, r.Sandboxes.GitURL(name, repoDir), s.base, s.branch, s.head); err != nil {
 		return "", err
 	}
-	if _, err := r.git(ctx, l.name, repoDir, "checkout", "-q", l.branch); err != nil {
+	if _, err := r.git(ctx, name, repoDir, "checkout", "-q", s.branch); err != nil {
 		return "", err
-	}
-	if hasScript {
-		if problem, err := r.setup(ctx, l); problem != "" || err != nil {
-			return problem, err
-		}
 	}
 
-	input, problem, err := l.input(ctx, hasScript, &l.in)
-	if problem != "" || err != nil {
-		return problem, err
+	in := inputs{Base: s.base, Head: s.head, Remote: s.remote}
+	input := s.input
+	if hasScript {
+		if problem, err := r.setup(ctx, ro, n, s); problem != "" || err != nil {
+			return problem, err
+		}
+		when := " It ran before you started.\n\n"
+		if s.merge {
+			when = " It ran before the merge started.\n\n"
+		}
+		input += setupNote + when
+	}
+	// After setup, not before: conflict markers in a manifest or lockfile would break an install.
+	if s.merge {
+		conflicts, problem, err := r.merge(ctx, ro, n)
+		if problem != "" || err != nil {
+			return problem, err
+		}
+		in.Conflicts = conflicts
+		input += fmt.Sprintf("## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())
+		if len(conflicts) == 0 {
+			input += "None. The merge only needs to be committed.\n"
+		}
+		for _, f := range conflicts {
+			input += "- " + f + "\n"
+		}
 	}
 	if err := os.WriteFile(filepath.Join(ctl, "input.md"), []byte(input), 0o644); err != nil {
 		return "", err
 	}
-	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.StreamArgs(l.request)...)
-	if err := r.Sandboxes.Start(ctx, l.name, repoDir, args...); err != nil {
+	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"},
+		agent.StreamArgs(agent.Request{Instructions: prompt(ro.name), Schema: ro.schema})...)
+	if err := r.Sandboxes.Start(ctx, name, repoDir, args...); err != nil {
 		return "", err
 	}
-	if err := r.record(l.name, l.in); err != nil {
+	if err := r.record(name, in); err != nil {
 		return "", err
 	}
-	slog.Info("started claude in a sandbox", "task", l.task, "sandbox", l.name, "template", ref)
+	slog.Info("started claude in a sandbox", "issue", n, "sandbox", name, "template", ref)
 	return "", nil
+}
+
+// merge merges the base branch in the run's repository but stops before the merge commit, so the
+// AI makes that commit itself and sees whatever the project's commit checks report. problem is set
+// when git refused the merge without a conflict.
+func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, problem string, err error) {
+	// The exit status comes back on stdout, apart from sbx's own failures.
+	out, err := r.sh(ctx, ro, n, `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, r.Git.BaseRef())
+	if err != nil {
+		return nil, "", err
+	}
+	text := strings.TrimRight(out, "\n")
+	output, last := "", text
+	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+		output, last = text[:i], text[i+1:]
+	}
+	code, err := strconv.Atoi(strings.TrimPrefix(last, "exit "))
+	if err != nil {
+		return nil, "", fmt.Errorf("read the merge's exit status: %q", last)
+	}
+	if code == 0 {
+		return nil, "", nil
+	}
+	// -z keeps non-ASCII file names as they are instead of quoting them.
+	list, err := r.sh(ctx, ro, n, "git diff --name-only -z --diff-filter=U")
+	if err != nil {
+		return nil, "", err
+	}
+	for f := range strings.SplitSeq(list, "\x00") {
+		if f != "" {
+			conflicts = append(conflicts, f)
+		}
+	}
+	if len(conflicts) == 0 {
+		// The same merge fails the same way on every try, so only a person can get past it. Like
+		// setup's, the output stays in the log.
+		slog.Warn("merge failed without a conflict", "issue", n, "exit", code, "output", output)
+		return nil, fmt.Sprintf("Merging `%s` into this Task's branch in the sandbox failed without a conflict, so the AI did not start. "+
+			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
+	}
+	return conflicts, "", nil
 }
 
 func (r *runs) record(name string, in inputs) error {

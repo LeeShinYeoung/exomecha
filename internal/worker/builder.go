@@ -2,13 +2,11 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
@@ -26,6 +24,7 @@ const builderSchema = `{
 
 var builderRole = role{
 	name:    "builder",
+	schema:  builderSchema,
 	queued:  label.Queued,
 	working: label.Working,
 	from:    label.Working,
@@ -113,7 +112,7 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 		return nil
 	}
 	if !working {
-		return b.start(ctx, task, name)
+		return b.start(ctx, task)
 	}
 
 	switch r.state {
@@ -134,90 +133,46 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 	return nil
 }
 
-func (b *builder) start(ctx context.Context, task github.Issue, name string) error {
+func (b *builder) start(ctx context.Context, task github.Issue) error {
 	n := task.Number
 	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
 		return err
 	}
-	if ready, err := b.runs.reserve(ctx, name); err != nil || !ready {
-		return err
-	}
-	defer b.runs.release(name)
-	if err := b.GitHub.SetStatus(ctx, n, label.Queued, label.Working); err != nil {
-		return err
-	}
-	problem, err := b.launch(ctx, task, name)
-	if problem == "" && err == nil {
-		return nil
-	}
-	// Undo the start even when shutdown cancelled ctx.
-	cleanup := context.WithoutCancel(ctx)
-	if rerr := b.runs.remove(cleanup, name, false); rerr != nil {
-		return errors.Join(err, rerr)
-	}
-	if problem != "" {
-		return toStuck(cleanup, b.GitHub, n, label.Working, label.Pending, problem)
-	}
-	if rerr := b.GitHub.SetStatus(cleanup, n, label.Working, label.Queued); rerr != nil {
-		return errors.Join(err, rerr)
-	}
-	if errors.Is(err, errNoSlot) {
-		return nil
-	}
-	return err
-}
-
-func (b *builder) launch(ctx context.Context, task github.Issue, name string) (problem string, err error) {
-	n := task.Number
-	branch := branchName(n)
-	if err := b.Git.Sync(ctx); err != nil {
-		return "", err
-	}
-	base, ok, err := b.Git.Rev(ctx, b.Git.BaseRef())
-	if err != nil || !ok {
-		return "", errors.Join(err, fmt.Errorf("no %s", b.Git.BaseRef()))
-	}
-	remote, hasRemote, err := b.Git.Rev(ctx, "origin/"+branch)
-	if err != nil {
-		return "", err
-	}
-	pr, hasPR, err := b.GitHub.OpenPR(ctx, branch)
-	if err != nil {
-		return "", err
-	}
-	in := inputs{Base: base, Head: base, Remote: remote}
-	var existing string
-	if hasPR {
-		if !hasRemote {
-			return "", fmt.Errorf("PR #%d has no branch %s", pr, branch)
+	return b.runs.start(ctx, builderRole, n, func(ctx context.Context) (spec, error) {
+		branch := branchName(n)
+		base, err := baseCommit(ctx, b.Git)
+		if err != nil {
+			return spec{}, err
 		}
-		in.Head = remote
-		existing = fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this Task. The current directory is its branch.\n\n", pr)
+		remote, hasRemote, err := b.Git.Rev(ctx, "origin/"+branch)
+		if err != nil {
+			return spec{}, err
+		}
+		pr, hasPR, err := b.GitHub.OpenPR(ctx, branch)
+		if err != nil {
+			return spec{}, err
+		}
+		comments, err := issueComments(ctx, b.GitHub, n)
+		if err != nil {
+			return spec{}, err
+		}
+		s := spec{branch: branch, base: base, head: base, remote: remote, input: taskText(task) + comments}
+		if !hasPR {
+			return s, nil
+		}
+		if !hasRemote {
+			return spec{}, fmt.Errorf("PR #%d has no branch %s", pr, branch)
+		}
+		s.head = remote
+		s.input += fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this Task. The current directory is its branch.\n\n", pr)
 		review, err := b.GitHub.LatestReview(ctx, pr)
 		if err != nil {
-			return "", err
+			return spec{}, err
 		}
 		if review != "" {
-			existing += "## Last review (exomecha's latest review on this PR: changes to make or CI failures)\n\n" + review + "\n"
+			s.input += "## Last review (exomecha's latest review on this PR: changes to make or CI failures)\n\n" + review + "\n"
 		}
-	}
-	comments, err := issueComments(ctx, b.GitHub, n)
-	if err != nil {
-		return "", err
-	}
-	return b.runs.open(ctx, launch{
-		task:    n,
-		name:    name,
-		branch:  branch,
-		in:      in,
-		request: agent.Request{Instructions: prompt("builder"), Schema: builderSchema},
-		input: func(_ context.Context, ranSetup bool, _ *inputs) (string, string, error) {
-			input := taskText(task) + comments
-			if ranSetup {
-				input += setupNote + " It ran before you started.\n\n"
-			}
-			return input + existing, "", nil
-		},
+		return s, nil
 	})
 }
 

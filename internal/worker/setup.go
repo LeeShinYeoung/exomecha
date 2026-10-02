@@ -13,7 +13,7 @@ const setupScript = ".exomecha/setup.sh"
 
 const setupFix = " Fix the script on the base branch, then relabel this issue as below. You don't need to answer."
 
-// Each worker adds when it ran.
+// open adds when it ran.
 const setupNote = "## Setup\n\nexomecha ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
 
 // A script still running after this long is stopped and the Task goes to stuck. Without a limit,
@@ -25,8 +25,9 @@ var setupTimeout = 10 * time.Minute
 // the script breaks one of its rules, which only a person can fix: it exits 0 in time, and it
 // leaves the working copy as git had it. What it leaves running stays, since the AI's tests may
 // need it, and goes away with the sandbox.
-func (r *runs) setup(ctx context.Context, l launch) (problem string, err error) {
-	upToDate, err := r.Git.IsAncestor(ctx, l.in.Base, l.in.Head)
+func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
+	name := r.name(ro, n)
+	upToDate, err := r.Git.IsAncestor(ctx, s.base, s.head)
 	if err != nil {
 		return "", err
 	}
@@ -38,8 +39,8 @@ func (r *runs) setup(ctx context.Context, l launch) (problem string, err error) 
 	runCtx, cancel := context.WithTimeout(ctx, setupTimeout+time.Minute)
 	defer cancel()
 	start := time.Now()
-	env := []string{"EXOMECHA_TASK=" + strconv.Itoa(l.task)}
-	out, err := r.Sandboxes.Exec(runCtx, l.name, repoDir, env, "sh", "-c", script, "sh", r.ctl(l.name))
+	env := []string{"EXOMECHA_TASK=" + strconv.Itoa(n)}
+	out, err := r.Sandboxes.Exec(runCtx, name, repoDir, env, "sh", "-c", script, "sh", r.ctl(name))
 	if err != nil {
 		return "", fmt.Errorf("run %s: %w", setupScript, err)
 	}
@@ -48,14 +49,14 @@ func (r *runs) setup(ctx context.Context, l launch) (problem string, err error) 
 		return "", fmt.Errorf("read the exit status of %s: %q", setupScript, out)
 	}
 
-	head, changes := l.in.Head, ""
+	head, changes := s.head, ""
 	if code == 0 {
-		out, err := r.git(ctx, l.name, repoDir, "rev-parse", "HEAD")
+		out, err := r.git(ctx, name, repoDir, "rev-parse", "HEAD")
 		if err != nil {
 			return "", err
 		}
 		head = strings.TrimSpace(out)
-		if changes, err = r.git(ctx, l.name, repoDir, "status", "--porcelain"); err != nil {
+		if changes, err = r.git(ctx, name, repoDir, "status", "--porcelain"); err != nil {
 			return "", err
 		}
 		// Not TrimSpace: a line for an unstaged change starts with a space.
@@ -68,21 +69,21 @@ func (r *runs) setup(ctx context.Context, l launch) (problem string, err error) 
 		what = fmt.Sprintf("did not end cleanly (it ran past %d minutes). It must exit 0 within %d minutes.", minutes, minutes)
 	case code != 0:
 		what = fmt.Sprintf("did not end cleanly (exit status %d). It must exit 0 within %d minutes.", code, minutes)
-	case head != l.in.Head || changes != "":
+	case head != s.head || changes != "":
 		// Anything git can see, the AI can commit into the PR.
 		what = "changed the working copy. Everything it creates must be ignored by git, and it must not edit tracked files or commit."
 	default:
-		slog.Info("ran setup script", "task", l.task, "took", time.Since(start).Round(time.Second))
+		slog.Info("ran setup script", "task", n, "took", time.Since(start).Round(time.Second))
 		return "", nil
 	}
 
 	// The details stay in the log. The output can hold secrets, and the comment goes on the issue.
-	slog.Warn("setup script rejected", "task", l.task, "why", what, "exit", code,
-		"head_moved", head != l.in.Head, "changes", changes, "output", r.tail(l.name, "setup.log"))
+	slog.Warn("setup script rejected", "task", n, "why", what, "exit", code,
+		"head_moved", head != s.head, "changes", changes, "output", r.tail(name, "setup.log"))
 	fix := setupFix
 	if !upToDate {
 		// Fixing the base branch cannot help a branch that lacks what the script relies on, such as a newer .gitignore.
-		fix = fmt.Sprintf(" The script is the base branch's copy, and this Task's branch is behind the base branch, so the branch may just be older than the script. If it is, merge the base branch into `%s`. If not, fix the script on the base branch. Then relabel this issue as below. You don't need to answer.", branchName(l.task))
+		fix = fmt.Sprintf(" The script is the base branch's copy, and this Task's branch is behind the base branch, so the branch may just be older than the script. If it is, merge the base branch into `%s`. If not, fix the script on the base branch. Then relabel this issue as below. You don't need to answer.", branchName(n))
 	}
 	return fmt.Sprintf("`%s` %s The details are in exomecha's log.", setupScript, what) + fix, nil
 }

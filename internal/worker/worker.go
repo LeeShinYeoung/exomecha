@@ -337,6 +337,18 @@ func branchName(n int) string {
 	return fmt.Sprintf("exomecha/task-%d", n)
 }
 
+// baseCommit fetches, then returns the base branch's commit.
+func baseCommit(ctx context.Context, g *git.Git) (string, error) {
+	if err := g.Sync(ctx); err != nil {
+		return "", err
+	}
+	base, ok, err := g.Rev(ctx, g.BaseRef())
+	if err == nil && !ok {
+		err = fmt.Errorf("no %s", g.BaseRef())
+	}
+	return base, err
+}
+
 // prConflicted reports whether the Task's open PR is one GitHub marks as conflicting.
 // Only resolver handles those, so reviewer leaves them alone.
 func prConflicted(ctx context.Context, gh *github.Client, n int) (bool, error) {
