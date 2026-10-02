@@ -28,6 +28,13 @@ var resolverRole = role{
 	back:   label.Review,
 }
 
+var resolverTable = table{
+	// none, preparing, running, stalled, dead, gone, finished
+	away:  {idle, drop, drop, drop, drop, drop, drop},
+	clean: {idle, restart, idle, fail, fail, fail, harvest},
+	ready: {begin, restart, idle, fail, fail, fail, harvest},
+}
+
 // resolver works like builder, one sandbox per Task, while the Task stays in review.
 type resolver struct {
 	Deps
@@ -48,11 +55,11 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	}
 	out := found
 	for _, t := range tasks {
-		conflicted, err := prConflicted(ctx, r.GitHub, t.Number)
+		p, err := r.place(ctx, t)
 		if err != nil {
 			return nil, err
 		}
-		if conflicted {
+		if p == ready {
 			out = append(out, t.Number)
 		}
 	}
@@ -60,50 +67,36 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	return slices.Compact(out), nil
 }
 
-// Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
-// stays as it is, so the next try repeats the step.
 func (r *resolver) Handle(ctx context.Context, n int) error {
-	name := r.runs.name(resolverRole, n)
 	task, err := r.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
 	}
-	run, err := r.runs.read(ctx, name)
+	p, err := r.place(ctx, task)
 	if err != nil {
 		return err
 	}
-	if !holds(task, label.Review) {
-		if run.state == none {
-			return nil
-		}
-		return r.runs.drop(ctx, resolverRole, n)
+	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
+		func(ctx context.Context) error { return r.start(ctx, task) },
+		func(ctx context.Context, run run) error { return r.collect(ctx, n, run.in) })
+}
+
+func (r *resolver) place(ctx context.Context, task github.Issue) (place, error) {
+	if !holds(task, label.Task, label.Review) {
+		return away, nil
 	}
-	if run.state == running {
-		return nil
+	pr, ok, err := taskPR(ctx, r.GitHub, task.Number)
+	if err != nil {
+		return away, err
 	}
-	switch run.state {
-	case none:
-		return r.start(ctx, task)
-	case preparing:
-		// Only a start holds the Task's lock while preparing, so this one was cut off.
-		return r.runs.restart(ctx, resolverRole, n, "its start was cut off")
-	case stalled:
-		return r.runs.failed(ctx, resolverRole, n, fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes())), "")
-	case dead:
-		return r.runs.failed(ctx, resolverRole, n, "the sandbox stopped while claude was running", "")
-	case gone:
-		return r.runs.failed(ctx, resolverRole, n, "the sandbox was removed while claude was running", "")
-	case finished:
-		return r.harvest(ctx, n, run.in)
+	if ok && pr.Mergeable != nil && !*pr.Mergeable {
+		return ready, nil
 	}
-	return nil
+	return clean, nil
 }
 
 func (r *resolver) start(ctx context.Context, task github.Issue) error {
 	n := task.Number
-	if conflicted, err := prConflicted(ctx, r.GitHub, n); err != nil || !conflicted {
-		return err
-	}
 	base, err := baseCommit(ctx, r.Git)
 	if err != nil {
 		return err
@@ -130,7 +123,7 @@ func (r *resolver) start(ctx context.Context, task github.Issue) error {
 	})
 }
 
-func (r *resolver) harvest(ctx context.Context, n int, in inputs) error {
+func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	var out struct {
 		Result string `json:"result"`
 		Reason string `json:"reason"`

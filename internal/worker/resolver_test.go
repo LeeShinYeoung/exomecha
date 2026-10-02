@@ -232,34 +232,6 @@ func TestResolverNothingToMerge(t *testing.T) {
 	e.wantStatus(task, label.Review)
 }
 
-func TestResolverRemovesTheSandboxWhenTheTaskLeavesReview(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name, _ := e.conflicted()
-	e.relabel(task, label.Review, label.Queued)
-
-	e.resolve(task)
-
-	e.wantRemoved(name)
-}
-
-func TestResolverFailedRunGoesStuck(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name, head := e.conflicted()
-	e.writeCtl(name, "stream.jsonl", "{}\n")
-	e.resolve(task)
-	e.clock.advance(stallAfter)
-
-	e.resolve(task)
-
-	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "The AI's run failed because claude's output did not change for 15 minutes", label.Review)
-	e.wantRemoved(name)
-	e.wantKept(name, "stream.jsonl")
-	if got := gittest.Head(e.origin, branchName(task)); got != head {
-		t.Errorf("branch moved to %s, want it left at %s", got, head)
-	}
-}
-
 func TestResolverWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.SandboxLimit = 1

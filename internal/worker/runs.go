@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
-	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
@@ -71,6 +70,33 @@ const (
 func (s state) String() string {
 	return [...]string{"none", "preparing", "running", "stalled", "dead", "gone", "finished"}[s]
 }
+
+// A worker's table gives the action for each place its issue can be in and each state of its run.
+type (
+	table map[place]row
+	row   [finished + 1]action // one column per state, so finished has to stay the last state
+)
+
+type action int
+
+const (
+	idle    action = iota
+	begin          // the worker's start
+	harvest        // the worker's collect
+	fail           // stuck at once, keeping the run's files
+	drop           // remove the run and leave the labels alone
+	restart        // remove the run without a failure, and builder's Task goes back to the queue
+)
+
+// place is where an issue is, as one worker sees it on GitHub.
+type place int
+
+const (
+	away    place = iota // closed, another worker's, or on its way to stuck
+	ready                // the worker may start a run
+	working              // a Task builder is working on
+	clean                // a Task in review whose PR does not conflict, or that has no PR
+)
 
 // role is what runs needs to know about the worker a run belongs to.
 type role struct {
@@ -285,6 +311,47 @@ func (r *runs) slotFree(ctx context.Context, self string) (bool, error) {
 	}
 	delete(used, self)
 	return len(used) < r.SandboxLimit, nil
+}
+
+// step takes the action row gives for the state of the run of ro for issue n. start begins a run,
+// and collect takes what a finished run did.
+func (r *runs) step(ctx context.Context, ro role, n int, row row,
+	start func(context.Context) error, collect func(context.Context, run) error) error {
+	run, err := r.read(ctx, r.name(ro, n))
+	if err != nil {
+		return err
+	}
+	switch row[run.state] {
+	case begin:
+		return start(ctx)
+	case harvest:
+		return collect(ctx, run)
+	case fail:
+		return r.failed(ctx, ro, n, why(run.state), "")
+	case drop:
+		return r.drop(ctx, ro, n)
+	case restart:
+		return r.restart(ctx, ro, n, why(run.state))
+	}
+	return nil
+}
+
+// why says what happened to a run in state s, for the comment on a failure or the log of a restart.
+func why(s state) string {
+	switch s {
+	case none:
+		return "the issue had no run"
+	case preparing:
+		// Only a start holds the issue's lock while preparing, so this one was cut off.
+		return "its start was cut off"
+	case stalled:
+		return fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes()))
+	case dead:
+		return "the sandbox stopped while claude was running"
+	case gone:
+		return "the sandbox was removed while claude was running"
+	}
+	return s.String()
 }
 
 // spec is what a worker puts into a run.
@@ -732,26 +799,6 @@ func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
 func (r *runs) drop(ctx context.Context, ro role, n int) error {
 	slog.Info("removing a run its issue no longer needs", "role", ro.name, "issue", n)
 	return r.remove(ctx, r.name(ro, n), false)
-}
-
-// holds reports whether the Task is an open Task whose status labels are all among statuses.
-// SetStatus adds the new label before it removes the old one, so any other status means the Task
-// is on its way somewhere else, to stuck or back to a person.
-func holds(task github.Issue, statuses ...label.Status) bool {
-	if !task.Open || !task.HasLabel(label.Task) {
-		return false
-	}
-	found := false
-	for _, l := range task.Labels {
-		if !label.IsStatus(l) {
-			continue
-		}
-		if !slices.Contains(statuses, label.Status(l)) {
-			return false
-		}
-		found = true
-	}
-	return found
 }
 
 func failedReason(why string) string {

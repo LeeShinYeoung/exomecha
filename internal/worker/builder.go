@@ -31,6 +31,15 @@ var builderRole = role{
 	back:    label.Pending,
 }
 
+// A run of a ready Task was left when a person sent the Task back to the queue, and it holds a
+// slot for nothing.
+var builderTable = table{
+	// none, preparing, running, stalled, dead, gone, finished
+	away:    {idle, drop, drop, drop, drop, drop, drop},
+	ready:   {begin, drop, drop, drop, drop, drop, drop},
+	working: {restart, restart, idle, fail, fail, fail, harvest},
+}
+
 // builder runs claude in one sandbox per Task. Each round it looks at the Task's label and its
 // sandbox and takes one step, so after a restart it picks up whatever is left the same way.
 type builder struct {
@@ -85,52 +94,26 @@ func (b *builder) unblocked(ctx context.Context, n int) (bool, error) {
 	return true, nil
 }
 
-// Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
-// stays as it is, so the next try repeats the step.
 func (b *builder) Handle(ctx context.Context, n int) error {
-	name := b.runs.name(builderRole, n)
 	task, err := b.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
 	}
-	r, err := b.runs.read(ctx, name)
-	if err != nil {
-		return err
-	}
-	if !holds(task, label.Queued, label.Working) {
-		if r.state == none {
-			return nil
-		}
-		return b.runs.drop(ctx, builderRole, n)
-	}
-	working := task.HasLabel(string(label.Working))
-	// A queued Task with a sandbox was sent back by a person, and its run holds a slot for nothing.
-	if !working && r.state != none {
-		return b.runs.drop(ctx, builderRole, n)
-	}
-	if r.state == running {
-		return nil
-	}
-	if !working {
-		return b.start(ctx, task)
-	}
+	return b.runs.step(ctx, builderRole, n, builderTable[b.place(task)],
+		func(ctx context.Context) error { return b.start(ctx, task) },
+		func(ctx context.Context, run run) error { return b.collect(ctx, task, run.in) })
+}
 
-	switch r.state {
-	case none:
-		return b.runs.restart(ctx, builderRole, n, "the Task is working with no run")
-	case preparing:
-		// Only a start holds the Task's lock while preparing, so this one was cut off.
-		return b.runs.restart(ctx, builderRole, n, "its start was cut off")
-	case stalled:
-		return b.runs.failed(ctx, builderRole, n, fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes())), "")
-	case dead:
-		return b.runs.failed(ctx, builderRole, n, "the sandbox stopped while claude was running", "")
-	case gone:
-		return b.runs.failed(ctx, builderRole, n, "the sandbox was removed while claude was running", "")
-	case finished:
-		return b.harvest(ctx, task, r.in)
+func (b *builder) place(task github.Issue) place {
+	switch {
+	case !holds(task, label.Task, label.Queued, label.Working):
+		return away
+	// Both labels are left by a move between them that failed halfway. As working, the Task
+	// starts over, which finishes the move to queued.
+	case task.HasLabel(string(label.Working)):
+		return working
 	}
-	return nil
+	return ready
 }
 
 func (b *builder) start(ctx context.Context, task github.Issue) error {
@@ -176,7 +159,7 @@ func (b *builder) start(ctx context.Context, task github.Issue) error {
 	})
 }
 
-func (b *builder) harvest(ctx context.Context, task github.Issue, in inputs) error {
+func (b *builder) collect(ctx context.Context, task github.Issue, in inputs) error {
 	n := task.Number
 	branch := branchName(n)
 	var out struct {

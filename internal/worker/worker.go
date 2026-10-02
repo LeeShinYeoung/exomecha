@@ -349,18 +349,34 @@ func baseCommit(ctx context.Context, g *git.Git) (string, error) {
 	return base, err
 }
 
-// prConflicted reports whether the Task's open PR is one GitHub marks as conflicting.
-// Only resolver handles those, so reviewer leaves them alone.
-func prConflicted(ctx context.Context, gh *github.Client, n int) (bool, error) {
+// taskPR returns the Task's open PR, with ok false when it has none.
+func taskPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool, err error) {
 	number, ok, err := gh.OpenPR(ctx, branchName(n))
 	if err != nil || !ok {
-		return false, err
+		return pr, false, err
 	}
-	pr, err := gh.PR(ctx, number)
-	if err != nil {
-		return false, err
+	pr, err = gh.PR(ctx, number)
+	return pr, err == nil, err
+}
+
+// holds reports whether the issue is open, has the kind label, and has a status label, all of
+// them among statuses. SetStatus adds the new label before it removes the old one, so any other
+// status means the issue is on its way somewhere else, to stuck or back to a person.
+func holds(i github.Issue, kind string, statuses ...label.Status) bool {
+	if !i.Open || !i.HasLabel(kind) {
+		return false
 	}
-	return pr.Mergeable != nil && !*pr.Mergeable, nil
+	found := false
+	for _, l := range i.Labels {
+		if !label.IsStatus(l) {
+			continue
+		}
+		if !slices.Contains(statuses, label.Status(l)) {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 // back is where the person sends the Task after answering, so it returns to the worker that

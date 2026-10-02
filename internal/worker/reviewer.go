@@ -93,11 +93,11 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	for _, t := range tasks {
 		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same Task
 		// at the same moment every minute, which starved resolver.
-		conflicted, err := prConflicted(ctx, r.GitHub, t.Number)
+		pr, ok, err := taskPR(ctx, r.GitHub, t.Number)
 		if err != nil {
 			return nil, err
 		}
-		if !conflicted {
+		if !ok || pr.Mergeable == nil || *pr.Mergeable {
 			out = append(out, t.Number)
 		}
 	}

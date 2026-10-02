@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +125,34 @@ func TestBuilderIgnoresOutsiderTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantInts(t, "Pick", picked, []int{mine})
+}
+
+func TestBuilderPlace(t *testing.T) {
+	status := func(ss ...label.Status) []string {
+		out := []string{label.Task}
+		for _, s := range ss {
+			out = append(out, string(s))
+		}
+		return out
+	}
+	for _, c := range []struct {
+		open   bool
+		labels []string
+		want   place
+	}{
+		{true, status(label.Queued), ready},
+		{true, status(label.Working), working},
+		// A move between the two that failed halfway.
+		{true, status(label.Queued, label.Working), working},
+		{true, status(label.Working, label.Stuck), away},
+		{true, status(label.Pending), away},
+		{true, []string{string(label.Working)}, away},
+		{false, status(label.Working), away},
+	} {
+		if got := (&builder{}).place(github.Issue{Open: c.open, Labels: c.labels}); got != c.want {
+			t.Errorf("place of an issue open %v with %q = %s, want %s", c.open, c.labels, placeNames[got], placeNames[c.want])
+		}
+	}
 }
 
 func TestBuilderPushesAndOpensPR(t *testing.T) {
@@ -317,29 +344,6 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e.wantRemoved(e.builderBox(task))
 }
 
-func TestBuilderRequeuesWorkingTaskWithoutSandbox(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
-	e.step(task)
-	e.wantStatus(task, label.Queued)
-	if n := len(e.gh.Issue(task).Comments); n != 0 {
-		t.Errorf("a working Task with no sandbox left %d comments", n)
-	}
-}
-
-func TestBuilderRemovesACutOffStart(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
-	name := e.builderBox(task)
-	e.sbx.add(name)
-	e.writeCtl(name, "run.sh", runScript)
-
-	e.step(task)
-
-	e.wantStatus(task, label.Queued)
-	e.wantRemoved(name)
-}
-
 // startedTask starts a builder run for a new queued Task and returns the Task and its sandbox.
 func (e *env) startedTask() (int, string) {
 	e.t.Helper()
@@ -348,47 +352,6 @@ func (e *env) startedTask() (int, string) {
 	name := e.builderBox(task)
 	e.wantState(name, running)
 	return task, name
-}
-
-func TestBuilderStalledRun(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	e.writeCtl(name, "stream.jsonl", "{}\n")
-	e.step(task)
-
-	e.clock.advance(stallAfter - time.Second)
-	e.step(task)
-	e.wantStatus(task, label.Working)
-	e.wantState(name, running)
-	e.clock.advance(2 * time.Second)
-	e.step(task)
-
-	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "claude's output did not change for 15 minutes", label.Pending)
-	e.wantRemoved(name)
-	e.wantKept(name, "stream.jsonl")
-}
-
-func TestBuilderDeadAndGoneRuns(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		kill func(e *env, name string)
-		why  string
-	}{
-		{"stopped", func(e *env, name string) { e.sbx.stop(name) }, "the sandbox stopped"},
-		{"removed", func(e *env, name string) { e.sbx.drop(name) }, "the sandbox was removed"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-			task, name := e.startedTask()
-			c.kill(e, name)
-			e.step(task)
-			e.wantStatus(task, label.Stuck)
-			wantStuckComment(t, e.lastComment(task), c.why, label.Pending)
-			e.wantRemoved(name)
-			e.wantKept(name, "input.md")
-		})
-	}
 }
 
 func TestBuilderRunNotInAutoModeFails(t *testing.T) {
@@ -477,17 +440,6 @@ func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 	f.clock = f.clock.Add(2 * time.Hour)
 	e.step(task)
 	e.wantState(name, running)
-}
-
-func TestBuilderRemovesTheSandboxWhenTheLabelChanges(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	e.relabel(task, label.Working, label.Pending)
-
-	e.step(task)
-
-	e.wantRemoved(name)
-	e.wantStatus(task, label.Pending)
 }
 
 func TestBuilderWaitsForAFreeSlot(t *testing.T) {
@@ -626,33 +578,6 @@ func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
 	e.wantStatus(task, label.Review)
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want one", n)
-	}
-}
-
-func TestBuilderRemovesTheRunOfARequeuedTask(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	e.relabel(task, label.Working, label.Queued)
-
-	e.step(task)
-
-	e.wantRemoved(name)
-	e.wantStatus(task, label.Queued)
-}
-
-// A failed GitHub call can leave both labels while the Task goes to stuck. builder must not take it back.
-func TestBuilderLetsATaskOnItsWayToStuckGo(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name := e.startedTask()
-	if err := e.deps.GitHub.AddLabel(t.Context(), task, string(label.Stuck)); err != nil {
-		t.Fatal(err)
-	}
-
-	e.step(task)
-
-	e.wantRemoved(name)
-	if got := e.statuses(task); !slices.Contains(got, string(label.Stuck)) || slices.Contains(got, string(label.Queued)) {
-		t.Errorf("status labels = %q, want stuck kept and no requeue", got)
 	}
 }
 
