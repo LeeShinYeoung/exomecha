@@ -251,9 +251,9 @@ func newRounds(w Worker, c *clock) *rounds {
 }
 
 // run returns once every Handle the round started has returned.
-func (r *rounds) run(ctx context.Context, gate *Gate) {
+func (r *rounds) run(ctx context.Context) {
 	var wg sync.WaitGroup
-	round(ctx, r.w, nil, r.locks, r.delays, &wg, gate)
+	round(ctx, r.w, r.locks, r.delays, &wg)
 	wg.Wait()
 }
 
@@ -262,13 +262,13 @@ func TestRoundSkipsAnItemThatIsNotDue(t *testing.T) {
 	w := &fakeWorker{picks: []int{1, 2}, errs: map[int]error{1: errors.New("sbx down")}}
 	r := newRounds(w, c)
 
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "first round", w.took(), []int{1, 2})
 	c.advance(minBackoff - time.Second)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "before the wait passed", w.took(), []int{2})
 	c.advance(time.Second)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "after the wait", w.took(), []int{1, 2})
 }
 
@@ -276,17 +276,17 @@ func TestRoundDelaysDouble(t *testing.T) {
 	c := newClock()
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
 	r := newRounds(w, c)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	w.took()
 
 	for _, wait := range []time.Duration{1, 2, 4, 8, 16, 30, 30, 30} {
 		c.advance(wait*time.Minute - time.Second)
-		r.run(t.Context(), nil)
+		r.run(t.Context())
 		if got := w.took(); len(got) != 0 {
 			t.Fatalf("tried again before %v passed", wait*time.Minute)
 		}
 		c.advance(time.Second)
-		r.run(t.Context(), nil)
+		r.run(t.Context())
 		if got := w.took(); len(got) != 1 {
 			t.Fatalf("not tried again after %v", wait*time.Minute)
 		}
@@ -298,30 +298,30 @@ func TestRoundForgetsOnSuccess(t *testing.T) {
 	fail := errors.New("sbx down")
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: fail}}
 	r := newRounds(w, c)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	c.advance(minBackoff)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	w.errs[1] = nil
 	c.advance(2 * minBackoff)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "tries", w.took(), []int{1, 1, 1})
 
 	// Two errors before the success. A new error starts the waits over at one minute.
 	w.errs[1] = fail
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	c.advance(minBackoff)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "tries after the success", w.took(), []int{1, 1})
 }
 
 func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
 	r := newRounds(w, newClock())
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	w.picks = nil
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	w.picks = []int{1}
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "tries", w.took(), []int{1, 1})
 }
 
@@ -330,9 +330,9 @@ func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
 	r := newRounds(w, newClock())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	r.run(ctx, nil)
+	r.run(ctx)
 	w.errs[1] = nil
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "tries", w.took(), []int{1, 1})
 }
 
@@ -341,10 +341,10 @@ func TestRoundDoesNotStrikeALockedItem(t *testing.T) {
 	w := &fakeWorker{picks: []int{1}}
 	r := newRounds(w, newClock())
 	r.locks.lock(1)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "tries while locked", w.took(), nil)
 	r.locks.unlock(1)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	wantInts(t, "tries once unlocked", w.took(), []int{1})
 }
 
@@ -356,10 +356,10 @@ func TestRoundDelaysArePerWorker(t *testing.T) {
 	f, o := newRounds(failing, c), newRounds(other, c)
 	o.locks = f.locks
 
-	f.run(t.Context(), nil)
-	o.run(t.Context(), nil)
-	f.run(t.Context(), nil)
-	o.run(t.Context(), nil)
+	f.run(t.Context())
+	o.run(t.Context())
+	f.run(t.Context())
+	o.run(t.Context())
 	wantInts(t, "failing worker's tries", failing.took(), []int{1})
 	wantInts(t, "other worker's tries", other.took(), []int{1, 1})
 }
@@ -372,17 +372,17 @@ func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	e.sbx.fail["create"] = errors.New("sbx run: daemon not running")
 	r := newRounds(e.builder(), e.clock)
 
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	e.wantStatus(task, label.Queued)
 	e.wantRemoved(name)
 	delete(e.sbx.fail, "create")
 	e.clock.advance(minBackoff - time.Second)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	if e.sbx.exists(name) {
 		t.Fatal("started again before a minute passed")
 	}
 	e.clock.advance(time.Second)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	e.wantStatus(task, label.Working)
 	e.wantState(name, running)
 }
@@ -395,16 +395,16 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 	e.gh.Fail(commentsRoute, http.StatusBadGateway)
 	r := newRounds(e.reviewer(), e.clock)
 
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	e.wantStatus(task, label.Review)
 	e.gh.Fail(commentsRoute, 0)
 	e.clock.advance(minBackoff - time.Second)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	if n := len(e.gh.Issue(task).Comments); n != 0 {
 		t.Fatal("tried again before a minute passed")
 	}
 	e.clock.advance(time.Second)
-	r.run(t.Context(), nil)
+	r.run(t.Context())
 	e.wantStatus(task, label.Stuck)
 }
 

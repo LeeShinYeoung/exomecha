@@ -85,39 +85,31 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	// The workers check the gate themselves, only before they start a run, so runs already in
-	// sandboxes are still watched and finished while usage is over the limit.
+	// runs checks the gate only when a run starts, so runs already in sandboxes are still watched
+	// and finished, and steps without claude go on, while usage is over the limit.
 	runs := newRuns(d, gate)
-	workers := []struct {
-		worker Worker
-		limit  int // 0 means no limit
-		gate   *Gate
-	}{
-		{&splitter{d, runs}, 0, nil},
-		{&sequencer{d, runs}, 0, nil},
-		{&builder{d, runs}, 0, nil},
-		{&reviewer{d, runs}, 0, nil},
-		{&resolver{d, runs}, 0, nil},
+	workers := []Worker{
+		&splitter{d, runs},
+		&sequencer{d, runs},
+		&builder{d, runs},
+		&reviewer{d, runs},
+		&resolver{d, runs},
 	}
 	var wg sync.WaitGroup
 	for _, w := range workers {
-		wg.Go(func() { loop(ctx, w.worker, w.limit, l, w.gate) })
+		wg.Go(func() { loop(ctx, w, l) })
 	}
 	wg.Wait()
 }
 
-func loop(ctx context.Context, w Worker, limit int, l *locks, gate *Gate) {
-	var sem chan struct{}
-	if limit > 0 {
-		sem = make(chan struct{}, limit)
-	}
+func loop(ctx context.Context, w Worker, l *locks) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	d := &delays{now: time.Now, items: map[int]delay{}}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
-		round(ctx, w, sem, l, d, &wg, gate)
+		round(ctx, w, l, d, &wg)
 		select {
 		case <-ctx.Done():
 			return
@@ -126,7 +118,7 @@ func loop(ctx context.Context, w Worker, limit int, l *locks, gate *Gate) {
 	}
 }
 
-func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, d *delays, wg *sync.WaitGroup, gate *Gate) {
+func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGroup) {
 	log := slog.With("worker", w.Name())
 	if s, ok := w.(Sweeper); ok {
 		if err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
@@ -141,43 +133,11 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, d *delays
 		return
 	}
 	d.keep(numbers)
-	var due []int
 	for _, n := range numbers {
-		if d.due(n) {
-			due = append(due, n)
-		}
-	}
-	// Checking only when there is work keeps an idle exomecha from spending any Claude usage.
-	if len(due) == 0 {
-		return
-	}
-	if gate != nil {
-		if open, err := gate.Open(ctx); err != nil || !open {
-			if err != nil && ctx.Err() == nil {
-				log.Error("usage check failed", "err", err)
-			}
-			return
-		}
-	}
-	for _, n := range due {
-		if sem != nil {
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-		}
-		release := func() {
-			if sem != nil {
-				<-sem
-			}
-		}
-		if !l.lock(n) {
-			release()
+		if !d.due(n) || !l.lock(n) {
 			continue
 		}
 		wg.Go(func() {
-			defer release()
 			defer l.unlock(n)
 			err := w.Handle(ctx, n)
 			if err == nil {
