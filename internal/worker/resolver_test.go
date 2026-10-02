@@ -176,6 +176,46 @@ func TestResolverCommitsCleanMergeThroughClaude(t *testing.T) {
 	e.wantStatus(task, label.Review)
 }
 
+// A project setting can make git refuse the merge with no conflict, the same way on every try.
+func TestResolverStuckWhenTheMergeFailsWithoutAConflict(t *testing.T) {
+	log := captureLog(t)
+	e := newEnv(t, map[string]string{"app.txt": "v1\n", setupScript: "git config merge.verifySignatures true\n"})
+	task, _, head := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+
+	e.resolve(task)
+
+	e.wantStatus(task, label.Stuck)
+	comment := e.lastComment(task)
+	wantStuckComment(t, comment, "Merging `main` into this Task's branch in the sandbox failed without a conflict", label.Review)
+	wantNotContains(t, "stuck comment", comment, "GPG signature")
+	wantContains(t, "log", log.String(), "does not have a GPG signature")
+	e.wantRemoved(e.resolverBox(task))
+	if got := gittest.Head(e.origin, branchName(task)); got != head {
+		t.Errorf("branch moved to %s, want it left at %s", got, head)
+	}
+}
+
+func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	name := e.resolverBox(task)
+	e.sbx.failExec = "git merge"
+
+	if err := e.resolver().Handle(t.Context(), task); err == nil {
+		t.Fatal("Handle returned nil for an sbx error")
+	}
+
+	e.wantStatus(task, label.Review)
+	e.wantRemoved(name)
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("an sbx error left %d comments", n)
+	}
+	e.sbx.failExec = ""
+	e.clock.advance(minBackoff)
+	e.resolve(task)
+	e.wantState(name, running)
+}
+
 func TestResolverNothingToMerge(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Review))

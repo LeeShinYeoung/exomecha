@@ -334,8 +334,9 @@ type launch struct {
 	branch  string
 	start   started
 	request agent.Request // Instructions and Schema. The input comes from input.
-	// input runs once setup has run, and builds claude's input. It may fill in start.
-	input func(ctx context.Context, ranSetup bool, s *started) (string, error)
+	// input runs once setup has run, and builds claude's input. It may fill in start, and it
+	// returns a problem the way open does.
+	input func(ctx context.Context, ranSetup bool, s *started) (input, problem string, err error)
 }
 
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
@@ -409,9 +410,9 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 		}
 	}
 
-	input, err := l.input(ctx, hasScript, &l.start)
-	if err != nil {
-		return "", err
+	input, problem, err := l.input(ctx, hasScript, &l.start)
+	if problem != "" || err != nil {
+		return problem, err
 	}
 	if err := os.WriteFile(filepath.Join(ctl, "input.md"), []byte(input), 0o644); err != nil {
 		return "", err

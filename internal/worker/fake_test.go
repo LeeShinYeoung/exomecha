@@ -29,6 +29,8 @@ type fakeSandboxes struct {
 	mu    sync.Mutex
 	boxes map[string]*fakeBox
 	fail  map[string]error // by sbx verb: create, allow, exec, start, remove
+	// An exec whose command line contains this fails, as sbx failing that one command.
+	failExec string
 }
 
 type fakeBox struct {
@@ -132,9 +134,13 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 		b.stopped = false // as sbx exec starts a stopped sandbox
 		b.execs = append(b.execs, args)
 	}
+	failExec := f.failExec
 	f.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("sandbox %s not found", name)
+	}
+	if failExec != "" && strings.Contains(strings.Join(args, " "), failExec) {
+		return nil, fmt.Errorf("sbx exec %s: connection lost", name)
 	}
 	local := make([]string, len(args))
 	for i, a := range args {
