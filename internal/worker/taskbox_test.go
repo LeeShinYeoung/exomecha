@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 func (e *env) state(name string) state {
@@ -209,7 +211,7 @@ func TestFoundAndPrune(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", "exomecha-task-other-repo-6-builder", "impl-run-x"} {
+	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", sandbox.Name(sandbox.Prefix("other", "repo"), 6, builderRole), "impl-run-x"} {
 		e.sbx.add(name)
 	}
 
@@ -243,7 +245,7 @@ func TestSlotsCountEveryTaskSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
-	e.sbx.add("exomecha-task-other-repo-2-builder")
+	e.sbx.add(sandbox.Name(sandbox.Prefix("other", "repo"), 2, builderRole))
 	e.wantReady(e.box.name(9, builderRole), true)
 	e.box.release(e.box.name(9, builderRole))
 	e.sbx.add(prefix + "2-resolver")

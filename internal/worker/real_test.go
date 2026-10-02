@@ -47,7 +47,7 @@ func TestRealBuilderRunFromTemplate(t *testing.T) {
 	e.deps.Environment = template.New(e.deps.Git, owner, repo)
 	t.Cleanup(func() {
 		sum := sha256.Sum256([]byte(dockerfile))
-		ref := "docker.io/library/exomecha-" + template.Slug(owner, repo, 32) + ":" + hex.EncodeToString(sum[:])[:12]
+		ref := "docker.io/library/exomecha-" + sandbox.Slug(owner, repo) + ":" + hex.EncodeToString(sum[:])[:12]
 		if out, err := exec.Command("sbx", "template", "rm", "--force", ref).CombinedOutput(); err != nil {
 			t.Errorf("remove template %s: %v %s", ref, err, out)
 		}

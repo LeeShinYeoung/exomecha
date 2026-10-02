@@ -269,7 +269,7 @@ func (t *taskbox) prune(role string, keep map[int]bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for name := range t.tries {
-		if n, r, ok := sandbox.ParseTask(t.SandboxPrefix, name); ok && r == role && !keep[n] {
+		if n, r, ok := sandbox.Parse(t.SandboxPrefix, name); ok && r == role && !keep[n] {
 			delete(t.tries, name)
 		}
 	}
@@ -294,7 +294,7 @@ func (t *taskbox) found(ctx context.Context, role string) ([]int, error) {
 	}
 	var out []int
 	for _, name := range names {
-		if n, r, ok := sandbox.ParseTask(t.SandboxPrefix, name); ok && r == role && !slices.Contains(out, n) {
+		if n, r, ok := sandbox.Parse(t.SandboxPrefix, name); ok && r == role && !slices.Contains(out, n) {
 			out = append(out, n)
 		}
 	}
@@ -337,7 +337,7 @@ func (t *taskbox) slotFree(ctx context.Context, self string) (bool, error) {
 	used := map[string]bool{}
 	for _, b := range boxes {
 		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
-		if _, _, ok := sandbox.ParseTask(t.SandboxPrefix, b.Name); ok {
+		if _, r, ok := sandbox.Parse(t.SandboxPrefix, b.Name); ok && (r == builderRole || r == resolverRole) {
 			used[b.Name] = true
 		}
 	}

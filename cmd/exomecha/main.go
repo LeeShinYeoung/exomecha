@@ -88,15 +88,13 @@ func run() error {
 	root := filepath.Join(home, ".exomecha", owner, name)
 	g := git.New(root, owner, name, base, token)
 	deps := worker.Deps{
-		GitHub:      gh,
-		Git:         g,
-		Agent:       agent.Claude{},
-		Sandboxes:   sbx,
-		Environment: template.New(g, owner, name),
-		SandboxDir:  filepath.Join(root, "sandboxes"),
-		// 32 leaves room for "9999999-resolver" in sbx's 63-character names, and is the max the
-		// template package uses, so the build sandbox and templates carry the same slug.
-		SandboxPrefix: "exomecha-task-" + template.Slug(owner, name, 32) + "-",
+		GitHub:        gh,
+		Git:           g,
+		Agent:         agent.Claude{},
+		Sandboxes:     sbx,
+		Environment:   template.New(g, owner, name),
+		SandboxDir:    filepath.Join(root, "sandboxes"),
+		SandboxPrefix: sandbox.Prefix(owner, name),
 		SandboxLimit:  sandboxes,
 		GitName:       author,
 		GitEmail:      email,

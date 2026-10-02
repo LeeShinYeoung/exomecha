@@ -17,6 +17,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 type env struct {
@@ -58,7 +59,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
-		SandboxPrefix: "exomecha-task-owner-repo-",
+		SandboxPrefix: sandbox.Prefix("owner", "repo"),
 		SandboxLimit:  2,
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",

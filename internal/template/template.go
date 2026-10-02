@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 const dockerfilePath = ".exomecha/Dockerfile"
@@ -54,39 +56,8 @@ type build struct {
 	abandoned bool
 }
 
-// The same max the task sandbox names use, so every name of one project carries one slug:
-// 63 chars minus "exomecha-task-" and "-9999999-resolver".
-const slugMax = 32
-
 func New(files Files, owner, repo string) *Env {
-	return &Env{files: files, slug: Slug(owner, repo, slugMax), run: runSbx}
-}
-
-func Slug(owner, repo string, max int) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(owner + "-" + repo) {
-		switch {
-		case 'a' <= r && r <= 'z' || '0' <= r && r <= '9':
-			b.WriteRune(r)
-		case !strings.HasSuffix(b.String(), "-"):
-			b.WriteByte('-')
-		}
-	}
-	slug := strings.Trim(b.String(), "-")
-	if len(slug) <= max {
-		return slug
-	}
-	// Lowercase like the slug, since GitHub matches owner and repo names in any case.
-	sum := sha256.Sum256([]byte(strings.ToLower(owner + "/" + repo)))
-	hash := hex.EncodeToString(sum[:])[:8]
-	keep := max - len(hash) - 1
-	switch {
-	case max <= 0:
-		return ""
-	case keep <= 0:
-		return hash[:min(len(hash), max)]
-	}
-	return strings.TrimRight(slug[:keep], "-") + "-" + hash
+	return &Env{files: files, slug: sandbox.Slug(owner, repo), run: runSbx}
 }
 
 func (e *Env) repository() string { return "docker.io/library/exomecha-" + e.slug }

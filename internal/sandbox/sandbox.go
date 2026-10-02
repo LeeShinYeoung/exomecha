@@ -4,6 +4,8 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -116,28 +118,56 @@ func (CLI) GlobalGitHubSecret(ctx context.Context) (bool, error) {
 	return len(list.Secrets) > 0, nil
 }
 
-func Name(prefix string, task int, role string) string {
-	return prefix + strconv.Itoa(task) + "-" + role
+// Leaves room for the prefix, a 7-digit issue number and the longest role in sbx's 63 characters.
+// Templates and the build sandbox carry the same slug, so every name of one project shares it.
+const slugMax = 32
+
+func Slug(owner, repo string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(owner + "-" + repo) {
+		switch {
+		case 'a' <= r && r <= 'z' || '0' <= r && r <= '9':
+			b.WriteRune(r)
+		case !strings.HasSuffix(b.String(), "-"):
+			b.WriteByte('-')
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if len(slug) <= slugMax {
+		return slug
+	}
+	// Lowercase like the slug, since GitHub matches owner and repo names in any case.
+	sum := sha256.Sum256([]byte(strings.ToLower(owner + "/" + repo)))
+	hash := hex.EncodeToString(sum[:])[:8]
+	return strings.TrimRight(slug[:slugMax-len(hash)-1], "-") + "-" + hash
 }
 
-// A leading zero would give a second name for the same Task, which Name never builds back.
-var taskName = regexp.MustCompile(`^([1-9][0-9]*)-(builder|resolver)$`)
+func Prefix(owner, repo string) string {
+	return "exomecha-task-" + Slug(owner, repo) + "-"
+}
 
-// ParseTask reads a name Name built with prefix.
-func ParseTask(prefix, name string) (task int, role string, ok bool) {
+func Name(prefix string, issue int, role string) string {
+	return prefix + strconv.Itoa(issue) + "-" + role
+}
+
+// A leading zero would give a second name for the same issue, which Name never builds back.
+var runName = regexp.MustCompile(`^([1-9][0-9]*)-([a-z]+)$`)
+
+// Parse reads a name Name built with prefix.
+func Parse(prefix, name string) (issue int, role string, ok bool) {
 	rest, found := strings.CutPrefix(name, prefix)
 	if !found || prefix == "" {
 		return 0, "", false
 	}
-	m := taskName.FindStringSubmatch(rest)
+	m := runName.FindStringSubmatch(rest)
 	if m == nil {
 		return 0, "", false
 	}
-	task, err := strconv.Atoi(m[1])
+	issue, err := strconv.Atoi(m[1])
 	if err != nil {
 		return 0, "", false
 	}
-	return task, m[2], true
+	return issue, m[2], true
 }
 
 func run(ctx context.Context, args ...string) ([]byte, error) {
