@@ -90,29 +90,6 @@ func TestStallStartsOverForNewRuns(t *testing.T) {
 	e.wantState(name, stalled)
 }
 
-func TestBackoffDoubles(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	name := e.runs.name(7, "builder")
-	if !e.runs.due(name) {
-		t.Fatal("a Task with no tries is not due")
-	}
-	for _, wait := range []time.Duration{1, 2, 4, 8, 16, 30, 30} {
-		e.runs.strike(name)
-		e.clock.advance(wait*time.Minute - time.Second)
-		if e.runs.due(name) {
-			t.Fatalf("due before %v passed", wait*time.Minute)
-		}
-		e.clock.advance(time.Second)
-		if !e.runs.due(name) {
-			t.Fatalf("not due after %v", wait*time.Minute)
-		}
-	}
-	e.runs.forget(name)
-	if !e.runs.due(name) {
-		t.Error("not due after forget")
-	}
-}
-
 func TestOutcome(t *testing.T) {
 	const init = `{"type":"system","subtype":"init","permissionMode":"auto"}` + "\n"
 	for _, c := range []struct {
@@ -189,7 +166,7 @@ func TestTailKeepsABoundedValidEnd(t *testing.T) {
 	}
 }
 
-func TestFoundAndPrune(t *testing.T) {
+func TestFound(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	for _, dir := range []string{prefix + "3-builder", prefix + "4-resolver", "failed"} {
@@ -207,17 +184,6 @@ func TestFoundAndPrune(t *testing.T) {
 	}
 	slices.Sort(found)
 	wantInts(t, "found builder", found, []int{3, 5})
-
-	e.runs.strike(prefix + "3-builder")
-	e.runs.strike(prefix + "5-builder")
-	e.runs.strike(prefix + "3-resolver")
-	e.runs.prune("builder", map[int]bool{5: true})
-	if !e.runs.due(prefix + "3-builder") {
-		t.Error("prune kept the backoff of a Task builder no longer owns")
-	}
-	if e.runs.due(prefix+"5-builder") || e.runs.due(prefix+"3-resolver") {
-		t.Error("prune dropped backoff it should keep")
-	}
 }
 
 func (e *env) wantReserve(name string, want bool) {

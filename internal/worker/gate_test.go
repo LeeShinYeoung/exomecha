@@ -3,8 +3,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -125,52 +123,50 @@ func TestGateCheckError(t *testing.T) {
 	}
 }
 
-// pickOnly is a Worker that picks fixed numbers and records what it handles.
-type pickOnly struct {
-	picks   []int
-	mu      sync.Mutex
-	handled []int
-}
+// A run ended at the limit, so the reading missed it. The next start reads again, and the gate
+// then stays closed until the reset.
+func TestGateReadsAgainWhenStale(t *testing.T) {
+	f := newFakeUsage()
+	f.wantOpen(t, true)
+	f.usage.FiveHour.Used = 0.95
+	f.gate.stale()
+	f.wantOpen(t, false)
+	f.wantChecks(t, 2)
 
-func (*pickOnly) Name() string                          { return "test" }
-func (p *pickOnly) Pick(context.Context) ([]int, error) { return p.picks, nil }
-func (p *pickOnly) Handle(_ context.Context, n int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.handled = append(p.handled, n)
-	return nil
-}
-
-func runRound(t *testing.T, w *pickOnly, gate *Gate) {
-	t.Helper()
-	var wg sync.WaitGroup
-	round(t.Context(), w, nil, &locks{held: map[int]bool{}}, &wg, gate)
-	wg.Wait()
+	f.clock = f.clock.Add(time.Hour)
+	f.wantOpen(t, false)
+	f.wantChecks(t, 2)
 }
 
 func TestRoundChecksUsageOnlyWithWork(t *testing.T) {
 	f := newFakeUsage()
-	runRound(t, &pickOnly{}, f.gate)
+	r := newRounds(&fakeWorker{}, newClock())
+	r.run(t.Context(), f.gate)
 	f.wantChecks(t, 0)
 
-	w := &pickOnly{picks: []int{1}}
-	runRound(t, w, f.gate)
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
+	r = newRounds(w, newClock())
+	r.run(t.Context(), f.gate)
 	f.wantChecks(t, 1)
-	wantInts(t, "handled", w.handled, []int{1})
+	wantInts(t, "handled", w.took(), []int{1})
+
+	// The reading is old, but the only issue waits after its error.
+	f.clock = f.clock.Add(usageFresh)
+	r.run(t.Context(), f.gate)
+	f.wantChecks(t, 1)
 }
 
 func TestRoundSkipsWorkOverTheLimit(t *testing.T) {
 	f := newFakeUsage()
 	f.usage.FiveHour.Used = 0.95
-	w := &pickOnly{picks: []int{1, 2}}
-	runRound(t, w, f.gate)
-	wantInts(t, "handled", w.handled, nil)
+	w := &fakeWorker{picks: []int{1, 2}}
+	newRounds(w, newClock()).run(t.Context(), f.gate)
+	wantInts(t, "handled", w.took(), nil)
 }
 
 // builder and resolver run with no gate in round, and check it themselves before a start.
 func TestRoundWithoutGateHandlesEverything(t *testing.T) {
-	w := &pickOnly{picks: []int{1, 2}}
-	runRound(t, w, nil)
-	slices.Sort(w.handled)
-	wantInts(t, "handled", w.handled, []int{1, 2})
+	w := &fakeWorker{picks: []int{1, 2}}
+	newRounds(w, newClock()).run(t.Context(), nil)
+	wantInts(t, "handled", w.took(), []int{1, 2})
 }

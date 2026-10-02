@@ -30,8 +30,6 @@ const (
 
 	// A foreground command is capped at 10 minutes, so a run that is working still writes within this.
 	stallAfter = 15 * time.Minute
-	minBackoff = time.Minute
-	maxBackoff = 30 * time.Minute
 
 	// A create takes seconds. The first one may pull sbx's own template, which takes longer.
 	createTimeout = 15 * time.Minute
@@ -91,7 +89,7 @@ type inputs struct {
 
 // runs is what builder and resolver share: the sandboxes, the limit on how many run at once,
 // and what exomecha remembers about each run. Memory is lost on restart, and nothing depends on
-// it except stall times and backoff.
+// it except stall times.
 type runs struct {
 	Deps
 	gate *Gate
@@ -102,20 +100,14 @@ type runs struct {
 	// The sandboxes whose starts hold a slot, from reserve until release.
 	starting map[string]bool
 
-	mu    sync.Mutex
-	seen  map[string]progress
-	tries map[string]*tries
+	mu   sync.Mutex
+	seen map[string]progress
 }
 
 type progress struct {
 	size int64
 	mod  time.Time
 	at   time.Time // when exomecha first saw this size and time
-}
-
-type tries struct {
-	strikes int // errors in a row
-	next    time.Time
 }
 
 func newRuns(d Deps, gate *Gate) *runs {
@@ -125,7 +117,6 @@ func newRuns(d Deps, gate *Gate) *runs {
 		now:      time.Now,
 		starting: map[string]bool{},
 		seen:     map[string]progress{},
-		tries:    map[string]*tries{},
 	}
 }
 
@@ -210,44 +201,6 @@ func (r *runs) quiet(name string) (bool, error) {
 		return false, nil
 	}
 	return now.Sub(p.at) >= stallAfter, nil
-}
-
-func (r *runs) due(name string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	tr, ok := r.tries[name]
-	return !ok || !r.now().Before(tr.next)
-}
-
-// strike puts off the next attempt, twice as long as the last one each time in a row.
-func (r *runs) strike(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	tr := r.tries[name]
-	if tr == nil {
-		tr = &tries{}
-		r.tries[name] = tr
-	}
-	tr.strikes++
-	tr.next = r.now().Add(min(maxBackoff, minBackoff<<min(tr.strikes-1, 10)))
-}
-
-func (r *runs) forget(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.tries, name)
-}
-
-// prune forgets the backoff of role's Tasks that are not in keep, the Tasks still under that
-// worker's labels.
-func (r *runs) prune(role string, keep map[int]bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for name := range r.tries {
-		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == role && !keep[n] {
-			delete(r.tries, name)
-		}
-	}
 }
 
 // found returns the Tasks that have a sandbox or a directory for role.

@@ -286,10 +286,6 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 	if n := len(e.gh.Issue(task).Comments); n != 0 {
 		t.Errorf("an sbx error left %d comments", n)
 	}
-	// An error of exomecha's own is no failure of the run, but the next try waits.
-	if e.runs.due(e.builderBox(task)) {
-		t.Error("no backoff after an error")
-	}
 }
 
 func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
@@ -429,13 +425,18 @@ func TestBuilderFailedRunGoesStuck(t *testing.T) {
 	e.wantKept(name, "stream.jsonl")
 }
 
-func TestBuilderUsageLimitEndIsNotCounted(t *testing.T) {
+// The reading the start passed missed the limit the run hit. The next start reads usage again and
+// waits for the reset, instead of starting a run that would hit the limit too.
+func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	f := newFakeUsage()
+	e.runs.gate = f.gate
 	task, name := e.startedTask()
 	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
 		`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}`+"\n"+
 		`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit"}`+"\n")
 	e.writeCtl(name, "exit", "1\n")
+	f.usage.FiveHour.Used = 1
 
 	e.step(task)
 
@@ -444,6 +445,16 @@ func TestBuilderUsageLimitEndIsNotCounted(t *testing.T) {
 	if n := len(e.gh.Issue(task).Comments); n != 0 {
 		t.Errorf("a usage limit end left %d comments", n)
 	}
+	e.step(task)
+	f.wantChecks(t, 2)
+	if e.sbx.exists(name) {
+		t.Fatal("started again over the limit")
+	}
+
+	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.Add(5 * time.Hour)}
+	f.clock = f.clock.Add(2 * time.Hour)
+	e.step(task)
+	e.wantState(name, running)
 }
 
 func TestBuilderRemovesTheSandboxWhenTheLabelChanges(t *testing.T) {

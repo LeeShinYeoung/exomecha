@@ -90,7 +90,7 @@ The worker's comment says why it is blocked and what needs deciding.
 - When `.exomecha/Dockerfile` failed to build or ran over 30 minutes, or `.exomecha/allowed-hosts` has a bad line, there is nothing to answer either. The build output is only in exomecha's log. Fix the file on the base branch, then relabel the Task the way the comment says.
 - When resolver's merge of the base branch failed without a conflict (for example, a git setting from `.exomecha/setup.sh` refused it), there is nothing to answer either. git's output is only in exomecha's log. Fix what it reports, then relabel the Task the way the comment says.
 - When the AI's run fails (the sandbox stopped or went away, claude's output did not change for 15 minutes, or claude ended without a usable result), the Task goes to stuck at once, and the comment says why. There is nothing to answer. The details are in exomecha's log, and the failed run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/`. To try again, relabel the Task the way the comment says.
-- A run that ended at the Claude usage limit is not a failure, and starts again once the limit resets. A failure in exomecha's own steps (sbx, git, GitHub) other than that merge does not send the Task to stuck either. exomecha waits and tries again.
+- A run that ended at the Claude usage limit is not a failure, and starts again once the limit resets. A failure in exomecha's own steps (sbx, git, GitHub) other than that merge does not send the Task to stuck either. exomecha tries the step again after 1, 2, 4, 8 and 16 minutes, then every 30 minutes until it works.
 
 ## Removing a project
 

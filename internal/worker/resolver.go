@@ -44,10 +44,8 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	mine := map[int]bool{}
 	out := found
 	for _, t := range tasks {
-		mine[t.Number] = true
 		conflicted, err := prConflicted(ctx, r.GitHub, t.Number)
 		if err != nil {
 			return nil, err
@@ -56,23 +54,14 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 			out = append(out, t.Number)
 		}
 	}
-	r.runs.prune(resolverRole, mine)
 	slices.Sort(out)
 	return slices.Compact(out), nil
 }
 
 // Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
-// stays as it is and the next try waits longer each time.
+// stays as it is, so the next try repeats the step.
 func (r *resolver) Handle(ctx context.Context, n int) error {
 	name := r.runs.name(n, resolverRole)
-	err := r.handle(ctx, n, name)
-	if err != nil && ctx.Err() == nil {
-		r.runs.strike(name)
-	}
-	return err
-}
-
-func (r *resolver) handle(ctx context.Context, n int, name string) error {
 	task, err := r.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
@@ -82,14 +71,13 @@ func (r *resolver) handle(ctx context.Context, n int, name string) error {
 		return err
 	}
 	if !holds(task, label.Review) {
-		r.runs.forget(name)
 		if run.state == none {
 			return nil
 		}
 		slog.Info("removing the sandbox of a Task that left review", "task", n, "state", run.state)
 		return r.runs.remove(ctx, name, false)
 	}
-	if run.state == running || !r.runs.due(name) {
+	if run.state == running {
 		return nil
 	}
 	switch run.state {
@@ -234,8 +222,11 @@ func (r *resolver) harvest(ctx context.Context, name string, in inputs, n int) e
 	branch := branchName(n)
 	res, failure, detail, limited := r.runs.outcome(name, true)
 	if limited {
-		slog.Warn("run ended at the Claude usage limit, starting over later", "task", n, "sandbox", name)
-		r.runs.strike(name)
+		slog.Warn("run ended at the Claude usage limit, starting over once it resets", "task", n, "sandbox", name)
+		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
+		if r.runs.gate != nil {
+			r.runs.gate.stale()
+		}
 		return r.runs.remove(ctx, name, false)
 	}
 	if failure != "" {
@@ -288,7 +279,6 @@ func (r *resolver) harvest(ctx context.Context, name string, in inputs, n int) e
 	}
 	// The Task stays in review, and reviewer looks at it again at its next check, a minute later.
 	slog.Info("merged base branch and pushed", "task", n, "conflicts", len(in.Conflicts))
-	r.runs.forget(name)
 	return r.runs.remove(ctx, name, false)
 }
 
@@ -328,7 +318,6 @@ func (r *resolver) stuck(ctx context.Context, n int, name, reason string) error 
 	if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, reason); err != nil {
 		return err
 	}
-	r.runs.forget(name)
 	return r.runs.remove(ctx, name, false)
 }
 
@@ -340,6 +329,5 @@ func (r *resolver) failed(ctx context.Context, n int, name, why, detail string) 
 	if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, failedReason(why)); err != nil {
 		return err
 	}
-	r.runs.forget(name)
 	return r.runs.remove(ctx, name, true)
 }

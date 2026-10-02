@@ -50,10 +50,8 @@ func (b *builder) Pick(ctx context.Context) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	mine := map[int]bool{}
 	out := found
 	for _, t := range queued {
-		mine[t.Number] = true
 		ready, err := b.unblocked(ctx, t.Number)
 		if err != nil {
 			return nil, err
@@ -63,10 +61,8 @@ func (b *builder) Pick(ctx context.Context) ([]int, error) {
 		}
 	}
 	for _, t := range working {
-		mine[t.Number] = true
 		out = append(out, t.Number)
 	}
-	b.runs.prune(builderRole, mine)
 	slices.Sort(out)
 	return slices.Compact(out), nil
 }
@@ -85,17 +81,9 @@ func (b *builder) unblocked(ctx context.Context, n int) (bool, error) {
 }
 
 // Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
-// stays as it is and the next try waits longer each time.
+// stays as it is, so the next try repeats the step.
 func (b *builder) Handle(ctx context.Context, n int) error {
 	name := b.runs.name(n, builderRole)
-	err := b.handle(ctx, n, name)
-	if err != nil && ctx.Err() == nil {
-		b.runs.strike(name)
-	}
-	return err
-}
-
-func (b *builder) handle(ctx context.Context, n int, name string) error {
 	task, err := b.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
@@ -105,7 +93,6 @@ func (b *builder) handle(ctx context.Context, n int, name string) error {
 		return err
 	}
 	if !holds(task, label.Queued, label.Working) {
-		b.runs.forget(name)
 		if r.state == none {
 			return nil
 		}
@@ -118,7 +105,7 @@ func (b *builder) handle(ctx context.Context, n int, name string) error {
 		slog.Info("removing the sandbox of a Task that was requeued", "task", n, "state", r.state)
 		return b.runs.remove(ctx, name, false)
 	}
-	if r.state == running || !b.runs.due(name) {
+	if r.state == running {
 		return nil
 	}
 	if !working {
@@ -240,11 +227,14 @@ func (b *builder) harvest(ctx context.Context, task github.Issue, name string, i
 	branch := branchName(n)
 	res, failure, detail, limited := b.runs.outcome(name, true)
 	if limited {
-		slog.Warn("run ended at the Claude usage limit, starting over later", "task", n, "sandbox", name)
+		slog.Warn("run ended at the Claude usage limit, starting over once it resets", "task", n, "sandbox", name)
 		if err := b.runs.remove(ctx, name, false); err != nil {
 			return err
 		}
-		b.runs.strike(name)
+		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
+		if b.runs.gate != nil {
+			b.runs.gate.stale()
+		}
 		return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
 	}
 	if failure != "" {
@@ -326,7 +316,6 @@ func (b *builder) harvest(ctx context.Context, task github.Issue, name string, i
 		return err
 	}
 	slog.Info("pushed PR", "task", n, "pr", pr)
-	b.runs.forget(name)
 	return b.runs.remove(ctx, name, false)
 }
 
@@ -334,7 +323,6 @@ func (b *builder) stuck(ctx context.Context, n int, name, reason string) error {
 	if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, reason); err != nil {
 		return err
 	}
-	b.runs.forget(name)
 	return b.runs.remove(ctx, name, false)
 }
 
@@ -345,6 +333,5 @@ func (b *builder) failed(ctx context.Context, n int, name, why, detail string) e
 	if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, failedReason(why)); err != nil {
 		return err
 	}
-	b.runs.forget(name)
 	return b.runs.remove(ctx, name, true)
 }

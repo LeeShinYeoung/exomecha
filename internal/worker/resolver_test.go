@@ -210,7 +210,6 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 		t.Errorf("an sbx error left %d comments", n)
 	}
 	e.sbx.failExec = ""
-	e.clock.advance(minBackoff)
 	e.resolve(task)
 	e.wantState(name, running)
 }

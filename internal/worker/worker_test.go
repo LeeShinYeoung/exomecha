@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
@@ -201,4 +202,180 @@ func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 		t.Errorf("stuck comment does not start with the exomecha marker:\n%s", comment)
 	}
 	wantContains(t, "stuck comment", comment, reason, "relabel it `"+string(back)+"`")
+}
+
+// fakeWorker picks fixed numbers, and its Handle returns the error the test set for the number.
+type fakeWorker struct {
+	picks []int
+	errs  map[int]error
+
+	mu      sync.Mutex
+	handled []int
+}
+
+func (*fakeWorker) Name() string                          { return "test" }
+func (w *fakeWorker) Pick(context.Context) ([]int, error) { return w.picks, nil }
+func (w *fakeWorker) Handle(_ context.Context, n int) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.handled = append(w.handled, n)
+	return w.errs[n]
+}
+
+// took returns the numbers handled since it was last called, sorted.
+func (w *fakeWorker) took() []int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := w.handled
+	w.handled = nil
+	slices.Sort(out)
+	return out
+}
+
+// rounds runs one worker's rounds the way loop does, on the test's clock.
+type rounds struct {
+	w      Worker
+	locks  *locks
+	delays *delays
+}
+
+func newRounds(w Worker, c *clock) *rounds {
+	return &rounds{w: w, locks: &locks{held: map[int]bool{}}, delays: &delays{now: c.now, items: map[int]delay{}}}
+}
+
+// run returns once every Handle the round started has returned.
+func (r *rounds) run(ctx context.Context, gate *Gate) {
+	var wg sync.WaitGroup
+	round(ctx, r.w, nil, r.locks, r.delays, &wg, gate)
+	wg.Wait()
+}
+
+func TestRoundSkipsAnItemThatIsNotDue(t *testing.T) {
+	c := newClock()
+	w := &fakeWorker{picks: []int{1, 2}, errs: map[int]error{1: errors.New("sbx down")}}
+	r := newRounds(w, c)
+
+	r.run(t.Context(), nil)
+	wantInts(t, "first round", w.took(), []int{1, 2})
+	c.advance(minBackoff - time.Second)
+	r.run(t.Context(), nil)
+	wantInts(t, "before the wait passed", w.took(), []int{2})
+	c.advance(time.Second)
+	r.run(t.Context(), nil)
+	wantInts(t, "after the wait", w.took(), []int{1, 2})
+}
+
+func TestRoundDelaysDouble(t *testing.T) {
+	c := newClock()
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
+	r := newRounds(w, c)
+	r.run(t.Context(), nil)
+	w.took()
+
+	for _, wait := range []time.Duration{1, 2, 4, 8, 16, 30, 30, 30} {
+		c.advance(wait*time.Minute - time.Second)
+		r.run(t.Context(), nil)
+		if got := w.took(); len(got) != 0 {
+			t.Fatalf("tried again before %v passed", wait*time.Minute)
+		}
+		c.advance(time.Second)
+		r.run(t.Context(), nil)
+		if got := w.took(); len(got) != 1 {
+			t.Fatalf("not tried again after %v", wait*time.Minute)
+		}
+	}
+}
+
+func TestRoundForgetsOnSuccess(t *testing.T) {
+	c := newClock()
+	fail := errors.New("sbx down")
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: fail}}
+	r := newRounds(w, c)
+	r.run(t.Context(), nil)
+	c.advance(minBackoff)
+	r.run(t.Context(), nil)
+	w.errs[1] = nil
+	c.advance(2 * minBackoff)
+	r.run(t.Context(), nil)
+	wantInts(t, "tries", w.took(), []int{1, 1, 1})
+
+	// Two errors before the success. A new error starts the waits over at one minute.
+	w.errs[1] = fail
+	r.run(t.Context(), nil)
+	c.advance(minBackoff)
+	r.run(t.Context(), nil)
+	wantInts(t, "tries after the success", w.took(), []int{1, 1})
+}
+
+func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
+	r := newRounds(w, newClock())
+	r.run(t.Context(), nil)
+	w.picks = nil
+	r.run(t.Context(), nil)
+	w.picks = []int{1}
+	r.run(t.Context(), nil)
+	wantInts(t, "tries", w.took(), []int{1, 1})
+}
+
+func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: context.Canceled}}
+	r := newRounds(w, newClock())
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	r.run(ctx, nil)
+	w.errs[1] = nil
+	r.run(t.Context(), nil)
+	wantInts(t, "tries", w.took(), []int{1, 1})
+}
+
+// Another worker holds the issue. That is no error, so the next round tries it at once.
+func TestRoundDoesNotStrikeALockedItem(t *testing.T) {
+	w := &fakeWorker{picks: []int{1}}
+	r := newRounds(w, newClock())
+	r.locks.lock(1)
+	r.run(t.Context(), nil)
+	wantInts(t, "tries while locked", w.took(), nil)
+	r.locks.unlock(1)
+	r.run(t.Context(), nil)
+	wantInts(t, "tries once unlocked", w.took(), []int{1})
+}
+
+// An issue that fails in one worker is not held back in another.
+func TestRoundDelaysArePerWorker(t *testing.T) {
+	c := newClock()
+	failing := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
+	other := &fakeWorker{picks: []int{1}}
+	f, o := newRounds(failing, c), newRounds(other, c)
+	o.locks = f.locks
+
+	f.run(t.Context(), nil)
+	o.run(t.Context(), nil)
+	f.run(t.Context(), nil)
+	o.run(t.Context(), nil)
+	wantInts(t, "failing worker's tries", failing.took(), []int{1})
+	wantInts(t, "other worker's tries", other.took(), []int{1, 1})
+}
+
+// A real builder start that sbx fails waits a minute in the loop, then starts.
+func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	name := e.builderBox(task)
+	e.sbx.fail["create"] = errors.New("sbx run: daemon not running")
+	r := newRounds(e.builder(), e.clock)
+
+	r.run(t.Context(), nil)
+	e.wantStatus(task, label.Queued)
+	e.wantRemoved(name)
+	delete(e.sbx.fail, "create")
+	e.clock.advance(minBackoff - time.Second)
+	r.run(t.Context(), nil)
+	if e.sbx.exists(name) {
+		t.Fatal("started again before a minute passed")
+	}
+	e.clock.advance(time.Second)
+	r.run(t.Context(), nil)
+	e.wantStatus(task, label.Working)
+	e.wantState(name, running)
 }

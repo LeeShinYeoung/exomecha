@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,8 @@ type Worker interface {
 	Pick(ctx context.Context) ([]int, error)
 	// Handle sends a Task to stuck and returns nil when the Task itself is the problem. Any other error
 	// is an environment error: leave the Task where the next check can retry it, and return the error.
+	// The loop puts off the next try after an error, longer each time in a row, so a Task that only
+	// has to wait returns nil.
 	Handle(ctx context.Context, number int) error
 }
 
@@ -73,7 +76,12 @@ type Environment interface {
 	AllowedHosts(ctx context.Context) ([]string, error)
 }
 
-const interval = 60 * time.Second
+const (
+	interval = 60 * time.Second
+	// The wait after an error doubles with each error in a row, up to maxBackoff.
+	minBackoff = time.Minute
+	maxBackoff = 30 * time.Minute
+)
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
@@ -105,10 +113,11 @@ func loop(ctx context.Context, w Worker, limit int, l *locks, gate *Gate) {
 	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	d := &delays{now: time.Now, items: map[int]delay{}}
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
-		round(ctx, w, sem, l, &wg, gate)
+		round(ctx, w, sem, l, d, &wg, gate)
 		select {
 		case <-ctx.Done():
 			return
@@ -117,7 +126,7 @@ func loop(ctx context.Context, w Worker, limit int, l *locks, gate *Gate) {
 	}
 }
 
-func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.WaitGroup, gate *Gate) {
+func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, d *delays, wg *sync.WaitGroup, gate *Gate) {
 	log := slog.With("worker", w.Name())
 	if s, ok := w.(Sweeper); ok {
 		if err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
@@ -131,8 +140,15 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 		}
 		return
 	}
+	d.keep(numbers)
+	var due []int
+	for _, n := range numbers {
+		if d.due(n) {
+			due = append(due, n)
+		}
+	}
 	// Checking only when there is work keeps an idle exomecha from spending any Claude usage.
-	if len(numbers) == 0 {
+	if len(due) == 0 {
 		return
 	}
 	if gate != nil {
@@ -143,7 +159,7 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 			return
 		}
 	}
-	for _, n := range numbers {
+	for _, n := range due {
 		if sem != nil {
 			select {
 			case sem <- struct{}{}:
@@ -163,10 +179,63 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 		wg.Go(func() {
 			defer release()
 			defer l.unlock(n)
-			if err := w.Handle(ctx, n); err != nil {
-				log.Error("handle failed", "issue", n, "err", err)
+			err := w.Handle(ctx, n)
+			if err == nil {
+				d.forget(n)
+				return
 			}
+			// An error from shutdown says nothing about the issue.
+			if ctx.Err() == nil {
+				d.strike(n)
+			}
+			log.Error("handle failed", "issue", n, "err", err)
 		})
+	}
+}
+
+// delays holds one worker's issues whose last Handle failed, so the loop tries them again later.
+// It lives in memory only, and a restart tries every issue at once.
+type delays struct {
+	now   func() time.Time
+	mu    sync.Mutex
+	items map[int]delay
+}
+
+type delay struct {
+	strikes int // errors in a row
+	next    time.Time
+}
+
+func (d *delays) due(n int) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	it, ok := d.items[n]
+	return !ok || !d.now().Before(it.next)
+}
+
+func (d *delays) strike(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	it := d.items[n]
+	it.strikes++
+	it.next = d.now().Add(min(maxBackoff, minBackoff<<min(it.strikes-1, 10)))
+	d.items[n] = it
+}
+
+func (d *delays) forget(n int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.items, n)
+}
+
+// keep forgets the issues Pick no longer returns, so one that comes back later starts with no wait.
+func (d *delays) keep(picked []int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for n := range d.items {
+		if !slices.Contains(picked, n) {
+			delete(d.items, n)
+		}
 	}
 }
 
