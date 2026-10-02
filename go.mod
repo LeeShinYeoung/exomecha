@@ -1,4 +1,4 @@
-module github.com/LeeShinYeoung/coworker
+module github.com/LeeShinYeoung/exomecha
 
 go 1.27
 

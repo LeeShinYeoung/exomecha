@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/git"
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
-	"github.com/LeeShinYeoung/coworker/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/git"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 // TestRealSandbox runs the whole round trip against the sbx on this machine: create, send code
 // in, run a detached command that commits, fetch the commit out, remove. It needs sbx signed in
-// and takes about 15 seconds, so it runs only with COWORKER_TEST_SBX=1.
+// and takes about 15 seconds, so it runs only with EXOMECHA_TEST_SBX=1.
 func TestRealSandbox(t *testing.T) {
-	if os.Getenv("COWORKER_TEST_SBX") != "1" {
-		t.Skip("set COWORKER_TEST_SBX=1 to run against the real sbx")
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 to run against the real sbx")
 	}
 	gittest.Setup(t)
 	sbx := sandbox.CLI{}
@@ -50,10 +50,10 @@ func TestRealSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	url := sbx.GitURL(name, repo)
-	if err := g.SendTo(ctx, url, base, "coworker/task-1", base); err != nil {
+	if err := g.SendTo(ctx, url, base, "exomecha/task-1", base); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sbx.Exec(ctx, name, repo, nil, "git", "checkout", "-q", "coworker/task-1"); err != nil {
+	if _, err := sbx.Exec(ctx, name, repo, nil, "git", "checkout", "-q", "exomecha/task-1"); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := sbx.Exec(ctx, name, repo, nil, "git", "remote", "-v"); err != nil || len(out) != 0 {

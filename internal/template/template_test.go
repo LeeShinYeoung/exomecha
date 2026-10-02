@@ -61,28 +61,28 @@ func TestSlugCutAtADash(t *testing.T) {
 
 func TestNames(t *testing.T) {
 	e := New(fakeFiles{}, "LeeShinYeoung", "jazzing")
-	if got := e.helper(); got != "coworker-build-leeshinyeoung-jazzing" {
+	if got := e.helper(); got != "exomecha-build-leeshinyeoung-jazzing" {
 		t.Errorf("helper = %q", got)
 	}
 	ref := e.ref("FROM docker/sandbox-templates:claude-code-docker\n")
 	repo, tag, _ := strings.Cut(ref, ":")
-	if repo != "docker.io/library/coworker-leeshinyeoung-jazzing" || len(tag) != 12 {
-		t.Errorf("ref = %q, want docker.io/library/coworker-<slug>:<12 hex>", ref)
+	if repo != "docker.io/library/exomecha-leeshinyeoung-jazzing" || len(tag) != 12 {
+		t.Errorf("ref = %q, want docker.io/library/exomecha-<slug>:<12 hex>", ref)
 	}
 	if other := e.ref("FROM docker/sandbox-templates:claude-code-docker\nRUN true\n"); other == ref {
 		t.Errorf("two Dockerfiles share the ref %q", ref)
 	}
 
 	long := New(fakeFiles{}, "some-organization", strings.Repeat("long-repository-name-", 3))
-	if n := len("coworker-task-" + long.slug + "-9999999-resolver"); n > 63 {
+	if n := len("exomecha-task-" + long.slug + "-9999999-resolver"); n > 63 {
 		t.Errorf("task sandbox name is %d chars, sbx allows 63", n)
 	}
 }
 
 const (
 	dockerfile = "FROM docker/sandbox-templates:claude-code-docker\nRUN true\n"
-	helper     = "coworker-build-owner-repo"
-	repository = "docker.io/library/coworker-owner-repo"
+	helper     = "exomecha-build-owner-repo"
+	repository = "docker.io/library/exomecha-owner-repo"
 )
 
 func newEnv(f *fakeSbx, files fakeFiles) *Env {
@@ -364,7 +364,7 @@ func TestTemplateRemovesOnlyOldTags(t *testing.T) {
 	f.images = []image{
 		{ID: "111111111111", Repository: repository, Tag: "aaaaaaaaaaaa"},
 		{ID: fakeID(ref), Repository: repository, Tag: "bbbbbbbbbbbb"},
-		{ID: "222222222222", Repository: "docker.io/library/coworker-owner-other", Tag: "aaaaaaaaaaaa"},
+		{ID: "222222222222", Repository: "docker.io/library/exomecha-owner-other", Tag: "aaaaaaaaaaaa"},
 		{ID: "549730947ed8", Repository: "docker.io/docker/sandbox-templates", Tag: "claude-code-docker"},
 	}
 	if _, _, err := e.Template(t.Context()); err != nil {

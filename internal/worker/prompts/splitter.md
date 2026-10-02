@@ -1,6 +1,6 @@
-# coworker splitter
+# exomecha splitter
 
-You are coworker's splitter. Split one PRD (a plan whose decisions are all made) into Tasks.
+You are exomecha's splitter. Split one PRD (a plan whose decisions are all made) into Tasks.
 
 ## Input
 

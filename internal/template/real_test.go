@@ -11,8 +11,8 @@ import (
 
 // Real sbx behavior, such as loading from /dev/stdin, cannot be faked. Takes a few minutes.
 func TestRealBuild(t *testing.T) {
-	if os.Getenv("COWORKER_TEST_SBX") != "1" {
-		t.Skip("set COWORKER_TEST_SBX=1 to build templates with the real sbx")
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 to build templates with the real sbx")
 	}
 	const from = "FROM docker/sandbox-templates:claude-code-docker\n"
 	const sandbox = "impl-env-from-template"
@@ -49,13 +49,13 @@ func TestRealBuild(t *testing.T) {
 	}
 	wantTags(t, e, second)
 
-	files[dockerfilePath] = from + "RUN echo coworker-test-output && false\n"
+	files[dockerfilePath] = from + "RUN echo exomecha-test-output && false\n"
 	_, _, err = e.Template(ctx)
 	p, ok := errors.AsType[*Problem](err)
 	if !ok {
 		t.Fatalf("Template with RUN false = %v, want a Problem", err)
 	}
-	if !strings.Contains(p.Output, "coworker-test-output") || strings.Contains(p.Error(), "coworker-test-output") {
+	if !strings.Contains(p.Output, "exomecha-test-output") || strings.Contains(p.Error(), "exomecha-test-output") {
 		t.Errorf("Problem = %q with output %q, want the output only in Output", p.Error(), p.Output)
 	}
 	t.Logf("build failure: %s\noutput tail:\n%s", p.Why(), p.Output[max(0, len(p.Output)-600):])

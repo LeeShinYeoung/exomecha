@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 )
 
 // usageFresh is how long one usage reading is shared by every worker. Each reading is a small claude call.

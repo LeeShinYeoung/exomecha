@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/github/githubtest"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 // reviewTask sets up a Task in review under a PRD, with a pushed branch and an open,

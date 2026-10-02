@@ -69,7 +69,7 @@ func TestTaskboxStates(t *testing.T) {
 	e.wantState(name, gone)
 }
 
-// A restarted coworker has seen nothing yet, so the 15 minutes start over.
+// A restarted exomecha has seen nothing yet, so the 15 minutes start over.
 func TestStallStartsOverForANewTaskbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.box.name(7, "builder")
@@ -209,7 +209,7 @@ func TestFoundAndPrune(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", "coworker-task-other-repo-6-builder", "impl-run-x"} {
+	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", "exomecha-task-other-repo-6-builder", "impl-run-x"} {
 		e.sbx.add(name)
 	}
 
@@ -243,7 +243,7 @@ func TestSlotsCountEveryTaskSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
-	e.sbx.add("coworker-task-other-repo-2-builder")
+	e.sbx.add("exomecha-task-other-repo-2-builder")
 	e.wantReady(e.box.name(9, builderRole), true)
 	e.box.release(e.box.name(9, builderRole))
 	e.sbx.add(prefix + "2-resolver")

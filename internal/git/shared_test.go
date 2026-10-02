@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 )
 
 // sandboxRepo stands in for the repository inside a sandbox. Tests reach it by its path.
@@ -35,19 +35,19 @@ func TestSendToAndFetchFrom(t *testing.T) {
 	base := f.rev(t, "origin/main")
 	box := sandboxRepo(t)
 
-	if err := f.git.SendTo(t.Context(), box, base, "coworker/task-1", base); err != nil {
+	if err := f.git.SendTo(t.Context(), box, base, "exomecha/task-1", base); err != nil {
 		t.Fatal(err)
 	}
-	for _, ref := range []string{"refs/remotes/origin/main", "refs/heads/coworker/task-1"} {
+	for _, ref := range []string{"refs/remotes/origin/main", "refs/heads/exomecha/task-1"} {
 		if got := gittest.Run(t, box, "rev-parse", ref); got != base {
 			t.Errorf("%s in the sandbox = %q, want %s", ref, got, base)
 		}
 	}
-	gittest.Run(t, box, "checkout", "-q", "coworker/task-1")
+	gittest.Run(t, box, "checkout", "-q", "exomecha/task-1")
 	writeFile(t, filepath.Join(box, "new.txt"), "new\n")
 	gittest.CommitAll(t, box, "add new.txt")
 
-	head, err := f.git.FetchFrom(t.Context(), box, "coworker-task-x-1-builder")
+	head, err := f.git.FetchFrom(t.Context(), box, "exomecha-task-x-1-builder")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,10 +67,10 @@ func TestSendToAndFetchFrom(t *testing.T) {
 		t.Errorf("Show(new.txt) on base = %q, %v, %v, want no file", got, ok, err)
 	}
 
-	if err := f.git.DropRef(t.Context(), "coworker-task-x-1-builder"); err != nil {
+	if err := f.git.DropRef(t.Context(), "exomecha-task-x-1-builder"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := f.git.Rev(t.Context(), "refs/coworker/coworker-task-x-1-builder"); err != nil || ok {
+	if _, ok, err := f.git.Rev(t.Context(), "refs/exomecha/exomecha-task-x-1-builder"); err != nil || ok {
 		t.Errorf("ref left after DropRef: %v, %v", ok, err)
 	}
 }
@@ -91,10 +91,10 @@ func TestSandboxTransfersCarryNoAuth(t *testing.T) {
 	}
 	url := "ext::" + command + " %s " + box
 
-	if err := f.git.SendTo(t.Context(), url, base, "coworker/task-1", base); err != nil {
+	if err := f.git.SendTo(t.Context(), url, base, "exomecha/task-1", base); err != nil {
 		t.Fatal(err)
 	}
-	gittest.Run(t, box, "checkout", "-q", "coworker/task-1")
+	gittest.Run(t, box, "checkout", "-q", "exomecha/task-1")
 	if _, err := f.git.FetchFrom(t.Context(), url, "box"); err != nil {
 		t.Fatal(err)
 	}
@@ -110,16 +110,16 @@ func TestSandboxTransfersCarryNoAuth(t *testing.T) {
 
 func TestPushCommit(t *testing.T) {
 	f := setup(t, map[string]string{"README.md": "hello\n"})
-	old := gittest.Commit(t, f.origin, "coworker/task-1", "main", map[string]string{"old.txt": "old\n"})
+	old := gittest.Commit(t, f.origin, "exomecha/task-1", "main", map[string]string{"old.txt": "old\n"})
 	if err := f.git.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	base := f.rev(t, "origin/main")
 	box := sandboxRepo(t)
-	if err := f.git.SendTo(t.Context(), box, base, "coworker/task-1", base); err != nil {
+	if err := f.git.SendTo(t.Context(), box, base, "exomecha/task-1", base); err != nil {
 		t.Fatal(err)
 	}
-	gittest.Run(t, box, "checkout", "-q", "coworker/task-1")
+	gittest.Run(t, box, "checkout", "-q", "exomecha/task-1")
 	writeFile(t, filepath.Join(box, "new.txt"), "new\n")
 	gittest.CommitAll(t, box, "new work")
 	head, err := f.git.FetchFrom(t.Context(), box, "box")
@@ -127,21 +127,21 @@ func TestPushCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := f.git.PushCommit(t.Context(), head, "coworker/task-1", false); err == nil {
+	if err := f.git.PushCommit(t.Context(), head, "exomecha/task-1", false); err == nil {
 		t.Error("PushCommit without force replaced a branch that does not hold the commit")
 	}
-	if got := gittest.Head(f.origin, "coworker/task-1"); got != old {
+	if got := gittest.Head(f.origin, "exomecha/task-1"); got != old {
 		t.Fatalf("branch = %s, want it left at %s", got, old)
 	}
-	if err := f.git.PushCommit(t.Context(), head, "coworker/task-1", true); err != nil {
+	if err := f.git.PushCommit(t.Context(), head, "exomecha/task-1", true); err != nil {
 		t.Fatal(err)
 	}
-	if got := gittest.Parents(t, f.origin, "coworker/task-1"); !slices.Equal(got, []string{base}) {
+	if got := gittest.Parents(t, f.origin, "exomecha/task-1"); !slices.Equal(got, []string{base}) {
 		t.Errorf("parents = %v, want only main %s (old branch replaced)", got, base)
 	}
 }
 
-// coworker's own push carries the token in its environment, so it must not run the project's hooks.
+// exomecha's own push carries the token in its environment, so it must not run the project's hooks.
 func TestPushDoesNotRunProjectHooks(t *testing.T) {
 	f := setup(t, map[string]string{"README.md": "hello\n"})
 	if err := f.git.Sync(t.Context()); err != nil {
@@ -153,7 +153,7 @@ func TestPushDoesNotRunProjectHooks(t *testing.T) {
 	}
 	gittest.Run(t, filepath.Join(f.root, "repo"), "config", "core.hooksPath", hooks)
 
-	if err := f.git.PushCommit(t.Context(), f.rev(t, "origin/main"), "coworker/task-1", false); err != nil {
+	if err := f.git.PushCommit(t.Context(), f.rev(t, "origin/main"), "exomecha/task-1", false); err != nil {
 		t.Fatalf("PushCommit ran the project's pre-push hook: %v", err)
 	}
 }

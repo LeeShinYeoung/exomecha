@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 )
 
 func TestCloneGivesUpOnStalledServer(t *testing.T) {

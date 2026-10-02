@@ -45,7 +45,7 @@ func (g *Git) repoDir() string { return filepath.Join(g.root, "repo") }
 // dead connection would otherwise hold mu and stall every worker that needs a worktree.
 var lowSpeedTime = "30"
 
-// run is for every call that does not talk to GitHub. None of coworker's calls run the project's
+// run is for every call that does not talk to GitHub. None of exomecha's calls run the project's
 // hooks. The AI's own git commands do not come through here, and the project's commit checks
 // still run on them.
 func (g *Git) run(ctx context.Context, dir string, args ...string) (string, error) {
@@ -59,7 +59,7 @@ func (g *Git) runGitHub(ctx context.Context, dir string, args ...string) (string
 }
 
 // runSandbox is for transfers with a sandbox's repository, which git reaches by running a command
-// named in the URL. Only coworker builds those URLs, and only these calls may run one. What comes
+// named in the URL. Only exomecha builds those URLs, and only these calls may run one. What comes
 // back was made by the AI, so it is checked like anything from an untrusted server.
 func (g *Git) runSandbox(ctx context.Context, dir string, args ...string) (string, error) {
 	return g.command(ctx, dir, []string{"protocol.ext.allow", "always", "fetch.fsckObjects", "true"}, args...)

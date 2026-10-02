@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/github/githubtest"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 )
 
 func TestRequestGivesUpOnStalledServer(t *testing.T) {

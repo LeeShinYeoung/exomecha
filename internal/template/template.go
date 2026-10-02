@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const dockerfilePath = ".coworker/Dockerfile"
+const dockerfilePath = ".exomecha/Dockerfile"
 
 var (
 	// A Dockerfile can hang, for example on a download that never ends.
@@ -55,7 +55,7 @@ type build struct {
 }
 
 // The same max the task sandbox names use, so every name of one project carries one slug:
-// 63 chars minus "coworker-task-" and "-9999999-resolver".
+// 63 chars minus "exomecha-task-" and "-9999999-resolver".
 const slugMax = 32
 
 func New(files Files, owner, repo string) *Env {
@@ -89,9 +89,9 @@ func Slug(owner, repo string, max int) string {
 	return strings.TrimRight(slug[:keep], "-") + "-" + hash
 }
 
-func (e *Env) repository() string { return "docker.io/library/coworker-" + e.slug }
+func (e *Env) repository() string { return "docker.io/library/exomecha-" + e.slug }
 
-func (e *Env) helper() string { return "coworker-build-" + e.slug }
+func (e *Env) helper() string { return "exomecha-build-" + e.slug }
 
 func (e *Env) ref(dockerfile string) string {
 	sum := sha256.Sum256([]byte(dockerfile))
@@ -209,12 +209,12 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 		return ctx.Err()
 	case buildCtx.Err() != nil:
 		return &Problem{
-			Reason: fmt.Sprintf("`%s` did not build within %d minutes. The build output is in coworker's log. Fix it on the base branch.", dockerfilePath, int(buildTimeout.Minutes())),
+			Reason: fmt.Sprintf("`%s` did not build within %d minutes. The build output is in exomecha's log. Fix it on the base branch.", dockerfilePath, int(buildTimeout.Minutes())),
 			Output: output,
 		}
 	default:
 		return &Problem{
-			Reason: fmt.Sprintf("`%s` failed to build (%v). The build output is in coworker's log. Fix it on the base branch.", dockerfilePath, err),
+			Reason: fmt.Sprintf("`%s` failed to build (%v). The build output is in exomecha's log. Fix it on the base branch.", dockerfilePath, err),
 			Output: output,
 		}
 	}

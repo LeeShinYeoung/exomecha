@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
-	"github.com/LeeShinYeoung/coworker/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 const (
 	// Where the Task's repository lives inside a sandbox. It is on the sandbox's own disk, not in
-	// the directory shared with this machine, so coworker never runs git in a .git the AI controls.
+	// the directory shared with this machine, so exomecha never runs git in a .git the AI controls.
 	repoDir = "/home/agent/repo"
 
 	// A foreground command is capped at 10 minutes, so a run that is working still writes within this.
@@ -37,7 +37,7 @@ const (
 	// A create takes seconds. The first one may pull sbx's own template, which takes longer.
 	createTimeout = 15 * time.Minute
 
-	// Far more than any run writes. It only bounds what a misbehaving run can make coworker read.
+	// Far more than any run writes. It only bounds what a misbehaving run can make exomecha read.
 	streamLimit = 256 << 20
 	tailLimit   = 4000
 )
@@ -56,7 +56,7 @@ mv "$ctl/exit.tmp" "$ctl/exit"
 `
 
 // errNoSlot means the slots filled up between ready and the create, which only a sandbox made
-// outside this coworker can do.
+// outside this exomecha can do.
 var errNoSlot = errors.New("no free sandbox slot")
 
 type state int
@@ -80,7 +80,7 @@ type run struct {
 	start started
 }
 
-// started is what coworker records once claude is running. It lives outside the directory the
+// started is what exomecha records once claude is running. It lives outside the directory the
 // sandbox shares, so the AI cannot change what its work is checked against.
 type started struct {
 	Before    string   `json:"before"` // the commit claude started from
@@ -91,7 +91,7 @@ type started struct {
 }
 
 // taskbox is what builder and resolver share: the sandboxes, the limit on how many run at once,
-// and what coworker remembers about each run. Memory is lost on restart, and nothing depends on
+// and what exomecha remembers about each run. Memory is lost on restart, and nothing depends on
 // it except stall times and failure counts.
 type taskbox struct {
 	Deps
@@ -111,7 +111,7 @@ type taskbox struct {
 type progress struct {
 	size int64
 	mod  time.Time
-	at   time.Time // when coworker first saw this size and time
+	at   time.Time // when exomecha first saw this size and time
 }
 
 type tries struct {
@@ -135,7 +135,7 @@ func (t *taskbox) name(task int, role string) string {
 	return sandbox.Name(t.SandboxPrefix, task, role)
 }
 
-// dir holds what coworker keeps about one sandbox on this machine.
+// dir holds what exomecha keeps about one sandbox on this machine.
 func (t *taskbox) dir(name string) string { return filepath.Join(t.SandboxDir, name) }
 
 // ctl is the sandbox's workspace: the part of dir the sandbox sees, at the same path. The AI can
@@ -193,8 +193,8 @@ func (t *taskbox) read(ctx context.Context, name string) (run, error) {
 	return r, nil
 }
 
-// quiet reports whether the run's output has not changed for stallAfter, as coworker saw it.
-// It counts only time coworker watched, on a clock that stands still while this machine sleeps.
+// quiet reports whether the run's output has not changed for stallAfter, as exomecha saw it.
+// It counts only time exomecha watched, on a clock that stands still while this machine sleeps.
 func (t *taskbox) quiet(name string) (bool, error) {
 	size, mod := int64(-1), time.Time{}
 	info, err := os.Lstat(filepath.Join(t.ctl(name), "stream.jsonl"))
@@ -497,20 +497,20 @@ func (t *taskbox) fetch(ctx context.Context, name string) (string, error) {
 func (t *taskbox) outcome(name string, schema bool) (res agent.Result, failure, detail string, limited bool) {
 	b, err := readCtl(t.ctl(name), "exit", 64)
 	if err != nil {
-		return res, "coworker could not read how claude ended", err.Error(), false
+		return res, "exomecha could not read how claude ended", err.Error(), false
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil {
-		return res, "coworker could not read how claude ended", fmt.Sprintf("exit file holds %q", b), false
+		return res, "exomecha could not read how claude ended", fmt.Sprintf("exit file holds %q", b), false
 	}
 	f, err := openCtl(t.ctl(name), "stream.jsonl")
 	if err != nil {
-		return res, "coworker could not read claude's output", err.Error(), false
+		return res, "exomecha could not read claude's output", err.Error(), false
 	}
 	defer f.Close()
 	s, err := agent.ReadStream(io.LimitReader(f, streamLimit))
 	if err != nil {
-		return res, "coworker could not read claude's output", err.Error(), false
+		return res, "exomecha could not read claude's output", err.Error(), false
 	}
 	res, err = s.Result(schema)
 	if (err != nil || code != 0) && s.Rejected {
@@ -635,5 +635,5 @@ func holds(task github.Issue, statuses ...label.Status) bool {
 }
 
 func failedReason(count int, why string) string {
-	return fmt.Sprintf("The AI's run failed %d times in a row. The last time, %s. The details are in coworker's log.", count, why)
+	return fmt.Sprintf("The AI's run failed %d times in a row. The last time, %s. The details are in exomecha's log.", count, why)
 }

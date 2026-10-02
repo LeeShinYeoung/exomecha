@@ -11,12 +11,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/git"
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/github/githubtest"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/git"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 type env struct {
@@ -58,7 +58,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
-		SandboxPrefix: "coworker-task-owner-repo-",
+		SandboxPrefix: "exomecha-task-owner-repo-",
 		SandboxLimit:  2,
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
@@ -197,7 +197,7 @@ func TestTrimClosingTags(t *testing.T) {
 func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 	t.Helper()
 	if !strings.HasPrefix(comment, github.Marker) {
-		t.Errorf("stuck comment does not start with the coworker marker:\n%s", comment)
+		t.Errorf("stuck comment does not start with the exomecha marker:\n%s", comment)
 	}
 	wantContains(t, "stuck comment", comment, reason, "relabel it `"+string(back)+"`")
 }

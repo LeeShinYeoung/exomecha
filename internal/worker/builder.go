@@ -8,9 +8,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 const builderSchema = `{
@@ -84,7 +84,7 @@ func (b *builder) unblocked(ctx context.Context, n int) (bool, error) {
 	return true, nil
 }
 
-// Handle returns an error only for a failed step of coworker's own (sbx, git, GitHub). The state
+// Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
 // stays as it is and the next try waits longer each time.
 func (b *builder) Handle(ctx context.Context, n int) error {
 	name := b.box.name(n, builderRole)
@@ -212,7 +212,7 @@ func (b *builder) launch(ctx context.Context, task github.Issue, name string) (p
 			return "", err
 		}
 		if review != "" {
-			existing += "## Last review (coworker's latest review on this PR: changes to make or CI failures)\n\n" + review + "\n"
+			existing += "## Last review (exomecha's latest review on this PR: changes to make or CI failures)\n\n" + review + "\n"
 		}
 	}
 	comments, err := issueComments(ctx, b.GitHub, n)
@@ -278,7 +278,7 @@ func (b *builder) harvest(ctx context.Context, task github.Issue, name string, s
 	if err := b.Git.Sync(ctx); err != nil {
 		return err
 	}
-	// head is there when coworker already pushed this run and a later step failed.
+	// head is there when exomecha already pushed this run and a later step failed.
 	if remote, _, err := b.Git.Rev(ctx, "origin/"+branch); err != nil {
 		return err
 	} else if remote != s.Remote && remote != head {

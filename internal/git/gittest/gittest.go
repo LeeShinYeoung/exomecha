@@ -13,7 +13,7 @@ import (
 func Setup(t *testing.T) {
 	t.Helper()
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
-	const content = "[user]\n\tname = coworker test\n\temail = test@example.com\n"
+	const content = "[user]\n\tname = exomecha test\n\temail = test@example.com\n"
 	if err := os.WriteFile(cfg, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

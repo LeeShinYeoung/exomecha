@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-const setupScript = ".coworker/setup.sh"
+const setupScript = ".exomecha/setup.sh"
 
 const setupFix = " Fix the script on the base branch, then relabel this issue as below. You don't need to answer."
 
 // Each worker adds when it ran.
-const setupNote = "## Setup\n\ncoworker ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
+const setupNote = "## Setup\n\nexomecha ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
 
 // A script still running after this long is stopped and the Task goes to stuck. Without a limit,
 // a script that never ends would hold the Task with nothing to show for it.
@@ -38,7 +38,7 @@ func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err erro
 	runCtx, cancel := context.WithTimeout(ctx, setupTimeout+time.Minute)
 	defer cancel()
 	start := time.Now()
-	env := []string{"COWORKER_TASK=" + strconv.Itoa(l.task)}
+	env := []string{"EXOMECHA_TASK=" + strconv.Itoa(l.task)}
 	out, err := t.Sandboxes.Exec(runCtx, l.name, repoDir, env, "sh", "-c", script, "sh", t.ctl(l.name))
 	if err != nil {
 		return "", fmt.Errorf("run %s: %w", setupScript, err)
@@ -84,5 +84,5 @@ func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err erro
 		// Fixing the base branch cannot help a branch that lacks what the script relies on, such as a newer .gitignore.
 		fix = fmt.Sprintf(" The script is the base branch's copy, and this Task's branch is behind the base branch, so the branch may just be older than the script. If it is, merge the base branch into `%s`. If not, fix the script on the base branch. Then relabel this issue as below. You don't need to answer.", branchName(l.task))
 	}
-	return fmt.Sprintf("`%s` %s The details are in coworker's log.", setupScript, what) + fix, nil
+	return fmt.Sprintf("`%s` %s The details are in exomecha's log.", setupScript, what) + fix, nil
 }

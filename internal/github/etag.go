@@ -9,9 +9,9 @@ import (
 )
 
 // etagTransport asks again with If-None-Match for every GET it has an answer to. GitHub does not
-// count a 304 against the rate limit, and most of coworker's checks get the same answer every
+// count a 304 against the rate limit, and most of exomecha's checks get the same answer every
 // minute. It never reuses an answer without asking: a standard HTTP cache would honor GitHub's
-// max-age=60 and could hide a label coworker changed a moment ago.
+// max-age=60 and could hide a label exomecha changed a moment ago.
 type etagTransport struct {
 	base http.RoundTripper
 
