@@ -24,7 +24,13 @@ const builderSchema = `{
   "additionalProperties": false
 }`
 
-const builderRole = "builder"
+var builderRole = role{
+	name:    "builder",
+	queued:  label.Queued,
+	working: label.Working,
+	from:    label.Working,
+	back:    label.Pending,
+}
 
 // builder runs claude in one sandbox per Task. Each round it looks at the Task's label and its
 // sandbox and takes one step, so after a restart it picks up whatever is left the same way.
@@ -83,7 +89,7 @@ func (b *builder) unblocked(ctx context.Context, n int) (bool, error) {
 // Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
 // stays as it is, so the next try repeats the step.
 func (b *builder) Handle(ctx context.Context, n int) error {
-	name := b.runs.name(n, builderRole)
+	name := b.runs.name(builderRole, n)
 	task, err := b.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
@@ -96,14 +102,12 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 		if r.state == none {
 			return nil
 		}
-		slog.Info("removing the sandbox of a Task that left builder", "task", n, "state", r.state)
-		return b.runs.remove(ctx, name, false)
+		return b.runs.drop(ctx, builderRole, n)
 	}
 	working := task.HasLabel(string(label.Working))
 	// A queued Task with a sandbox was sent back by a person, and its run holds a slot for nothing.
 	if !working && r.state != none {
-		slog.Info("removing the sandbox of a Task that was requeued", "task", n, "state", r.state)
-		return b.runs.remove(ctx, name, false)
+		return b.runs.drop(ctx, builderRole, n)
 	}
 	if r.state == running {
 		return nil
@@ -114,23 +118,18 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 
 	switch r.state {
 	case none:
-		slog.Info("requeued a working Task that has no sandbox", "task", n)
-		return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
+		return b.runs.restart(ctx, builderRole, n, "the Task is working with no run")
 	case preparing:
 		// Only a start holds the Task's lock while preparing, so this one was cut off.
-		if err := b.runs.remove(ctx, name, false); err != nil {
-			return err
-		}
-		slog.Info("requeued a Task whose start was cut off", "task", n)
-		return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
+		return b.runs.restart(ctx, builderRole, n, "its start was cut off")
 	case stalled:
-		return b.failed(ctx, n, name, fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes())), "")
+		return b.runs.failed(ctx, builderRole, n, fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes())), "")
 	case dead:
-		return b.failed(ctx, n, name, "the sandbox stopped while claude was running", "")
+		return b.runs.failed(ctx, builderRole, n, "the sandbox stopped while claude was running", "")
 	case gone:
-		return b.failed(ctx, n, name, "the sandbox was removed while claude was running", "")
+		return b.runs.failed(ctx, builderRole, n, "the sandbox was removed while claude was running", "")
 	case finished:
-		return b.harvest(ctx, task, name, r.in)
+		return b.harvest(ctx, task, r.in)
 	}
 	return nil
 }
@@ -186,13 +185,13 @@ func (b *builder) launch(ctx context.Context, task github.Issue, name string) (p
 	if err != nil {
 		return "", err
 	}
-	in := inputs{Head: base, Remote: remote, Base: base}
+	in := inputs{Base: base, Head: base, Remote: remote}
 	var existing string
 	if hasPR {
 		if !hasRemote {
 			return "", fmt.Errorf("PR #%d has no branch %s", pr, branch)
 		}
-		in.Head, in.PR = remote, pr
+		in.Head = remote
 		existing = fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this Task. The current directory is its branch.\n\n", pr)
 		review, err := b.GitHub.LatestReview(ctx, pr)
 		if err != nil {
@@ -222,72 +221,49 @@ func (b *builder) launch(ctx context.Context, task github.Issue, name string) (p
 	})
 }
 
-func (b *builder) harvest(ctx context.Context, task github.Issue, name string, in inputs) error {
+func (b *builder) harvest(ctx context.Context, task github.Issue, in inputs) error {
 	n := task.Number
 	branch := branchName(n)
-	res, failure, detail, limited := b.runs.outcome(name, true)
-	if limited {
-		slog.Warn("run ended at the Claude usage limit, starting over once it resets", "task", n, "sandbox", name)
-		if err := b.runs.remove(ctx, name, false); err != nil {
-			return err
-		}
-		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
-		if b.runs.gate != nil {
-			b.runs.gate.stale()
-		}
-		return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
-	}
-	if failure != "" {
-		return b.failed(ctx, n, name, failure, detail)
-	}
 	var out struct {
 		Result      string `json:"result"`
 		Summary     string `json:"summary"`
 		StuckReason string `json:"stuck_reason"`
 	}
-	if err := decode(res, &out); err != nil {
-		return b.failed(ctx, n, name, "the AI's result was not in the expected form", err.Error())
+	if ok, err := b.runs.result(ctx, builderRole, n, &out); err != nil || !ok {
+		return err
 	}
 	switch out.Result {
 	case "stuck":
-		return b.stuck(ctx, n, name, out.StuckReason)
+		return b.runs.stuck(ctx, builderRole, n, out.StuckReason)
 	case "done":
 	default:
-		return b.failed(ctx, n, name, "the AI's result was not in the expected form", fmt.Sprintf("result %q", out.Result))
+		return b.runs.failed(ctx, builderRole, n, badResult, fmt.Sprintf("result %q", out.Result))
 	}
 
-	if committed, err := b.runs.committed(ctx, name); err != nil {
-		return err
-	} else if !committed {
-		return b.stuck(ctx, n, name, noCommit+"\n\n"+out.Summary)
-	}
-	head, err := b.runs.fetch(ctx, name)
+	head, ok, err := b.runs.fetch(ctx, builderRole, n)
 	if err != nil {
 		return err
 	}
-	if err := b.Git.Sync(ctx); err != nil {
+	if !ok {
+		return b.runs.stuck(ctx, builderRole, n, noCommit+"\n\n"+out.Summary)
+	}
+	moved, err := b.runs.moved(ctx, n, in, head)
+	if err != nil {
 		return err
 	}
-	// head is there when exomecha already pushed this run and a later step failed.
-	if remote, _, err := b.Git.Rev(ctx, "origin/"+branch); err != nil {
-		return err
-	} else if remote != in.Remote && remote != head {
-		slog.Info("Task branch changed on GitHub during the run, starting over", "task", n, "branch", branch)
-		if err := b.runs.remove(ctx, name, false); err != nil {
-			return err
-		}
-		return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
+	if moved {
+		return b.runs.restart(ctx, builderRole, n, "the Task branch changed on GitHub during the run")
 	}
 
 	if head == in.Head {
-		changes, err := b.runs.git(ctx, name, repoDir, "status", "--porcelain")
+		changes, err := b.runs.sh(ctx, builderRole, n, "git status --porcelain")
 		if err != nil {
 			return err
 		}
 		if strings.TrimSpace(changes) != "" {
-			return b.stuck(ctx, n, name, "The AI finished without committing its changes.\n\n"+out.Summary)
+			return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes.\n\n"+out.Summary)
 		}
-		return b.stuck(ctx, n, name, "Nothing to change (it may already be done).\n\n"+out.Summary)
+		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).\n\n"+out.Summary)
 	}
 	// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
 	kept, err := b.Git.IsAncestor(ctx, in.Head, head)
@@ -295,10 +271,11 @@ func (b *builder) harvest(ctx context.Context, task github.Issue, name string, i
 		return err
 	}
 	if !kept {
-		return b.stuck(ctx, n, name, "The AI rewrote commits that were already on the branch, so they cannot be pushed.\n\n"+out.Summary)
+		return b.runs.stuck(ctx, builderRole, n, "The AI rewrote commits that were already on the branch, so they cannot be pushed.\n\n"+out.Summary)
 	}
-	// A run that started with no PR began from the base branch, so it replaces any old branch of the same name.
-	if err := b.Git.PushCommit(ctx, head, branch, in.PR == 0); err != nil {
+	// A run that did not start from the branch began from the base branch, so it replaces any old
+	// branch of the same name.
+	if err := b.Git.PushCommit(ctx, head, branch, in.Head != in.Remote); err != nil {
 		return err
 	}
 	pr, hasPR, err := b.GitHub.OpenPR(ctx, branch)
@@ -316,22 +293,5 @@ func (b *builder) harvest(ctx context.Context, task github.Issue, name string, i
 		return err
 	}
 	slog.Info("pushed PR", "task", n, "pr", pr)
-	return b.runs.remove(ctx, name, false)
-}
-
-func (b *builder) stuck(ctx context.Context, n int, name, reason string) error {
-	if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, reason); err != nil {
-		return err
-	}
-	return b.runs.remove(ctx, name, false)
-}
-
-// failed sends the Task to stuck and keeps the run's files for a person to read.
-func (b *builder) failed(ctx context.Context, n int, name, why, detail string) error {
-	slog.Warn("builder run failed", "task", n, "sandbox", name, "why", why, "detail", detail, "stderr", b.runs.tail(name, "stderr.log"))
-	// Stuck goes first. A Task left working with no sandbox by a failed GitHub call would start again.
-	if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, failedReason(why)); err != nil {
-		return err
-	}
-	return b.runs.remove(ctx, name, true)
+	return b.runs.done(ctx, builderRole, n)
 }

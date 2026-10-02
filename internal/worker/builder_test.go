@@ -30,7 +30,7 @@ func (e *env) step(n int) {
 	}
 }
 
-func (e *env) builderBox(n int) string { return e.runs.name(n, builderRole) }
+func (e *env) builderBox(n int) string { return e.runs.name(builderRole, n) }
 
 // play acts as the AI in a started sandbox: work changes the sandbox's repository, then claude
 // ends with the structured result.
@@ -107,7 +107,7 @@ func TestBuilderPicks(t *testing.T) {
 	working := e.gh.AddIssue("working", "", label.Task, string(label.Working))
 	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.Task, string(label.Review))
 	e.sbx.add(e.builderBox(reviewed))
-	e.sbx.add(e.runs.name(waiting, "resolver"))
+	e.sbx.add(e.runs.name(resolverRole, waiting))
 
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
@@ -425,6 +425,28 @@ func TestBuilderFailedRunGoesStuck(t *testing.T) {
 	e.wantKept(name, "stream.jsonl")
 }
 
+func TestBuilderResultInAnotherFormFails(t *testing.T) {
+	for _, c := range []struct{ name, result string }{
+		{"unknown result", `{"result": "maybe", "summary": "", "stuck_reason": ""}`},
+		{"not an object", `["done"]`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+			task, name := e.startedTask()
+			e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), c.result)
+
+			e.step(task)
+
+			e.wantStatus(task, label.Stuck)
+			wantStuckComment(t, e.lastComment(task), "The AI's run failed because "+badResult, label.Pending)
+			e.wantKept(name, "stream.jsonl")
+			if head := gittest.Head(e.origin, branchName(task)); head != "" {
+				t.Errorf("work from a result in another form was pushed: %s", head)
+			}
+		})
+	}
+}
+
 // The reading the start passed missed the limit the run hit. The next start reads usage again and
 // waits for the reset, instead of starting a run that would hit the limit too.
 func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
@@ -471,7 +493,7 @@ func TestBuilderRemovesTheSandboxWhenTheLabelChanges(t *testing.T) {
 func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.SandboxLimit = 1
-	e.sbx.add(e.runs.name(99, "resolver"))
+	e.sbx.add(e.runs.name(resolverRole, 99))
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 
 	e.step(task)

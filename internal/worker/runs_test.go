@@ -38,7 +38,7 @@ func (e *env) writeCtl(name, file, content string) {
 
 func TestRunStates(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	name := e.runs.name(7, "builder")
+	name := e.runs.name(builderRole, 7)
 
 	e.wantState(name, none)
 	if err := os.MkdirAll(e.runs.dir(name), 0o755); err != nil {
@@ -74,7 +74,7 @@ func TestRunStates(t *testing.T) {
 // A restarted exomecha has seen nothing yet, so the 15 minutes start over.
 func TestStallStartsOverForNewRuns(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	name := e.runs.name(7, "builder")
+	name := e.runs.name(builderRole, 7)
 	e.sbx.add(name)
 	e.writeCtl(name, "stream.jsonl", "{}\n")
 	if err := e.runs.record(name, inputs{}); err != nil {
@@ -112,10 +112,10 @@ func TestOutcome(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-			name := e.runs.name(7, "builder")
+			name := e.runs.name(builderRole, 7)
 			e.writeCtl(name, "exit", c.exit+"\n")
 			e.writeCtl(name, "stream.jsonl", c.stream)
-			res, failure, _, limited := e.runs.outcome(name, true)
+			res, failure, _, limited := e.runs.outcome(name)
 			if limited != c.limited || (c.failure == "") != (failure == "") || !strings.Contains(failure, c.failure) {
 				t.Errorf("outcome = failure %q, limited %v, want failure %q, limited %v", failure, limited, c.failure, c.limited)
 			}
@@ -131,7 +131,7 @@ func TestOutcomeDoesNotFollowLinks(t *testing.T) {
 	for _, file := range []string{"exit", "stream.jsonl"} {
 		t.Run(file, func(t *testing.T) {
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-			name := e.runs.name(7, "builder")
+			name := e.runs.name(builderRole, 7)
 			outside := filepath.Join(t.TempDir(), "outside")
 			content := map[string]string{"exit": "0\n", "stream.jsonl": streamOf(`{"result":"done"}`)}
 			writeFile(t, filepath.Dir(outside), "outside", content[file])
@@ -144,7 +144,7 @@ func TestOutcomeDoesNotFollowLinks(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, failure, _, _ := e.runs.outcome(name, true); failure == "" {
+			if _, failure, _, _ := e.runs.outcome(name); failure == "" {
 				t.Errorf("a %s linked to a file outside was read", file)
 			}
 			if got := e.runs.tail(name, file); got != "" {
@@ -156,7 +156,7 @@ func TestOutcomeDoesNotFollowLinks(t *testing.T) {
 
 func TestTailKeepsABoundedValidEnd(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	name := e.runs.name(7, "builder")
+	name := e.runs.name(builderRole, 7)
 	// Three bytes per character and eight here, so the cut at tailLimit lands inside a character.
 	e.writeCtl(name, "setup.log", strings.Repeat("한", 300_000)+"the end.")
 
@@ -174,11 +174,11 @@ func TestFound(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", sandbox.Name(sandbox.Prefix("other", "repo"), 6, builderRole), "impl-run-x"} {
+	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", sandbox.Name(sandbox.Prefix("other", "repo"), 6, builderRole.name), "impl-run-x"} {
 		e.sbx.add(name)
 	}
 
-	found, err := e.runs.found(t.Context(), "builder")
+	found, err := e.runs.found(t.Context(), builderRole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,12 +197,12 @@ func TestSlotsCountEveryTaskSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
-	e.sbx.add(sandbox.Name(sandbox.Prefix("other", "repo"), 2, builderRole))
-	e.wantReserve(e.runs.name(9, builderRole), true)
-	e.runs.release(e.runs.name(9, builderRole))
+	e.sbx.add(sandbox.Name(sandbox.Prefix("other", "repo"), 2, builderRole.name))
+	e.wantReserve(e.runs.name(builderRole, 9), true)
+	e.runs.release(e.runs.name(builderRole, 9))
 	e.sbx.add(prefix + "2-resolver")
 	e.sbx.stop(prefix + "2-resolver")
-	e.wantReserve(e.runs.name(9, builderRole), false)
+	e.wantReserve(e.runs.name(builderRole, 9), false)
 }
 
 // owner/repo-v2's sandboxes start with owner/repo's prefix too, and must not take owner/repo's slots.
@@ -211,13 +211,13 @@ func TestSlotsCountOnlyThisRepository(t *testing.T) {
 	e.sbx.add(e.deps.SandboxPrefix + "1-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-3-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-4-resolver")
-	e.wantReserve(e.runs.name(9, builderRole), true)
+	e.wantReserve(e.runs.name(builderRole, 9), true)
 }
 
 func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	first, second := e.runs.name(1, builderRole), e.runs.name(2, resolverRole)
-	third, fourth := e.runs.name(3, builderRole), e.runs.name(4, builderRole)
+	first, second := e.runs.name(builderRole, 1), e.runs.name(resolverRole, 2)
+	third, fourth := e.runs.name(builderRole, 3), e.runs.name(builderRole, 4)
 	e.wantReserve(first, true)
 	e.wantReserve(second, true)
 	e.wantReserve(third, false)

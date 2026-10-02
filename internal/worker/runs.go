@@ -72,6 +72,17 @@ func (s state) String() string {
 	return [...]string{"none", "preparing", "running", "stalled", "dead", "gone", "finished"}[s]
 }
 
+// role is what runs needs to know about the worker a run belongs to.
+type role struct {
+	name string
+	// The labels builder moves a Task between when a run starts and when it starts over. Other
+	// workers leave the label alone.
+	queued, working label.Status
+	// from is the issue's label while the run is going. A run that needs a person moves the issue
+	// from it to stuck, and the comment asks the person to relabel it back.
+	from, back label.Status
+}
+
 type run struct {
 	state state
 	in    inputs
@@ -80,10 +91,9 @@ type run struct {
 // inputs is what exomecha records once claude is running. It lives outside the directory the
 // sandbox shares, so the AI cannot change what its work is checked against.
 type inputs struct {
+	Base      string   `json:"base"`   // the base branch commit the sandbox got
 	Head      string   `json:"head"`   // the commit claude started from
 	Remote    string   `json:"remote"` // the Task branch on GitHub at the start, "" when there was none
-	Base      string   `json:"base"`   // the base branch commit the sandbox got
-	PR        int      `json:"pr,omitempty"`
 	Conflicts []string `json:"conflicts,omitempty"`
 }
 
@@ -120,8 +130,8 @@ func newRuns(d Deps, gate *Gate) *runs {
 	}
 }
 
-func (r *runs) name(task int, role string) string {
-	return sandbox.Name(r.SandboxPrefix, task, role)
+func (r *runs) name(ro role, n int) string {
+	return sandbox.Name(r.SandboxPrefix, n, ro.name)
 }
 
 // dir holds what exomecha keeps about one sandbox on this machine.
@@ -203,8 +213,8 @@ func (r *runs) quiet(name string) (bool, error) {
 	return now.Sub(p.at) >= stallAfter, nil
 }
 
-// found returns the Tasks that have a sandbox or a directory for role.
-func (r *runs) found(ctx context.Context, role string) ([]int, error) {
+// found returns the issues that have a sandbox or a directory for ro.
+func (r *runs) found(ctx context.Context, ro role) ([]int, error) {
 	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return nil, err
@@ -222,7 +232,7 @@ func (r *runs) found(ctx context.Context, role string) ([]int, error) {
 	}
 	var out []int
 	for _, name := range names {
-		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == role && !slices.Contains(out, n) {
+		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == ro.name && !slices.Contains(out, n) {
 			out = append(out, n)
 		}
 	}
@@ -265,7 +275,7 @@ func (r *runs) slotFree(ctx context.Context, self string) (bool, error) {
 	used := map[string]bool{}
 	for _, b := range boxes {
 		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
-		if _, role, ok := sandbox.Parse(r.SandboxPrefix, b.Name); ok && (role == builderRole || role == resolverRole) {
+		if _, role, ok := sandbox.Parse(r.SandboxPrefix, b.Name); ok && (role == builderRole.name || role == resolverRole.name) {
 			used[b.Name] = true
 		}
 	}
@@ -403,23 +413,66 @@ func (r *runs) git(ctx context.Context, name, dir string, args ...string) (strin
 	return string(out), err
 }
 
-const noCommit = "The AI left its repository with no commit checked out, so there is nothing to push."
-
-// committed reports whether the sandbox's repository has a commit checked out. Without one a fetch
-// fails the same way on every try, so it has to be caught before.
-func (r *runs) committed(ctx context.Context, name string) (bool, error) {
-	// rev-parse exits 1 for an unborn HEAD, which Exec would report as an error.
-	out, err := r.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", "git rev-parse -q --verify HEAD || true")
-	return strings.TrimSpace(string(out)) != "", err
+// sh runs script with sh in the run's repository, with args as its positional parameters.
+func (r *runs) sh(ctx context.Context, ro role, n int, script string, args ...string) (string, error) {
+	out, err := r.Sandboxes.Exec(ctx, r.name(ro, n), repoDir, nil, append([]string{"sh", "-c", script, "sh"}, args...)...)
+	return string(out), err
 }
 
-func (r *runs) fetch(ctx context.Context, name string) (string, error) {
-	return r.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, repoDir), name)
+const noCommit = "The AI left its repository with no commit checked out, so there is nothing to push."
+
+// fetch brings the commit the run's repository has checked out into the shared clone. ok is false
+// when there is none, since a fetch would then fail the same way on every try.
+func (r *runs) fetch(ctx context.Context, ro role, n int) (head string, ok bool, err error) {
+	// rev-parse exits 1 for an unborn HEAD, which sh would report as an error.
+	out, err := r.sh(ctx, ro, n, "git rev-parse -q --verify HEAD || true")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return "", false, err
+	}
+	name := r.name(ro, n)
+	head, err = r.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, repoDir), name)
+	return head, err == nil, err
+}
+
+// moved reports whether the Task branch on GitHub changed during the run. pushed is the commit
+// exomecha takes from the run, which is already there when exomecha pushed it and a later step failed.
+func (r *runs) moved(ctx context.Context, n int, in inputs, pushed string) (bool, error) {
+	if err := r.Git.Sync(ctx); err != nil {
+		return false, err
+	}
+	remote, _, err := r.Git.Rev(ctx, "origin/"+branchName(n))
+	if err != nil {
+		return false, err
+	}
+	return remote != in.Remote && remote != pushed, nil
+}
+
+const badResult = "the AI's result was not in the expected form"
+
+// result reads a finished run's structured result into out. ok is false when the run failed or
+// starts over instead, and err is set only when that step failed.
+func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, err error) {
+	name := r.name(ro, n)
+	res, failure, detail, limited := r.outcome(name)
+	if limited {
+		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
+		if r.gate != nil {
+			r.gate.stale()
+		}
+		return false, r.restart(ctx, ro, n, "the run ended at the Claude usage limit")
+	}
+	if failure != "" {
+		return false, r.failed(ctx, ro, n, failure, detail)
+	}
+	if err := json.Unmarshal(res.Structured, out); err != nil {
+		return false, r.failed(ctx, ro, n, badResult, err.Error())
+	}
+	return true, nil
 }
 
 // outcome reads a finished run. failure says why the run failed, in words fit for a comment, and
 // detail adds what only the log gets. limited is set when the run ended at the Claude usage limit.
-func (r *runs) outcome(name string, schema bool) (res agent.Result, failure, detail string, limited bool) {
+func (r *runs) outcome(name string) (res agent.Result, failure, detail string, limited bool) {
 	b, err := readCtl(r.ctl(name), "exit", 64)
 	if err != nil {
 		return res, "exomecha could not read how claude ended", err.Error(), false
@@ -437,7 +490,7 @@ func (r *runs) outcome(name string, schema bool) (res agent.Result, failure, det
 	if err != nil {
 		return res, "exomecha could not read claude's output", err.Error(), false
 	}
-	res, err = s.Result(schema)
+	res, err = s.Result(true)
 	if (err != nil || code != 0) && s.Rejected {
 		return res, "", "", true
 	}
@@ -537,6 +590,46 @@ func (r *runs) remove(ctx context.Context, name string, keep bool) error {
 	r.mu.Unlock()
 	slog.Info("removed sandbox", "sandbox", name)
 	return nil
+}
+
+func (r *runs) done(ctx context.Context, ro role, n int) error {
+	return r.remove(ctx, r.name(ro, n), false)
+}
+
+func (r *runs) stuck(ctx context.Context, ro role, n int, reason string) error {
+	if err := toStuck(ctx, r.GitHub, n, ro.from, ro.back, reason); err != nil {
+		return err
+	}
+	return r.remove(ctx, r.name(ro, n), false)
+}
+
+// failed sends the issue to stuck at once and keeps the run's files for a person to read.
+func (r *runs) failed(ctx context.Context, ro role, n int, why, detail string) error {
+	name := r.name(ro, n)
+	slog.Warn("run failed", "role", ro.name, "issue", n, "sandbox", name, "why", why, "detail", detail, "stderr", r.tail(name, "stderr.log"))
+	// Stuck goes first. With the run gone and the label as it was, a failed GitHub call would start another run.
+	if err := toStuck(ctx, r.GitHub, n, ro.from, ro.back, failedReason(why)); err != nil {
+		return err
+	}
+	return r.remove(ctx, name, true)
+}
+
+// restart removes the run without counting it as a failure. builder's Task goes back to the queue.
+func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
+	slog.Info("starting a run over", "role", ro.name, "issue", n, "why", why)
+	if err := r.remove(ctx, r.name(ro, n), false); err != nil {
+		return err
+	}
+	if ro.queued == label.None {
+		return nil
+	}
+	return r.GitHub.SetStatus(ctx, n, ro.working, ro.queued)
+}
+
+// drop removes a run its issue no longer needs, and leaves the labels to whoever moved them.
+func (r *runs) drop(ctx context.Context, ro role, n int) error {
+	slog.Info("removing a run its issue no longer needs", "role", ro.name, "issue", n)
+	return r.remove(ctx, r.name(ro, n), false)
 }
 
 // holds reports whether the Task is an open Task whose status labels are all among statuses.

@@ -24,7 +24,11 @@ const resolverSchema = `{
   "additionalProperties": false
 }`
 
-const resolverRole = "resolver"
+var resolverRole = role{
+	name: "resolver",
+	from: label.Review,
+	back: label.Review,
+}
 
 // resolver works like builder, one sandbox per Task, while the Task stays in review.
 type resolver struct {
@@ -61,7 +65,7 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 // Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
 // stays as it is, so the next try repeats the step.
 func (r *resolver) Handle(ctx context.Context, n int) error {
-	name := r.runs.name(n, resolverRole)
+	name := r.runs.name(resolverRole, n)
 	task, err := r.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
@@ -74,8 +78,7 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 		if run.state == none {
 			return nil
 		}
-		slog.Info("removing the sandbox of a Task that left review", "task", n, "state", run.state)
-		return r.runs.remove(ctx, name, false)
+		return r.runs.drop(ctx, resolverRole, n)
 	}
 	if run.state == running {
 		return nil
@@ -85,15 +88,15 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 		return r.start(ctx, task, name)
 	case preparing:
 		// Only a start holds the Task's lock while preparing, so this one was cut off.
-		return r.runs.remove(ctx, name, false)
+		return r.runs.restart(ctx, resolverRole, n, "its start was cut off")
 	case stalled:
-		return r.failed(ctx, n, name, fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes())), "")
+		return r.runs.failed(ctx, resolverRole, n, fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes())), "")
 	case dead:
-		return r.failed(ctx, n, name, "the sandbox stopped while claude was running", "")
+		return r.runs.failed(ctx, resolverRole, n, "the sandbox stopped while claude was running", "")
 	case gone:
-		return r.failed(ctx, n, name, "the sandbox was removed while claude was running", "")
+		return r.runs.failed(ctx, resolverRole, n, "the sandbox was removed while claude was running", "")
 	case finished:
-		return r.harvest(ctx, name, run.in, n)
+		return r.harvest(ctx, n, run.in)
 	}
 	return nil
 }
@@ -136,11 +139,11 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 		task:    n,
 		name:    name,
 		branch:  branch,
-		in:      inputs{Head: head, Remote: head, Base: base},
+		in:      inputs{Base: base, Head: head, Remote: head},
 		request: agent.Request{Instructions: prompt("resolver"), Schema: resolverSchema},
 		// After setup, not before: conflict markers in a manifest or lockfile would break an install.
 		input: func(ctx context.Context, ranSetup bool, in *inputs) (string, string, error) {
-			conflicts, problem, err := r.merge(ctx, name)
+			conflicts, problem, err := r.merge(ctx, n)
 			if problem != "" || err != nil {
 				return "", problem, err
 			}
@@ -180,13 +183,13 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 // merge merges the base branch in the sandbox's repository but stops before the merge commit, so
 // the AI makes that commit itself and sees whatever the project's commit checks report. problem is
 // set when git refused the merge without a conflict.
-func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, problem string, err error) {
+func (r *resolver) merge(ctx context.Context, n int) (conflicts []string, problem string, err error) {
 	// The exit status comes back on stdout, apart from sbx's own failures.
-	out, err := r.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, "sh", r.Git.BaseRef())
+	out, err := r.runs.sh(ctx, resolverRole, n, `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, r.Git.BaseRef())
 	if err != nil {
 		return nil, "", err
 	}
-	text := strings.TrimRight(string(out), "\n")
+	text := strings.TrimRight(out, "\n")
 	output, last := "", text
 	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
 		output, last = text[:i], text[i+1:]
@@ -199,7 +202,7 @@ func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, 
 		return nil, "", nil
 	}
 	// -z keeps non-ASCII file names as they are instead of quoting them.
-	list, err := r.runs.git(ctx, name, repoDir, "diff", "--name-only", "-z", "--diff-filter=U")
+	list, err := r.runs.sh(ctx, resolverRole, n, "git diff --name-only -z --diff-filter=U")
 	if err != nil {
 		return nil, "", err
 	}
@@ -211,85 +214,67 @@ func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, 
 	if len(conflicts) == 0 {
 		// The same merge fails the same way on every try, so only a person can get past it. Like
 		// setup's, the output stays in the log.
-		slog.Warn("merge failed without a conflict", "sandbox", name, "exit", code, "output", output)
+		slog.Warn("merge failed without a conflict", "task", n, "exit", code, "output", output)
 		return nil, fmt.Sprintf("Merging `%s` into this Task's branch in the sandbox failed without a conflict, so the AI did not start. "+
 			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
 	}
 	return conflicts, "", nil
 }
 
-func (r *resolver) harvest(ctx context.Context, name string, in inputs, n int) error {
-	branch := branchName(n)
-	res, failure, detail, limited := r.runs.outcome(name, true)
-	if limited {
-		slog.Warn("run ended at the Claude usage limit, starting over once it resets", "task", n, "sandbox", name)
-		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
-		if r.runs.gate != nil {
-			r.runs.gate.stale()
-		}
-		return r.runs.remove(ctx, name, false)
-	}
-	if failure != "" {
-		return r.failed(ctx, n, name, failure, detail)
-	}
+func (r *resolver) harvest(ctx context.Context, n int, in inputs) error {
 	var out struct {
 		Result string `json:"result"`
 		Reason string `json:"reason"`
 	}
-	if err := decode(res, &out); err != nil {
-		return r.failed(ctx, n, name, "the AI's result was not in the expected form", err.Error())
+	if ok, err := r.runs.result(ctx, resolverRole, n, &out); err != nil || !ok {
+		return err
 	}
 	switch out.Result {
 	case "stuck":
 		// Removing the sandbox throws the unfinished merge away.
-		return r.stuck(ctx, n, name, out.Reason)
+		return r.runs.stuck(ctx, resolverRole, n, out.Reason)
 	case "resolved":
 	default:
-		return r.failed(ctx, n, name, "the AI's result was not in the expected form", fmt.Sprintf("result %q", out.Result))
+		return r.runs.failed(ctx, resolverRole, n, badResult, fmt.Sprintf("result %q", out.Result))
 	}
 
-	if committed, err := r.runs.committed(ctx, name); err != nil {
-		return err
-	} else if !committed {
-		return r.stuck(ctx, n, name, noCommit+"\n\n"+out.Reason)
-	}
-	head, err := r.runs.fetch(ctx, name)
+	head, ok, err := r.runs.fetch(ctx, resolverRole, n)
 	if err != nil {
 		return err
 	}
-	if err := r.Git.Sync(ctx); err != nil {
+	if !ok {
+		return r.runs.stuck(ctx, resolverRole, n, noCommit+"\n\n"+out.Reason)
+	}
+	moved, err := r.runs.moved(ctx, n, in, head)
+	if err != nil {
 		return err
 	}
-	// head is there when exomecha already pushed this run and a later step failed.
-	if remote, _, err := r.Git.Rev(ctx, "origin/"+branch); err != nil {
-		return err
-	} else if remote != in.Remote && remote != head {
-		slog.Info("Task branch changed on GitHub during the run, starting over", "task", n, "branch", branch)
-		return r.runs.remove(ctx, name, false)
+	if moved {
+		return r.runs.restart(ctx, resolverRole, n, "the Task branch changed on GitHub during the run")
 	}
-	problem, err := r.unfinished(ctx, name, head, in)
+	problem, err := r.unfinished(ctx, n, head, in)
 	if err != nil {
 		return err
 	}
 	if problem != "" {
-		return r.stuck(ctx, n, name, problem+"\n\n"+out.Reason)
+		return r.runs.stuck(ctx, resolverRole, n, problem+"\n\n"+out.Reason)
 	}
-	if err := r.Git.PushCommit(ctx, head, branch, false); err != nil {
+	if err := r.Git.PushCommit(ctx, head, branchName(n), false); err != nil {
 		return err
 	}
 	// The Task stays in review, and reviewer looks at it again at its next check, a minute later.
 	slog.Info("merged base branch and pushed", "task", n, "conflicts", len(in.Conflicts))
-	return r.runs.remove(ctx, name, false)
+	return r.runs.done(ctx, resolverRole, n)
 }
 
 // unfinished returns what is still wrong after the AI reported the merge resolved, or "" if nothing is.
-func (r *resolver) unfinished(ctx context.Context, name, head string, in inputs) (string, error) {
-	// rev-parse exits 1 when there is no merge in progress, which Exec would report as an error.
-	merging, err := r.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", "git rev-parse -q --verify MERGE_HEAD || true")
+func (r *resolver) unfinished(ctx context.Context, n int, head string, in inputs) (string, error) {
+	// rev-parse exits 1 when there is no merge in progress, which sh would report as an error.
+	merging, err := r.runs.sh(ctx, resolverRole, n, "git rev-parse -q --verify MERGE_HEAD || true")
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(string(merging)) != "" {
+	if strings.TrimSpace(merging) != "" {
 		return "The AI said the conflicts were resolved, but the merge was not committed.", nil
 	}
 	left, err := r.Git.ConflictMarkers(ctx, head, in.Conflicts)
@@ -312,22 +297,4 @@ func (r *resolver) unfinished(ctx context.Context, name, head string, in inputs)
 		}
 	}
 	return "", nil
-}
-
-func (r *resolver) stuck(ctx context.Context, n int, name, reason string) error {
-	if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, reason); err != nil {
-		return err
-	}
-	return r.runs.remove(ctx, name, false)
-}
-
-// failed sends the Task to stuck and keeps the run's files for a person to read.
-func (r *resolver) failed(ctx context.Context, n int, name, why, detail string) error {
-	slog.Warn("resolver run failed", "task", n, "sandbox", name, "why", why, "detail", detail, "stderr", r.runs.tail(name, "stderr.log"))
-	// Stuck goes first. With the sandbox gone and the Task still in review, a failed GitHub call
-	// would start another run.
-	if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, failedReason(why)); err != nil {
-		return err
-	}
-	return r.runs.remove(ctx, name, true)
 }

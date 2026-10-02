@@ -33,7 +33,7 @@ func (e *env) testLaunch() launch {
 	base := e.rev("origin/main")
 	return launch{
 		task:    1,
-		name:    e.runs.name(1, "builder"),
+		name:    e.runs.name(builderRole, 1),
 		branch:  branchName(1),
 		in:      inputs{Head: base, Base: base},
 		request: agent.Request{Instructions: "the builder prompt", Schema: builderSchema},
