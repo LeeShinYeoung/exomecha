@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,11 @@ func TestRealResolverRun(t *testing.T) {
 	}
 	if n := len(gittest.Parents(t, e.origin, branchName(task))); n != 2 {
 		t.Errorf("branch head has %d parents, want a merge commit", n)
+	}
+	message := gittest.Run(t, e.origin, "log", "-1", "--format=%B", branchName(task))
+	lines := strings.Split(message, "\n")
+	if lines[len(lines)-1] != fmt.Sprintf("Task: #%d", task) || slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "#") }) {
+		t.Errorf("merge message = %q, want Task: #%d as the last line and no line starting with #", message, task)
 	}
 	got := gittest.ReadFile(t, e.origin, branchName(task), "greeting.txt")
 	if strings.Contains(got, "<<<<<<<") || strings.Contains(got, ">>>>>>>") {

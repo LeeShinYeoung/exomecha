@@ -27,7 +27,7 @@ The current directory is a working copy of the PR branch, in the middle of mergi
 ## Commit
 
 - When every conflict is resolved and the tests pass, stage the files and commit the merge with `git commit`.
-- If the project has commit message rules (in CLAUDE.md, or enforced by a commit check), follow them. Otherwise keep git's merge message and add `Task: #<Task number>` as the last line, for example `git commit --no-edit --trailer "Task: #<Task number>"`.
+- If the project has commit message rules (in CLAUDE.md, or enforced by a commit check), follow them. Otherwise keep git's merge message without its comment lines and add `Task: #<Task number>` as the last line, for example `git commit --no-edit --cleanup=strip --trailer "Task: #<Task number>"`.
 - If a commit check rejects the commit, fix what it reports and commit again. Never skip the checks (`--no-verify`).
 
 ## Result
