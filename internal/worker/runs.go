@@ -132,6 +132,13 @@ type inputs struct {
 	Conflicts []string `json:"conflicts,omitempty"`
 }
 
+// moved reports whether the Task branch changed during the run: now, its head on GitHub, is neither
+// the one at the start nor pushed, the commit exomecha took from the run. pushed is already there
+// when exomecha pushed it and a later step failed.
+func (in inputs) moved(now, pushed string) bool {
+	return now != in.Remote && now != pushed
+}
+
 // runs is what the workers share: the sandboxes, the limits on how many run at once, and what
 // exomecha remembers about each run. Memory is lost on restart, and nothing depends on
 // it except stall times.
@@ -649,32 +656,42 @@ func (r *runs) sh(ctx context.Context, ro role, n int, script string, args ...st
 	return string(out), err
 }
 
-const noCommit = "The AI left its repository with no commit checked out, so there is nothing to push."
-
-// fetch brings the commit the run's repository has checked out into the shared clone. ok is false
-// when there is none, since a fetch would then fail the same way on every try.
-func (r *runs) fetch(ctx context.Context, ro role, n int) (head string, ok bool, err error) {
+// take brings the commit the run left checked out into the shared clone, for the worker to push.
+// ok is false when the run went to stuck or starts over instead, and err is set only when a step
+// failed. said is what the AI said about its work, for a stuck comment.
+func (r *runs) take(ctx context.Context, ro role, n int, in inputs, said string) (head string, ok bool, err error) {
 	// rev-parse exits 1 for an unborn HEAD, which sh would report as an error.
 	out, err := r.sh(ctx, ro, n, "git rev-parse -q --verify HEAD || true")
-	if err != nil || strings.TrimSpace(out) == "" {
+	if err != nil {
 		return "", false, err
 	}
+	// A fetch would fail the same way on every try.
+	if strings.TrimSpace(out) == "" {
+		return "", false, r.stuck(ctx, ro, n, "The AI left its repository with no commit checked out, so there is nothing to push.\n\n"+said)
+	}
 	name := r.name(ro, n)
-	head, err = r.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, repoDir), name)
-	return head, err == nil, err
-}
-
-// moved reports whether the Task branch on GitHub changed during the run. pushed is the commit
-// exomecha takes from the run, which is already there when exomecha pushed it and a later step failed.
-func (r *runs) moved(ctx context.Context, n int, in inputs, pushed string) (bool, error) {
+	if head, err = r.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, repoDir), name); err != nil {
+		return "", false, err
+	}
 	if err := r.Git.Sync(ctx); err != nil {
-		return false, err
+		return "", false, err
 	}
 	remote, _, err := r.Git.Rev(ctx, "origin/"+branchName(n))
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
-	return remote != in.Remote && remote != pushed, nil
+	if in.moved(remote, head) {
+		return "", false, r.restart(ctx, ro, n, "the Task branch changed on GitHub during the run")
+	}
+	// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
+	kept, err := r.Git.IsAncestor(ctx, in.Head, head)
+	if err != nil {
+		return "", false, err
+	}
+	if !kept {
+		return "", false, r.stuck(ctx, ro, n, "The AI rewrote commits that were already on the branch, so they cannot be pushed.\n\n"+said)
+	}
+	return head, true, nil
 }
 
 const badResult = "the AI's result was not in the expected form"

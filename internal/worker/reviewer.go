@@ -237,7 +237,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 	if ok, err := r.runs.result(ctx, reviewerRole, n, &out); err != nil || !ok {
 		return err
 	}
-	if pr.HeadSHA != in.Head {
+	if in.moved(pr.HeadSHA, "") {
 		return r.runs.restart(ctx, reviewerRole, n, "the PR branch changed during the review")
 	}
 	switch out.Verdict {

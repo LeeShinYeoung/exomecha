@@ -141,19 +141,9 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		return r.runs.failed(ctx, resolverRole, n, badResult, fmt.Sprintf("result %q", out.Result))
 	}
 
-	head, ok, err := r.runs.fetch(ctx, resolverRole, n)
-	if err != nil {
+	head, ok, err := r.runs.take(ctx, resolverRole, n, in, out.Reason)
+	if err != nil || !ok {
 		return err
-	}
-	if !ok {
-		return r.runs.stuck(ctx, resolverRole, n, noCommit+"\n\n"+out.Reason)
-	}
-	moved, err := r.runs.moved(ctx, n, in, head)
-	if err != nil {
-		return err
-	}
-	if moved {
-		return r.runs.restart(ctx, resolverRole, n, "the Task branch changed on GitHub during the run")
 	}
 	problem, err := r.unfinished(ctx, n, head, in)
 	if err != nil {
@@ -187,17 +177,9 @@ func (r *resolver) unfinished(ctx context.Context, n int, head string, in inputs
 	if len(left) > 0 {
 		return "The AI said the conflicts were resolved, but conflict markers remain in: " + strings.Join(left, ", "), nil
 	}
-	for _, c := range []struct{ commit, problem string }{
-		{in.Head, "The AI rewrote commits that were already on the branch, so they cannot be pushed."},
-		{in.Base, "The AI committed, but the result does not include the base branch."},
-	} {
-		ok, err := r.Git.IsAncestor(ctx, c.commit, head)
-		if err != nil {
-			return "", err
-		}
-		if !ok {
-			return c.problem, nil
-		}
+	ok, err := r.Git.IsAncestor(ctx, in.Base, head)
+	if err != nil || ok {
+		return "", err
 	}
-	return "", nil
+	return "The AI committed, but the result does not include the base branch.", nil
 }

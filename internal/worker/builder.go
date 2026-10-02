@@ -177,21 +177,10 @@ func (b *builder) collect(ctx context.Context, task github.Issue, in inputs) err
 		return b.runs.failed(ctx, builderRole, n, badResult, fmt.Sprintf("result %q", out.Result))
 	}
 
-	head, ok, err := b.runs.fetch(ctx, builderRole, n)
-	if err != nil {
+	head, ok, err := b.runs.take(ctx, builderRole, n, in, out.Summary)
+	if err != nil || !ok {
 		return err
 	}
-	if !ok {
-		return b.runs.stuck(ctx, builderRole, n, noCommit+"\n\n"+out.Summary)
-	}
-	moved, err := b.runs.moved(ctx, n, in, head)
-	if err != nil {
-		return err
-	}
-	if moved {
-		return b.runs.restart(ctx, builderRole, n, "the Task branch changed on GitHub during the run")
-	}
-
 	if head == in.Head {
 		changes, err := b.runs.sh(ctx, builderRole, n, "git status --porcelain")
 		if err != nil {
@@ -201,14 +190,6 @@ func (b *builder) collect(ctx context.Context, task github.Issue, in inputs) err
 			return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes.\n\n"+out.Summary)
 		}
 		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).\n\n"+out.Summary)
-	}
-	// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
-	kept, err := b.Git.IsAncestor(ctx, in.Head, head)
-	if err != nil {
-		return err
-	}
-	if !kept {
-		return b.runs.stuck(ctx, builderRole, n, "The AI rewrote commits that were already on the branch, so they cannot be pushed.\n\n"+out.Summary)
 	}
 	// A run that did not start from the branch began from the base branch, so it replaces any old
 	// branch of the same name.
