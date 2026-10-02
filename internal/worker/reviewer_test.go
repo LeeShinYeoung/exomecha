@@ -349,6 +349,23 @@ func TestReviewerMergeRefusedWhileGitHubChecksKeepsTheResult(t *testing.T) {
 	}
 }
 
+// Another merge into the base branch went in at the same moment. The next try merges.
+func TestReviewerMergeThatRacedAnotherKeepsTheResult(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.RefuseMerge(pr, "Base branch was modified. Review and try the merge again.", new(true))
+
+	if err := e.reviewer().Handle(t.Context(), task); err == nil {
+		t.Fatal("Handle returned nil for a merge that raced another")
+	}
+	e.wantResultKept(task, pr, name)
+
+	e.review(task)
+	if !e.gh.Pull(pr).Merged {
+		t.Error("PR not merged from the kept result")
+	}
+}
+
 // Something was pushed between the check and the merge. The next round reviews the new head.
 func TestReviewerMergeOfAMovedHeadStartsOver(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})

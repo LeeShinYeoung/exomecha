@@ -22,6 +22,9 @@ func TestMerge(t *testing.T) {
 			s.RefuseMerge(pr, "At least 1 approving review is required by reviewers with write access.", new(true))
 		}, http.StatusMethodNotAllowed, true},
 		{"head moved", func(s *githubtest.Server, pr int) { s.Fail(mergeRoute, http.StatusConflict) }, http.StatusConflict, true},
+		{"raced another merge", func(s *githubtest.Server, pr int) {
+			s.RefuseMerge(pr, "Base branch was modified. Review and try the merge again.", new(true))
+		}, 0, true},
 		{"server error", func(s *githubtest.Server, pr int) { s.Fail(mergeRoute, http.StatusBadGateway) }, 0, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {

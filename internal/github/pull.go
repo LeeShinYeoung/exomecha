@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v92/github"
@@ -109,8 +110,11 @@ func (c *Client) Merge(ctx context.Context, number int, sha string) error {
 	})
 	var e *gh.ErrorResponse
 	if errors.As(err, &e) && e.Response != nil {
-		switch status := e.Response.StatusCode; status {
-		case http.StatusMethodNotAllowed, http.StatusConflict:
+		// GitHub answers 405 with these to a merge that raced another merge or push, and a later
+		// try goes through.
+		raced := strings.HasPrefix(e.Message, "Base branch was modified") || strings.HasPrefix(e.Message, "Head branch was modified")
+		switch status := e.Response.StatusCode; {
+		case status == http.StatusConflict, status == http.StatusMethodNotAllowed && !raced:
 			return &MergeRefused{Status: status, Message: e.Message}
 		}
 	}
