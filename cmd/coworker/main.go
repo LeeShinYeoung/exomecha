@@ -70,7 +70,7 @@ func run() error {
 		return fmt.Errorf("check sbx secrets: %w", err)
 	} else if has {
 		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past coworker's checks.
-		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github")
+		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
 	}
 
 	gh, err := github.New(owner, name, token)

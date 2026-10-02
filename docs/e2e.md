@@ -161,7 +161,7 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 - `sbx exec <sandbox> env` shows no GitHub token other than sbx's placeholder.
 - `sbx exec -w /home/agent/repo <sandbox> git remote -v` prints nothing.
 - `sbx exec -w /home/agent/repo <sandbox> git config user.email` prints the token owner's `<id>+<login>@users.noreply.github.com`.
-- `sbx exec <sandbox> curl -s https://<listed host>` reaches the host. The same for `ssh.github.com`, or for a host that is not listed, gets a 403 with `Approval required for <host>:443.`
+- `sbx exec <sandbox> curl -s https://<listed host>` reaches the host. The same for a host that is not listed gets a 403 with `Approval required for <host>:443.`, and for `ssh.github.com` one with `Blocked by local rule for ssh.github.com:443`.
 
 ### 17. Sandbox stopped or removed
 
@@ -175,7 +175,7 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 19. A working Task relabeled
 
-- Relabel a `status:working` Task `status:pending`. Its sandbox is removed within a minute.
+- Relabel a `status:working` Task `status:pending`. Its sandbox is removed within two minutes, since sequencer may move the Task to `status:queued` in the same round.
 - Again, relabeling it `status:queued`. Its sandbox is removed within a minute, and builder starts it over.
 
 ### 20. Sandbox limit
@@ -190,7 +190,7 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 22. Global github secret
 
-- Store a global github secret in sbx (`sbx secret set github`), then start coworker. It refuses to start and says to run `sbx secret rm github`.
+- Store a global github secret in sbx (`sbx secret set github`), then start coworker. It refuses to start and says to run `sbx secret rm github --force`.
 - Run it. coworker starts.
 
 ### 23. Template build

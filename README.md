@@ -38,7 +38,7 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
      sbx rm --force sbx-login
      ```
      `sbx secret ls` then lists `anthropic` as `(oauth configured)`. A token from `claude setup-token` does not work, because sbx does not pass a credential it did not issue on to Anthropic. An Anthropic API key works (`sbx secret set anthropic`), but the usage limits in step 5 do not count what it spends.
-   - Do not keep a global `github` secret in sbx. Every sandbox could use it, so the AI could push past coworker's checks. coworker refuses to start while one exists. Remove it with `sbx secret rm github`.
+   - Do not keep a global `github` secret in sbx. Every sandbox could use it, so the AI could push past coworker's checks. coworker refuses to start while one exists. Remove it with `sbx secret rm github --force`.
 4. Prepare the target project:
    - Write how to install dependencies and run the tests in its CLAUDE.md. builder follows it to run the tests it can run in its sandbox.
    - Run `/coworker:setup` in the project and commit what it writes to the base branch: `.coworker/Dockerfile`, `.coworker/setup.sh`, `.coworker/allowed-hosts` (only when a check needs a host the sandbox policy blocks), and `.gitignore` if it changed. The skill proves the files in a real sandbox before it hands them over. With them, a Task's sandbox already has the tools, dependencies, ignored config files and services the project needs when the AI starts. Without them, the sandbox starts from sbx's default claude template with only the code, and the AI installs what it needs on its own, following CLAUDE.md.
