@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +15,6 @@ const setupScript = ".exomecha/setup.sh"
 
 const setupFix = " Fix the script on the base branch, then relabel this issue as below. You don't need to answer."
 
-// open adds when it ran.
 const setupNote = "## Setup\n\nexomecha ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
 
 // A script still running after this long is stopped and the Task goes to stuck. Without a limit,
@@ -21,15 +22,23 @@ const setupNote = "## Setup\n\nexomecha ran the project's setup script in this d
 var setupTimeout = 10 * time.Minute
 
 // setup runs the base branch's setup script in the sandbox's repository, always the base branch's
-// copy, even on a PR branch, so a fix to the script reaches every open Task. problem is set when
-// the script breaks one of its rules, which only a person can fix: it exits 0 in time, and it
-// leaves the working copy as git had it. What it leaves running stays, since the AI's tests may
-// need it, and goes away with the sandbox.
-func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
+// copy, even on a PR branch, so a fix to the script reaches every open Task. note tells claude it
+// ran, and is "" when the base branch has no script. problem is set when the script breaks one of
+// its rules, which only a person can fix: it exits 0 in time, and it leaves the working copy as git
+// had it. What it leaves running stays, since the AI's tests may need it, and goes away with the
+// sandbox.
+func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (note, problem string, err error) {
+	content, ok, err := r.Git.Show(ctx, s.base, setupScript)
+	if err != nil || !ok {
+		return "", "", err
+	}
 	name := r.name(ro, n)
+	if err := os.WriteFile(filepath.Join(r.ctl(name), "setup.sh"), []byte(content), 0o644); err != nil {
+		return "", "", err
+	}
 	upToDate, err := r.Git.IsAncestor(ctx, s.base, s.head)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	// The output goes to a file: a service the script starts would hold a pipe open, and the exec
 	// would never return. The exit status comes back on stdout, apart from sbx's own failures.
@@ -42,22 +51,22 @@ func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (problem strin
 	env := []string{"EXOMECHA_TASK=" + strconv.Itoa(n)}
 	out, err := r.Sandboxes.Exec(runCtx, name, repoDir, env, "sh", "-c", script, "sh", r.ctl(name))
 	if err != nil {
-		return "", fmt.Errorf("run %s: %w", setupScript, err)
+		return "", "", fmt.Errorf("run %s: %w", setupScript, err)
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil {
-		return "", fmt.Errorf("read the exit status of %s: %q", setupScript, out)
+		return "", "", fmt.Errorf("read the exit status of %s: %q", setupScript, out)
 	}
 
 	head, changes := s.head, ""
 	if code == 0 {
 		out, err := r.git(ctx, name, repoDir, "rev-parse", "HEAD")
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		head = strings.TrimSpace(out)
 		if changes, err = r.git(ctx, name, repoDir, "status", "--porcelain"); err != nil {
-			return "", err
+			return "", "", err
 		}
 		// Not TrimSpace: a line for an unstaged change starts with a space.
 		changes = strings.TrimRight(changes, "\n")
@@ -74,7 +83,10 @@ func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (problem strin
 		what = "changed the working copy. Everything it creates must be ignored by git, and it must not edit tracked files or commit."
 	default:
 		slog.Info("ran setup script", "task", n, "took", time.Since(start).Round(time.Second))
-		return "", nil
+		if s.merge {
+			return setupNote + " It ran before the merge started.\n\n", "", nil
+		}
+		return setupNote + " It ran before you started.\n\n", "", nil
 	}
 
 	// The details stay in the log. The output can hold secrets, and the comment goes on the issue.
@@ -85,5 +97,5 @@ func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (problem strin
 		// Fixing the base branch cannot help a branch that lacks what the script relies on, such as a newer .gitignore.
 		fix = fmt.Sprintf(" The script is the base branch's copy, and this Task's branch is behind the base branch, so the branch may just be older than the script. If it is, merge the base branch into `%s`. If not, fix the script on the base branch. Then relabel this issue as below. You don't need to answer.", branchName(n))
 	}
-	return fmt.Sprintf("`%s` %s The details are in exomecha's log.", setupScript, what) + fix, nil
+	return "", fmt.Sprintf("`%s` %s The details are in exomecha's log.", setupScript, what) + fix, nil
 }

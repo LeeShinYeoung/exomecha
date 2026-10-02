@@ -461,40 +461,54 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
 func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
-	name := r.name(ro, n)
-	var (
-		ref, script string
-		hosts       []string
-		hasScript   bool
-	)
+	ref, problem, err := r.create(ctx, ro, n)
+	if problem != "" || err != nil {
+		return problem, err
+	}
+	if err := r.send(ctx, ro, n, s); err != nil {
+		return "", err
+	}
+	in, input := inputs{Base: s.base, Head: s.head, Remote: s.remote}, s.input
+	if ro.project {
+		note, problem, err := r.setup(ctx, ro, n, s)
+		if problem != "" || err != nil {
+			return problem, err
+		}
+		input += note
+	}
+	// After setup, not before: conflict markers in a manifest or lockfile would break an install.
+	if s.merge {
+		var note string
+		if in.Conflicts, note, problem, err = r.merge(ctx, ro, n); problem != "" || err != nil {
+			return problem, err
+		}
+		input += note
+	}
+	if err := r.launch(ctx, ro, n, input, in); err != nil {
+		return "", err
+	}
+	slog.Info("started claude in a sandbox", "issue", n, "sandbox", r.name(ro, n), "template", ref)
+	return "", nil
+}
+
+// create makes the run's sandbox, from the project's template and with its allowed hosts for a
+// project run, and from sbx's own template ("" ref) for a reader's.
+func (r *runs) create(ctx context.Context, ro role, n int) (ref, problem string, err error) {
+	var hosts []string
 	if ro.project {
 		ref, err = r.Environment.Template(ctx)
 		if problem, err := needsPerson(n, err); problem != "" || err != nil {
-			return problem, err
+			return "", problem, err
 		}
 		hosts, err = r.Environment.AllowedHosts(ctx)
 		if problem, err := needsPerson(n, err); problem != "" || err != nil {
-			return problem, err
-		}
-		script, hasScript, err = r.Git.Show(ctx, s.base, setupScript)
-		if err != nil {
-			return "", err
+			return "", problem, err
 		}
 	}
-
-	ctl := r.ctl(name)
-	if err := os.MkdirAll(ctl, 0o755); err != nil {
-		return "", err
+	name := r.name(ro, n)
+	if err := os.MkdirAll(r.ctl(name), 0o755); err != nil {
+		return "", "", err
 	}
-	if err := os.WriteFile(filepath.Join(ctl, "run.sh"), []byte(runScript), 0o644); err != nil {
-		return "", err
-	}
-	if hasScript {
-		if err := os.WriteFile(filepath.Join(ctl, "setup.sh"), []byte(script), 0o644); err != nil {
-			return "", err
-		}
-	}
-
 	r.slots.Lock()
 	free, err := r.slotFree(ctx, ro, name)
 	if err == nil && !free {
@@ -503,31 +517,33 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 	if err == nil {
 		// Every other start waits on the slot lock, so a create that hangs must give up.
 		createCtx, cancel := context.WithTimeout(ctx, createTimeout)
-		err = r.Sandboxes.Create(createCtx, name, ref, ctl, deniedHosts)
+		err = r.Sandboxes.Create(createCtx, name, ref, r.ctl(name), deniedHosts)
 		cancel()
 	}
 	r.slots.Unlock()
-	if err != nil {
-		return "", err
+	if err == nil && ro.project {
+		err = r.Sandboxes.Allow(ctx, name, hosts)
 	}
-	if ro.project {
-		if err := r.Sandboxes.Allow(ctx, name, hosts); err != nil {
-			return "", err
-		}
-	}
+	return ref, "", err
+}
+
+// send puts the code in the run's repository: the base branch's commit as origin/<base>, and
+// s.head checked out as s.branch.
+func (r *runs) send(ctx context.Context, ro role, n int, s spec) error {
+	name := r.name(ro, n)
 	if _, err := r.git(ctx, name, "", "init", "-q", repoDir); err != nil {
-		return "", err
+		return err
 	}
 	if ro.project {
 		// Before setup, so the project's script can set another.
 		for _, kv := range [][2]string{{"user.name", r.GitName}, {"user.email", r.GitEmail}} {
 			if _, err := r.git(ctx, name, repoDir, "config", kv[0], kv[1]); err != nil {
-				return "", err
+				return err
 			}
 		}
 	}
 	if err := r.Git.SendTo(ctx, r.Sandboxes.GitURL(name, repoDir), s.base, s.branch, s.head); err != nil {
-		return "", err
+		return err
 	}
 	checkout := []string{"checkout", "-q", s.branch}
 	if s.branch == "" {
@@ -535,90 +551,24 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 		// a new repository's unborn branch has whatever name the image's git config gives it.
 		checkout = []string{"checkout", "-q", "--detach", r.Git.BaseRef()}
 	}
-	if _, err := r.git(ctx, name, repoDir, checkout...); err != nil {
-		return "", err
-	}
+	_, err := r.git(ctx, name, repoDir, checkout...)
+	return err
+}
 
-	in := inputs{Base: s.base, Head: s.head, Remote: s.remote}
-	input := s.input
-	if hasScript {
-		if problem, err := r.setup(ctx, ro, n, s); problem != "" || err != nil {
-			return problem, err
+// launch starts claude on input and records in once it runs.
+func (r *runs) launch(ctx context.Context, ro role, n int, input string, in inputs) error {
+	name := r.name(ro, n)
+	ctl := r.ctl(name)
+	for file, content := range map[string]string{"run.sh": runScript, "input.md": input} {
+		if err := os.WriteFile(filepath.Join(ctl, file), []byte(content), 0o644); err != nil {
+			return err
 		}
-		when := " It ran before you started.\n\n"
-		if s.merge {
-			when = " It ran before the merge started.\n\n"
-		}
-		input += setupNote + when
-	}
-	// After setup, not before: conflict markers in a manifest or lockfile would break an install.
-	if s.merge {
-		conflicts, problem, err := r.merge(ctx, ro, n)
-		if problem != "" || err != nil {
-			return problem, err
-		}
-		in.Conflicts = conflicts
-		input += fmt.Sprintf("## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())
-		if len(conflicts) == 0 {
-			input += "None. The merge only needs to be committed.\n"
-		}
-		for _, f := range conflicts {
-			input += "- " + f + "\n"
-		}
-	}
-	if err := os.WriteFile(filepath.Join(ctl, "input.md"), []byte(input), 0o644); err != nil {
-		return "", err
 	}
 	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.Args(prompt(ro.name), ro.schema)...)
 	if err := r.Sandboxes.Start(ctx, name, repoDir, args...); err != nil {
-		return "", err
+		return err
 	}
-	if err := r.record(name, in); err != nil {
-		return "", err
-	}
-	slog.Info("started claude in a sandbox", "issue", n, "sandbox", name, "template", ref)
-	return "", nil
-}
-
-// merge merges the base branch in the run's repository but stops before the merge commit, so the
-// AI makes that commit itself and sees whatever the project's commit checks report. problem is set
-// when git refused the merge without a conflict.
-func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, problem string, err error) {
-	// The exit status comes back on stdout, apart from sbx's own failures.
-	out, err := r.sh(ctx, ro, n, `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, r.Git.BaseRef())
-	if err != nil {
-		return nil, "", err
-	}
-	text := strings.TrimRight(out, "\n")
-	output, last := "", text
-	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
-		output, last = text[:i], text[i+1:]
-	}
-	code, err := strconv.Atoi(strings.TrimPrefix(last, "exit "))
-	if err != nil {
-		return nil, "", fmt.Errorf("read the merge's exit status: %q", last)
-	}
-	if code == 0 {
-		return nil, "", nil
-	}
-	// -z keeps non-ASCII file names as they are instead of quoting them.
-	list, err := r.sh(ctx, ro, n, "git diff --name-only -z --diff-filter=U")
-	if err != nil {
-		return nil, "", err
-	}
-	for f := range strings.SplitSeq(list, "\x00") {
-		if f != "" {
-			conflicts = append(conflicts, f)
-		}
-	}
-	if len(conflicts) == 0 {
-		// The same merge fails the same way on every try, so only a person can get past it. Like
-		// setup's, the output stays in the log.
-		slog.Warn("merge failed without a conflict", "issue", n, "exit", code, "output", output)
-		return nil, fmt.Sprintf("Merging `%s` into this Task's branch in the sandbox failed without a conflict, so the AI did not start. "+
-			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
-	}
-	return conflicts, "", nil
+	return r.record(name, in)
 }
 
 func (r *runs) record(name string, in inputs) error {
