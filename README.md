@@ -1,6 +1,6 @@
 # exomecha
 
-exomecha watches the labels on a repository's GitHub issues. Five workers split each PRD into Tasks, put the Tasks in order, build them, review and merge the PRs, and resolve merge conflicts. builder, resolver, reviewer and splitter run claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person only makes the decisions up front (three skills) and answers when a Task is blocked.
+exomecha watches the labels on a repository's GitHub issues. Five workers split each PRD into Tasks, put the Tasks in order, build them, review and merge the PRs, and resolve merge conflicts. Every worker runs claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person only makes the decisions up front (three skills) and answers when a Task is blocked.
 
 ```
 [person] /exomecha:issue   → type:problem issue (the problem only)
@@ -30,7 +30,7 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
 3. Set up sbx on the same machine. Docker Desktop is not needed.
    - Install sbx and sign in to Docker: `sbx login`.
    - Start from the balanced network policy: `sbx policy init balanced`. A sandbox reaches only the hosts that policy allows, plus the ones the project lists in `.exomecha/allowed-hosts`.
-   - Sign in to Claude once from inside a sandbox. sbx keeps the login on this machine, and every sandbox gets a placeholder instead of the real token. Use the same Claude account as this machine's claude login, because the usage limits in step 5 are read from that login.
+   - Sign in to Claude once from inside a sandbox. sbx keeps the login on this machine, and every sandbox gets a placeholder instead of the real token. All of exomecha's AI work runs with this login. Use the same Claude account as this machine's claude login, because exomecha uses that one only to read the usage limits in step 5.
      ```
      mkdir -p /tmp/sbx-login
      sbx run -d --name sbx-login claude /tmp/sbx-login
@@ -61,8 +61,8 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
 
 ## Notes
 
-- sequencer and the usage check use the claude login on this machine. builder, resolver, reviewer and splitter run claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
-- reviewer and splitter only read the code. Their sandboxes start from sbx's default claude template and gets only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed as soon as claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
+- Only the usage check uses the claude login on this machine. Every worker runs claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
+- reviewer, splitter and sequencer only read the code. Their sandboxes start from sbx's default claude template and get only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed as soon as claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
 - When there is work to start, exomecha first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
 - exomecha sends a Task's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. Task sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
 - A run keeps going in its sandbox while exomecha is stopped. Ctrl-C leaves working Tasks as they are, and exomecha picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.exomecha/<owner>/<repo>/sandboxes/`.
@@ -88,6 +88,7 @@ The worker's comment says why it is blocked and what needs deciding.
   - `status:pending` when builder got stuck. It goes through sequencer and builder again, and builder continues on the existing PR branch.
   - `status:review` when resolver got stuck on a conflict. resolver merges the base branch again and settles the conflict the way you answered.
   - `status:review` when reviewer's run failed. reviewer reviews the PR again.
+  - `status:pending` when sequencer's run failed. sequencer puts the Task in line again.
 - A PRD whose split failed gets `status:stuck` too. Remove the label, and splitter splits the PRD again.
 - When the AI says the sandbox blocked a host, add that host to `.exomecha/allowed-hosts` on the base branch if the Task really needs it. Then relabel the Task the way the comment says.
 - When `.exomecha/setup.sh` failed, there is nothing to answer. The script's output is in exomecha's log. Fix the script on the base branch, or merge the base branch into the Task's branch if the comment says the branch is behind. Then relabel the Task the way the comment says.

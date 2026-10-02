@@ -67,7 +67,7 @@ func run() error {
 	ctx = github.WaitForRateLimit(ctx)
 
 	if _, err := exec.LookPath("sbx"); err != nil {
-		return errors.New("sbx is not installed. builder, resolver, reviewer and splitter run claude in Docker Sandboxes")
+		return errors.New("sbx is not installed. Every worker runs claude in Docker Sandboxes")
 	}
 	sbx := sandbox.CLI{}
 	if has, err := sbx.GlobalGitHubSecret(ctx); err != nil {

@@ -47,22 +47,6 @@ func cancelWhenExists(ctx context.Context, cancel context.CancelFunc, path strin
 	}()
 }
 
-func TestSequencerDoesNotRunSetup(t *testing.T) {
-	e := newEnv(t, setupRepo("exit 1\n"))
-	e.gh.AddIssue("lower", "touches x.go", label.Task, string(label.Queued))
-	task := e.gh.AddIssue("this one", "also touches x.go", label.Task, string(label.Pending))
-	e.claude.answer(`{"blocked_by": []}`)
-
-	if err := (&sequencer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
-
-	if n := e.claude.callCount(); n != 1 {
-		t.Errorf("claude called %d times, want once", n)
-	}
-	e.wantStatus(task, label.Queued)
-}
-
 // The workers that only read the code run in a sandbox without the setup script, so a broken
 // script must not get in their way.
 func TestReadersDoNotRunSetup(t *testing.T) {
@@ -78,6 +62,10 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 		{splitterRole, func(e *env) int {
 			prd, _ := e.splitting()
 			return prd
+		}},
+		{sequencerRole, func(e *env) int {
+			task, _, _ := e.sequencing()
+			return task
 		}},
 	} {
 		t.Run(c.role.name, func(t *testing.T) {

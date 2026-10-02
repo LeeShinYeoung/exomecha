@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -37,9 +36,9 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent // runs claude on this machine, for sequencer
+	Agent  agent.Agent
 
-	// builder, resolver, reviewer and splitter run claude in sandboxes.
+	// Every worker runs claude in sandboxes.
 	Sandboxes   Sandboxes
 	Environment Environment
 	// SandboxDir holds one directory per run, shared with the run's sandbox.
@@ -86,8 +85,8 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	// builder, resolver, reviewer and splitter check the gate themselves, only before they start a
-	// run, so runs already in sandboxes are still watched and finished while usage is over the limit.
+	// The workers check the gate themselves, only before they start a run, so runs already in
+	// sandboxes are still watched and finished while usage is over the limit.
 	runs := newRuns(d, gate)
 	workers := []struct {
 		worker Worker
@@ -95,7 +94,7 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 		gate   *Gate
 	}{
 		{&splitter{d, runs}, 0, nil},
-		{&sequencer{d}, 1, gate},
+		{&sequencer{d, runs}, 0, nil},
 		{&builder{d, runs}, 0, nil},
 		{&reviewer{d, runs}, 0, nil},
 		{&resolver{d, runs}, 0, nil},
@@ -271,29 +270,6 @@ func prompt(name string) string {
 		panic(err)
 	}
 	return string(b)
-}
-
-func decode(res agent.Result, v any) error {
-	if err := json.Unmarshal(res.Structured, v); err != nil {
-		return fmt.Errorf("read AI result: %w", err)
-	}
-	return nil
-}
-
-func reload(ctx context.Context, gh *github.Client, n int, labels ...string) (issue github.Issue, ok bool, err error) {
-	issue, err = gh.Issue(ctx, n)
-	if err != nil {
-		return issue, false, err
-	}
-	if !issue.Open {
-		return issue, false, nil
-	}
-	for _, name := range labels {
-		if !issue.HasLabel(name) {
-			return issue, false, nil
-		}
-	}
-	return issue, true, nil
 }
 
 // exomecha's own comments go in marked as its questions, because a person's answer often makes

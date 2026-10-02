@@ -210,6 +210,38 @@ func splitterCells(t *testing.T) tableWorker {
 	}
 }
 
+func sequencerCells(t *testing.T) tableWorker {
+	return tableWorker{
+		role:  sequencerRole,
+		table: sequencerTable,
+		want: table{
+			away:  {idle, drop, drop, drop, drop, drop, drop},
+			ready: {begin, restart, idle, fail, fail, fail, harvest},
+		},
+		start: func(e *env) int {
+			task, _, _ := e.sequencing()
+			return task
+		},
+		put:  func(*env, int, place) {},
+		away: leave(label.Queued),
+		place: func(e *env, n int) place {
+			return e.sequencer().place(e.issue(n))
+		},
+		handle: func(e *env, n int) error {
+			return e.sequencer().Handle(t.Context(), n)
+		},
+		running: label.Pending,
+		// The lower Task sequencing makes is issue 1.
+		finish: func(e *env, name string) {
+			e.play(name, nil, `{"blocked_by": [1]}`)
+		},
+		harvested: func(e *env, n int) {
+			e.wantStatus(n, label.Queued)
+			wantInts(t, "blocked by", e.gh.Issue(n).BlockedBy, []int{1})
+		},
+	}
+}
+
 // leave returns the ways a Task leaves a worker: closed, relabeled to, and on its way to stuck
 // with the old status still on. to must be none of the worker's own statuses.
 func leave(to label.Status) []func(e *env, n int) {
@@ -241,7 +273,7 @@ func actionNames(r row) []string {
 }
 
 func TestTables(t *testing.T) {
-	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells, splitterCells} {
+	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells, splitterCells, sequencerCells} {
 		w := cells(t)
 		if len(w.table) != len(w.want) {
 			t.Errorf("%s table has %d rows, want %d", w.role.name, len(w.table), len(w.want))

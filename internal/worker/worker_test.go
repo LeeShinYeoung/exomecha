@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -410,6 +411,7 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 const (
 	issuesRoute   = "POST /repos/{owner}/{repo}/issues"
 	labelsRoute   = "POST /repos/{owner}/{repo}/issues/{n}/labels"
+	blockedRoute  = "POST /repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by"
 	commentsRoute = "POST /repos/{owner}/{repo}/issues/{n}/comments"
 	pullsRoute    = "POST /repos/{owner}/{repo}/pulls"
 	pullRoute     = "GET /repos/{owner}/{repo}/pulls/{n}"
@@ -463,6 +465,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
 	splitterHandle := func(e *env, n int) error { return e.splitter().Handle(e.t.Context(), n) }
+	sequencerHandle := func(e *env, n int) error { return e.sequencer().Handle(e.t.Context(), n) }
 	queued := func(e *env) (int, string) {
 		task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 		return task, e.builderBox(task)
@@ -600,6 +603,29 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			if !e.gh.Issue(n).HasLabel(label.Tasked) {
 				e.t.Errorf("PRD has no %s label", label.Tasked)
 			}
+		}},
+		{"sequencer", "SetStatus without candidates", func(e *env) (int, string) {
+			task := e.gh.AddIssue("Task", "", label.Task, string(label.Pending))
+			return task, e.sequencerBox(task)
+		}, githubFault(labelsRoute), sequencerHandle, func(e *env, n int, name string) {
+			e.wantStatus(n, label.Queued)
+			e.wantRemoved(name)
+		}},
+		{"sequencer", "start's create", func(e *env) (int, string) {
+			e.gh.AddIssue("lower", "", label.Task, string(label.Queued))
+			task := e.gh.AddIssue("Task", "", label.Task, string(label.Pending))
+			return task, e.sequencerBox(task)
+		}, sbxFault("create"), sequencerHandle, func(e *env, n int, name string) {
+			e.wantState(name, running)
+		}},
+		{"sequencer", "collect's AddBlockedBy", func(e *env) (int, string) {
+			task, lower, name := e.sequencing()
+			e.play(name, nil, fmt.Sprintf(`{"blocked_by": [%d]}`, lower))
+			return task, name
+		}, githubFault(blockedRoute), sequencerHandle, func(e *env, n int, name string) {
+			wantInts(e.t, "blocked by", e.gh.Issue(n).BlockedBy, []int{n - 1}) // sequencing's lower Task
+			e.wantStatus(n, label.Queued)
+			e.wantRemoved(name)
 		}},
 	} {
 		t.Run(c.worker+"/"+c.step, func(t *testing.T) {
