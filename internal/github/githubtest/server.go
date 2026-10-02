@@ -43,6 +43,7 @@ type Server struct {
 	routes   map[string]bool
 	fails    map[string]int // route to the status it answers with
 	refusals map[int]refusal
+	closes   map[int]int // PR to the issue its merge closes
 }
 
 type refusal struct {
@@ -123,6 +124,7 @@ func New(t *testing.T) *Server {
 		routes:   map[string]bool{},
 		fails:    map[string]int{},
 		refusals: map[int]refusal{},
+		closes:   map[int]int{},
 	}
 	mux := http.NewServeMux()
 	const repo = "/repos/{owner}/{repo}"
@@ -642,6 +644,10 @@ func (s *Server) merge(r *http.Request) (int, any) {
 	p.Merged = true
 	p.MergeMethod = req.MergeMethod
 	p.MergedSHA = req.SHA
+	if n, ok := s.closes[p.Number]; ok {
+		s.issues[n].Open = false
+		s.issues[n].StateReason = "completed"
+	}
 	return http.StatusOK, map[string]any{"merged": true, "sha": "merge-commit", "message": "Pull Request successfully merged"}
 }
 
@@ -689,6 +695,14 @@ func (s *Server) RefuseMerge(n int, message string, mergeable *bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refusals[n] = refusal{message: message, mergeable: mergeable}
+}
+
+// CloseOnMerge makes the merge of PR pr close issue n as completed, the way GitHub closes the issue
+// a PR body names with "Closes".
+func (s *Server) CloseOnMerge(pr, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closes[pr] = n
 }
 
 func (s *Server) AddIssue(title, body string, labels ...string) int {

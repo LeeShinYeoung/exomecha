@@ -381,6 +381,23 @@ func TestReviewerFinishesATaskWhoseCloseFailedAfterTheMerge(t *testing.T) {
 	e.wantRemoved(name)
 }
 
+// The PR says "Closes", so GitHub closes the Task as the merge goes in and then refuses exomecha's
+// own close. The Task still loses its status, since a closed Task is never picked again.
+func TestReviewerFinishesATaskGitHubClosedOnTheMerge(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.CloseOnMerge(pr, task)
+	e.gh.Fail(closeRoute, http.StatusUnprocessableEntity)
+
+	e.review(task)
+
+	if !e.gh.Pull(pr).Merged {
+		t.Error("PR not merged")
+	}
+	e.wantFinished(task)
+	e.wantRemoved(name)
+}
+
 // The Task closed and its status stayed. No worker takes a closed Task, and the run goes.
 func TestReviewerLeavesATaskWhoseStatusClearFailedAfterTheMerge(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
