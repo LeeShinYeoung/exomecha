@@ -24,16 +24,9 @@ func TestRealBuilderRun(t *testing.T) {
 	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
 		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
 	}
-	e := newEnv(t, map[string]string{
-		"README.md": "A practice project.\n",
-		setupScript: gitIdentity,
-	})
+	e := newEnv(t, map[string]string{"README.md": "A practice project.\n"})
 	runRealBuilder(t, e, fmt.Sprintf("impl-run-w%d-", time.Now().UnixNano()%100_000))
 }
-
-// sbx gives the sandbox the commit identity of this machine's git, which these tests point at a
-// throwaway config. The setup script sets one for the sandbox's repository instead.
-const gitIdentity = "git config user.name 'coworker test'\ngit config user.email test@example.com\n"
 
 // TestRealBuilderRunFromTemplate is TestRealBuilderRun with the environment main.go wires in, so
 // the project's Dockerfile is built into a template and the Task's sandbox starts from it.
@@ -47,7 +40,7 @@ func TestRealBuilderRunFromTemplate(t *testing.T) {
 		".coworker/Dockerfile":    dockerfile,
 		".coworker/allowed-hosts": "example.com\n",
 		// Fails, which sends the Task to stuck, unless the sandbox came from the template.
-		setupScript: "grep -qx from-template /etc/coworker-test-marker\n" + gitIdentity,
+		setupScript: "grep -qx from-template /etc/coworker-test-marker\n",
 	})
 	owner, repo := "impl-int", fmt.Sprintf("t%d", time.Now().UnixNano()%100_000)
 	e.deps.Environment = template.New(e.deps.Git, owner, repo)
@@ -101,6 +94,7 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 	if got := gittest.ReadFile(t, e.origin, branchName(task), "hello.txt"); got != "hello" {
 		t.Errorf("hello.txt = %q", got)
 	}
+	e.wantAuthor(branchName(task))
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want one", n)
 	}
@@ -118,10 +112,7 @@ func TestRealResolverRun(t *testing.T) {
 	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
 		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
 	}
-	e := newEnv(t, map[string]string{
-		"greeting.txt": "hello\n",
-		setupScript:    gitIdentity,
-	})
+	e := newEnv(t, map[string]string{"greeting.txt": "hello\n"})
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-r%d-", time.Now().UnixNano()%100_000)
@@ -162,5 +153,6 @@ func TestRealResolverRun(t *testing.T) {
 		t.Errorf("greeting.txt still has conflict markers: %q", got)
 	}
 	t.Logf("greeting.txt after the merge: %q", got)
+	e.wantAuthor(branchName(task))
 	e.wantStatus(task, label.Review)
 }

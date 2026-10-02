@@ -26,6 +26,10 @@ type Server struct {
 	// request, so a push to the branch shows up right away.
 	HeadSHA func(branch string) string
 
+	// The token's user is Owner. Its profile name may be empty, as GitHub allows.
+	UserID   int64
+	UserName string
+
 	t      *testing.T
 	mu     sync.Mutex
 	number int
@@ -101,6 +105,7 @@ func New(t *testing.T) *Server {
 		Repo:   "repo",
 		t:      t,
 		id:     9000,
+		UserID: 4242,
 		issues: map[int]*Issue{},
 		pulls:  map[int]*Pull{},
 		runs:   map[string][]Run{},
@@ -108,6 +113,7 @@ func New(t *testing.T) *Server {
 	}
 	mux := http.NewServeMux()
 	const repo = "/repos/{owner}/{repo}"
+	s.route(mux, "GET /user", s.getUser)
 	s.route(mux, "GET "+repo+"/issues", s.listIssues)
 	s.route(mux, "POST "+repo+"/issues", s.createIssue)
 	s.route(mux, "GET "+repo+"/issues/{n}", s.getIssue)
@@ -146,7 +152,7 @@ type handler func(r *http.Request) (int, any)
 
 func (s *Server) route(mux *http.ServeMux, pattern string, h handler) {
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("owner") != s.Owner || r.PathValue("repo") != s.Repo {
+		if strings.Contains(pattern, "{owner}") && (r.PathValue("owner") != s.Owner || r.PathValue("repo") != s.Repo) {
 			s.t.Errorf("githubtest: request for another repository: %s", r.URL.Path)
 			http.NotFound(w, r)
 			return
@@ -255,6 +261,10 @@ func (s *Server) pullJSON(p *Pull) any {
 		"mergeable": p.Mergeable,
 		"merged":    p.Merged,
 	}
+}
+
+func (s *Server) getUser(*http.Request) (int, any) {
+	return http.StatusOK, map[string]any{"login": s.Owner, "id": s.UserID, "name": s.UserName}
 }
 
 func (s *Server) newIssue(title, body string, labels []string) *Issue {

@@ -77,6 +77,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	author, email, err := gh.Identity(ctx)
+	if err != nil {
+		return fmt.Errorf("read the token's GitHub user: %w", err)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -94,6 +98,8 @@ func run() error {
 		// template package uses, so the build sandbox and templates carry the same slug.
 		SandboxPrefix: "coworker-task-" + template.Slug(owner, name, 32) + "-",
 		SandboxLimit:  sandboxes,
+		GitName:       author,
+		GitEmail:      email,
 	}
 
 	created, err := gh.EnsureLabels(ctx)

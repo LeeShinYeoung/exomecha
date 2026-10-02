@@ -60,6 +60,8 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		SandboxDir:    t.TempDir(),
 		SandboxPrefix: "coworker-task-owner-repo-",
 		SandboxLimit:  2,
+		GitName:       "Owner Name",
+		GitEmail:      "4242+owner@users.noreply.github.com",
 	}
 	e.box = newTaskbox(e.deps, nil)
 	e.box.now = e.clock.now

@@ -44,6 +44,9 @@ type Deps struct {
 	SandboxPrefix string
 	// SandboxLimit is how many task sandboxes may exist at once.
 	SandboxLimit int
+	// The commit identity for task sandboxes, the token owner's. A sandbox has none of its own.
+	GitName  string
+	GitEmail string
 }
 
 type Sandboxes interface {

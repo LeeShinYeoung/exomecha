@@ -391,6 +391,12 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 	if _, err := t.git(ctx, l.name, "", "init", "-q", repoDir); err != nil {
 		return "", err
 	}
+	// Before setup, so the project's script can set another.
+	for _, kv := range [][2]string{{"user.name", t.GitName}, {"user.email", t.GitEmail}} {
+		if _, err := t.git(ctx, l.name, repoDir, "config", kv[0], kv[1]); err != nil {
+			return "", err
+		}
+	}
 	if err := t.Git.SendTo(ctx, t.Sandboxes.GitURL(l.name, repoDir), l.start.Base, l.branch, l.start.Before); err != nil {
 		return "", err
 	}

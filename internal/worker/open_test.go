@@ -91,6 +91,11 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	if got := gittest.Run(t, repo, "remote"); got != "" {
 		t.Errorf("sandbox repository has remotes: %q", got)
 	}
+	for key, want := range map[string]string{"user.name": e.deps.GitName, "user.email": e.deps.GitEmail} {
+		if got := gittest.Run(t, repo, "config", "--local", key); got != want {
+			t.Errorf("%s of the sandbox repository = %q, want %q", key, got, want)
+		}
+	}
 
 	if len(box.starts) != 1 {
 		t.Fatalf("starts = %q, want one", box.starts)

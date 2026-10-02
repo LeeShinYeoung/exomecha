@@ -23,6 +23,8 @@ type fakeSandboxes struct {
 	t    *testing.T
 	root string
 	path string // PATH for Exec: a timeout that only runs its command, then the real PATH
+	// git's global config for Exec. A sandbox has no commit identity, unlike the tests' own config.
+	gitConfig string
 
 	mu    sync.Mutex
 	boxes map[string]*fakeBox
@@ -46,12 +48,17 @@ func newFakeSandboxes(t *testing.T) *fakeSandboxes {
 	if err := os.WriteFile(filepath.Join(bin, "timeout"), []byte("#!/bin/sh\nshift\nexec \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	gitConfig := filepath.Join(bin, "gitconfig")
+	if err := os.WriteFile(gitConfig, []byte("[user]\n\tuseConfigOnly = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return &fakeSandboxes{
-		t:     t,
-		root:  t.TempDir(),
-		path:  bin + string(os.PathListSeparator) + os.Getenv("PATH"),
-		boxes: map[string]*fakeBox{},
-		fail:  map[string]error{},
+		t:         t,
+		root:      t.TempDir(),
+		path:      bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		gitConfig: gitConfig,
+		boxes:     map[string]*fakeBox{},
+		fail:      map[string]error{},
 	}
 }
 
@@ -138,7 +145,7 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 	if dir != "" {
 		cmd.Dir = f.local(name, dir)
 	}
-	cmd.Env = append(os.Environ(), "PATH="+f.path)
+	cmd.Env = append(os.Environ(), "PATH="+f.path, "GIT_CONFIG_GLOBAL="+f.gitConfig)
 	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

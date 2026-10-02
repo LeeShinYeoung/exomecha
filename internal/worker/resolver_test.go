@@ -98,6 +98,7 @@ func TestResolverPushesResolvedMerge(t *testing.T) {
 	if got := gittest.ReadFile(t, e.origin, branch, "app.txt"); got != "main\nfeature" {
 		t.Errorf("app.txt = %q", got)
 	}
+	e.wantAuthor(branch)
 	e.wantStatus(task, label.Review)
 	e.wantRemoved(name)
 	if n := len(e.gh.Issue(task).Comments); n != 0 {

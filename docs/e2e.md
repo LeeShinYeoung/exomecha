@@ -151,6 +151,7 @@ In the practice repository, in Claude Code:
 
 - File a Task. `sbx ls` shows `<sandbox>`. While claude works, `stream.jsonl` in the sandbox's folder under `~/.coworker/<owner>/<repo>/sandboxes/` grows.
 - After the PR opens, the sandbox is gone from `sbx ls`, and its folder is gone too.
+- The PR's commits have the token owner as author, with the address `<id>+<login>@users.noreply.github.com`.
 
 ### 16. Inside a Task's sandbox
 
@@ -159,6 +160,7 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 - `sbx policy ls` shows a rule for `<sandbox>` that allows that host.
 - `sbx exec <sandbox> env` shows no GitHub token other than sbx's placeholder.
 - `sbx exec -w /home/agent/repo <sandbox> git remote -v` prints nothing.
+- `sbx exec -w /home/agent/repo <sandbox> git config user.email` prints the token owner's `<id>+<login>@users.noreply.github.com`.
 - `sbx exec <sandbox> curl -s https://<listed host>` reaches the host. The same for `ssh.github.com`, or for a host that is not listed, gets a 403 with `Approval required for <host>:443.`
 
 ### 17. Sandbox stopped or removed

@@ -68,6 +68,15 @@ func (e *env) wantRemoved(name string) {
 	}
 }
 
+// wantAuthor checks that the token owner from Deps made the commit at ref in origin.
+func (e *env) wantAuthor(ref string) {
+	e.t.Helper()
+	want := e.deps.GitName + " <" + e.deps.GitEmail + ">"
+	if got := gittest.Run(e.t, e.origin, "log", "-1", "--format=%an <%ae>%n%cn <%ce>", ref); got != want+"\n"+want {
+		e.t.Errorf("author and committer of %s = %q, want %q for both", ref, got, want)
+	}
+}
+
 func (e *env) relabel(n int, from, to label.Status) {
 	e.t.Helper()
 	if err := e.deps.GitHub.RemoveLabel(e.t.Context(), n, string(from)); err != nil {
@@ -141,6 +150,7 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 	if got := gittest.Run(t, e.origin, "log", "-1", "--format=%B", branch); got != message {
 		t.Errorf("commit message = %q, want the AI's own %q", got, message)
 	}
+	e.wantAuthor(branch)
 	pulls := e.gh.Pulls()
 	if len(pulls) != 1 {
 		t.Fatalf("pulls = %+v, want one", pulls)
