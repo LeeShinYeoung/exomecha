@@ -153,9 +153,10 @@ func (b *builder) start(ctx context.Context, task github.Issue, name string) err
 	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
 		return err
 	}
-	if ready, err := b.box.ready(ctx); err != nil || !ready {
+	if ready, err := b.box.ready(ctx, name); err != nil || !ready {
 		return err
 	}
+	defer b.box.release(name)
 	if err := b.GitHub.SetStatus(ctx, n, label.Queued, label.Working); err != nil {
 		return err
 	}
@@ -224,12 +225,12 @@ func (b *builder) launch(ctx context.Context, task github.Issue, name string) (p
 		branch:  branch,
 		start:   s,
 		request: agent.Request{Instructions: prompt("builder"), Schema: builderSchema},
-		input: func(_ context.Context, ranSetup bool, _ *started) (string, error) {
+		input: func(_ context.Context, ranSetup bool, _ *started) (string, string, error) {
 			input := taskText(task) + comments
 			if ranSetup {
 				input += setupNote + " It ran before you started.\n\n"
 			}
-			return input + existing, nil
+			return input + existing, "", nil
 		},
 	})
 }

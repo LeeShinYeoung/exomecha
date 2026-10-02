@@ -151,6 +151,7 @@ In the practice repository, in Claude Code:
 
 - File a Task. `sbx ls` shows `<sandbox>`. While claude works, `stream.jsonl` in the sandbox's folder under `~/.coworker/<owner>/<repo>/sandboxes/` grows.
 - After the PR opens, the sandbox is gone from `sbx ls`, and its folder is gone too.
+- The PR's commits have the token owner as author, with the address `<id>+<login>@users.noreply.github.com`.
 
 ### 16. Inside a Task's sandbox
 
@@ -159,7 +160,8 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 - `sbx policy ls` shows a rule for `<sandbox>` that allows that host.
 - `sbx exec <sandbox> env` shows no GitHub token other than sbx's placeholder.
 - `sbx exec -w /home/agent/repo <sandbox> git remote -v` prints nothing.
-- `sbx exec <sandbox> curl -s https://<listed host>` reaches the host. The same for `ssh.github.com`, or for a host that is not listed, gets a 403 with `Approval required for <host>:443.`
+- `sbx exec -w /home/agent/repo <sandbox> git config user.email` prints the token owner's `<id>+<login>@users.noreply.github.com`.
+- `sbx exec <sandbox> curl -s https://<listed host>` reaches the host. The same for a host that is not listed gets a 403 with `Approval required for <host>:443.`, and for `ssh.github.com` one with `Blocked by local rule for ssh.github.com:443`.
 
 ### 17. Sandbox stopped or removed
 
@@ -173,12 +175,13 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 19. A working Task relabeled
 
-- Relabel a `status:working` Task `status:pending`. Its sandbox is removed within a minute.
+- Relabel a `status:working` Task `status:pending`. Its sandbox is removed within two minutes, since sequencer may move the Task to `status:queued` in the same round.
 - Again, relabeling it `status:queued`. Its sandbox is removed within a minute, and builder starts it over.
 
 ### 20. Sandbox limit
 
-- Stop coworker and line up three queued Tasks that do not block each other. Start coworker with `COWORKER_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and the third Task starts once one of the first two is done.
+- With `.coworker/Dockerfile` on `main`, stop coworker and remove the project's template (`sbx template rm --force`), so coworker starts with no template and builds it first. Line up three queued Tasks that do not block each other.
+- Start coworker with `COWORKER_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and no more than two Tasks are `status:working` at once, during the build too. The third Task starts once one of the first two is done.
 
 ### 21. Blocked host
 
@@ -187,7 +190,7 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 22. Global github secret
 
-- Store a global github secret in sbx (`sbx secret set github`), then start coworker. It refuses to start and says to run `sbx secret rm github`.
+- Store a global github secret in sbx (`sbx secret set github`), then start coworker. It refuses to start and says to run `sbx secret rm github --force`.
 - Run it. coworker starts.
 
 ### 23. Template build

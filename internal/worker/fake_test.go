@@ -23,10 +23,14 @@ type fakeSandboxes struct {
 	t    *testing.T
 	root string
 	path string // PATH for Exec: a timeout that only runs its command, then the real PATH
+	// git's global config for Exec. A sandbox has no commit identity, unlike the tests' own config.
+	gitConfig string
 
 	mu    sync.Mutex
 	boxes map[string]*fakeBox
 	fail  map[string]error // by sbx verb: create, allow, exec, start, remove
+	// An exec whose command line contains this fails, as sbx failing that one command.
+	failExec string
 }
 
 type fakeBox struct {
@@ -46,12 +50,17 @@ func newFakeSandboxes(t *testing.T) *fakeSandboxes {
 	if err := os.WriteFile(filepath.Join(bin, "timeout"), []byte("#!/bin/sh\nshift\nexec \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	gitConfig := filepath.Join(bin, "gitconfig")
+	if err := os.WriteFile(gitConfig, []byte("[user]\n\tuseConfigOnly = true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return &fakeSandboxes{
-		t:     t,
-		root:  t.TempDir(),
-		path:  bin + string(os.PathListSeparator) + os.Getenv("PATH"),
-		boxes: map[string]*fakeBox{},
-		fail:  map[string]error{},
+		t:         t,
+		root:      t.TempDir(),
+		path:      bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		gitConfig: gitConfig,
+		boxes:     map[string]*fakeBox{},
+		fail:      map[string]error{},
 	}
 }
 
@@ -125,9 +134,13 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 		b.stopped = false // as sbx exec starts a stopped sandbox
 		b.execs = append(b.execs, args)
 	}
+	failExec := f.failExec
 	f.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("sandbox %s not found", name)
+	}
+	if failExec != "" && strings.Contains(strings.Join(args, " "), failExec) {
+		return nil, fmt.Errorf("sbx exec %s: connection lost", name)
 	}
 	local := make([]string, len(args))
 	for i, a := range args {
@@ -138,7 +151,7 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 	if dir != "" {
 		cmd.Dir = f.local(name, dir)
 	}
-	cmd.Env = append(os.Environ(), "PATH="+f.path)
+	cmd.Env = append(os.Environ(), "PATH="+f.path, "GIT_CONFIG_GLOBAL="+f.gitConfig)
 	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -223,9 +236,28 @@ type fakeEnvironment struct {
 	ok    bool
 	hosts []string
 	err   error
+	// With wait set, Template is a build: it hands wait a channel when it starts, and returns once
+	// that channel is closed.
+	wait chan chan struct{}
 }
 
-func (f *fakeEnvironment) Template(context.Context) (string, bool, error) {
+func (f *fakeEnvironment) Template(ctx context.Context) (string, bool, error) {
+	f.mu.Lock()
+	wait := f.wait
+	f.mu.Unlock()
+	if wait != nil {
+		built := make(chan struct{})
+		select {
+		case wait <- built:
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		}
+		select {
+		case <-built:
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.ref, f.ok, f.err

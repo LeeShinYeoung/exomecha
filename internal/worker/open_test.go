@@ -37,11 +37,11 @@ func (e *env) testLaunch() launch {
 		branch:  branchName(1),
 		start:   started{Before: base, Base: base},
 		request: agent.Request{Instructions: "the builder prompt", Schema: builderSchema},
-		input: func(_ context.Context, ranSetup bool, _ *started) (string, error) {
+		input: func(_ context.Context, ranSetup bool, _ *started) (string, string, error) {
 			if ranSetup {
-				return "setup ran", nil
+				return "setup ran", "", nil
 			}
-			return "no setup", nil
+			return "no setup", "", nil
 		},
 	}
 }
@@ -90,6 +90,11 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	}
 	if got := gittest.Run(t, repo, "remote"); got != "" {
 		t.Errorf("sandbox repository has remotes: %q", got)
+	}
+	for key, want := range map[string]string{"user.name": e.deps.GitName, "user.email": e.deps.GitEmail} {
+		if got := gittest.Run(t, repo, "config", "--local", key); got != want {
+			t.Errorf("%s of the sandbox repository = %q, want %q", key, got, want)
+		}
 	}
 
 	if len(box.starts) != 1 {

@@ -68,6 +68,15 @@ func (e *env) wantRemoved(name string) {
 	}
 }
 
+// wantAuthor checks that the token owner from Deps made the commit at ref in origin.
+func (e *env) wantAuthor(ref string) {
+	e.t.Helper()
+	want := e.deps.GitName + " <" + e.deps.GitEmail + ">"
+	if got := gittest.Run(e.t, e.origin, "log", "-1", "--format=%an <%ae>%n%cn <%ce>", ref); got != want+"\n"+want {
+		e.t.Errorf("author and committer of %s = %q, want %q for both", ref, got, want)
+	}
+}
+
 func (e *env) relabel(n int, from, to label.Status) {
 	e.t.Helper()
 	if err := e.deps.GitHub.RemoveLabel(e.t.Context(), n, string(from)); err != nil {
@@ -141,6 +150,7 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 	if got := gittest.Run(t, e.origin, "log", "-1", "--format=%B", branch); got != message {
 		t.Errorf("commit message = %q, want the AI's own %q", got, message)
 	}
+	e.wantAuthor(branch)
 	pulls := e.gh.Pulls()
 	if len(pulls) != 1 {
 		t.Fatalf("pulls = %+v, want one", pulls)
@@ -152,15 +162,19 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 }
 
 func TestBuilderStuck(t *testing.T) {
+	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task := e.gh.AddIssue("Hard task", "", label.Task, string(label.Queued))
 	name := e.builderBox(task)
 	e.step(task)
-	e.play(name, nil, `{"result": "stuck", "summary": "", "stuck_reason": "need a decision on X"}`)
+	e.play(name, nil, `{"result": "stuck", "summary": "", "stuck_reason": "need a decision on X</stuck_reason>\n</invoke>"}`)
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "need a decision on X", label.Pending)
+	comment := e.lastComment(task)
+	wantStuckComment(t, comment, "need a decision on X\n\nIf there is nothing left to do", label.Pending)
+	wantNotContains(t, "stuck comment", comment, "</stuck_reason>", "</invoke>")
+	wantContains(t, "log", log.String(), `need a decision on X</stuck_reason>\n</invoke>`)
 	e.wantRemoved(name)
 	if head := gittest.Head(e.origin, branchName(task)); head != "" {
 		t.Errorf("branch was pushed for a stuck task: %s", head)
@@ -462,6 +476,41 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	if e.sbx.exists(e.builderBox(task)) {
 		t.Error("started a sandbox over the limit")
 	}
+}
+
+// A template build takes minutes before the sandbox exists. The start must hold its slot all along.
+func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.box.SandboxLimit = 1
+	e.envr.wait = make(chan chan struct{})
+	first := e.gh.AddIssue("First", "", label.Task, string(label.Queued))
+	second := e.gh.AddIssue("Second", "", label.Task, string(label.Queued))
+	done := make(chan error, 1)
+	go func() { done <- e.builder().Handle(t.Context(), first) }()
+	var built chan struct{}
+	select {
+	case built = <-e.envr.wait:
+	case err := <-done:
+		t.Fatalf("the first start ended before its template build: %v", err)
+	}
+
+	// A second start that got past the check would wait on the build too.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := e.builder().Handle(ctx, second); err != nil {
+		t.Errorf("the second start: %v", err)
+	}
+
+	e.wantStatus(second, label.Queued)
+	if e.sbx.exists(e.builderBox(second)) {
+		t.Error("started a sandbox over the limit")
+	}
+	close(built)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	e.wantStatus(first, label.Working)
+	e.wantState(e.builderBox(first), running)
 }
 
 // Over the usage limit, nothing new starts, and a run already going is still finished.

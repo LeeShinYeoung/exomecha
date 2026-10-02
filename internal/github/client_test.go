@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/LeeShinYeoung/coworker/internal/github/githubtest"
 )
 
 func TestRequestGivesUpOnStalledServer(t *testing.T) {
@@ -35,6 +37,24 @@ func TestRequestGivesUpOnStalledServer(t *testing.T) {
 		t.Fatal("the request kept waiting until the test deadline")
 	}
 	t.Logf("gave up after %s", time.Since(start).Round(100*time.Millisecond))
+}
+
+func TestIdentity(t *testing.T) {
+	for _, c := range []struct{ profile, name string }{
+		{"", "owner"},
+		{"Owner Name", "Owner Name"},
+	} {
+		s := githubtest.New(t)
+		s.UserName = c.profile
+		client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		name, email, err := client.Identity(t.Context())
+		if err != nil || name != c.name || email != "4242+owner@users.noreply.github.com" {
+			t.Errorf("profile name %q: Identity = %q, %q, %v", c.profile, name, email, err)
+		}
+	}
 }
 
 func TestWaitForRateLimit(t *testing.T) {

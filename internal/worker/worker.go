@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,9 @@ type Deps struct {
 	SandboxPrefix string
 	// SandboxLimit is how many task sandboxes may exist at once.
 	SandboxLimit int
+	// The commit identity for task sandboxes, the token owner's. A sandbox has none of its own.
+	GitName  string
+	GitEmail string
 }
 
 type Sandboxes interface {
@@ -281,7 +285,11 @@ func prConflicted(ctx context.Context, gh *github.Client, n int) (bool, error) {
 // back is where the person sends the Task after answering, so it returns to the worker that
 // owns the problem: pending leads back to builder, review leads back to resolver.
 func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
-	body := "This Task is blocked and needs a person.\n\n" + strings.TrimSpace(reason) +
+	trimmed := trimClosingTags(reason)
+	if trimmed != strings.TrimSpace(reason) {
+		slog.Warn("trimmed closing tags from a stuck reason", "task", n, "reason", reason)
+	}
+	body := "This Task is blocked and needs a person.\n\n" + trimmed +
 		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
 	if err := gh.AddComment(ctx, n, body); err != nil {
 		return err
@@ -291,4 +299,18 @@ func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Sta
 	}
 	slog.Info("sent to stuck", "task", n)
 	return nil
+}
+
+var closingTag = regexp.MustCompile(`</[A-Za-z_][\w.:-]*>$`)
+
+// The AI sometimes ends its reason with stray closing tags, such as `</stuck_reason>`.
+func trimClosingTags(s string) string {
+	s = strings.TrimSpace(s)
+	for {
+		loc := closingTag.FindStringIndex(s)
+		if loc == nil {
+			return s
+		}
+		s = strings.TrimSpace(s[:loc[0]])
+	}
 }

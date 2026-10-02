@@ -131,9 +131,10 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 	if upToDate, err := r.Git.IsAncestor(ctx, base, head); err != nil || upToDate {
 		return err
 	}
-	if ready, err := r.box.ready(ctx); err != nil || !ready {
+	if ready, err := r.box.ready(ctx, name); err != nil || !ready {
 		return err
 	}
+	defer r.box.release(name)
 	comments, err := issueComments(ctx, r.GitHub, n)
 	if err != nil {
 		return err
@@ -150,10 +151,10 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 		start:   started{Before: head, Remote: head, Base: base},
 		request: agent.Request{Instructions: prompt("resolver"), Schema: resolverSchema},
 		// After setup, not before: conflict markers in a manifest or lockfile would break an install.
-		input: func(ctx context.Context, ranSetup bool, s *started) (string, error) {
-			conflicts, err := r.merge(ctx, name)
-			if err != nil {
-				return "", err
+		input: func(ctx context.Context, ranSetup bool, s *started) (string, string, error) {
+			conflicts, problem, err := r.merge(ctx, name)
+			if problem != "" || err != nil {
+				return "", problem, err
 			}
 			s.Conflicts = conflicts
 			var b strings.Builder
@@ -168,7 +169,7 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 			for _, f := range conflicts {
 				fmt.Fprintf(&b, "- %s\n", f)
 			}
-			return b.String(), nil
+			return b.String(), "", nil
 		},
 	})
 	if problem == "" && err == nil {
@@ -189,12 +190,13 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 }
 
 // merge merges the base branch in the sandbox's repository but stops before the merge commit, so
-// the AI makes that commit itself and sees whatever the project's commit checks report.
-func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, err error) {
+// the AI makes that commit itself and sees whatever the project's commit checks report. problem is
+// set when git refused the merge without a conflict.
+func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, problem string, err error) {
 	// The exit status comes back on stdout, apart from sbx's own failures.
 	out, err := r.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, "sh", r.Git.BaseRef())
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	text := strings.TrimRight(string(out), "\n")
 	output, last := "", text
@@ -203,15 +205,15 @@ func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, 
 	}
 	code, err := strconv.Atoi(strings.TrimPrefix(last, "exit "))
 	if err != nil {
-		return nil, fmt.Errorf("read the merge's exit status: %q", last)
+		return nil, "", fmt.Errorf("read the merge's exit status: %q", last)
 	}
 	if code == 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 	// -z keeps non-ASCII file names as they are instead of quoting them.
 	list, err := r.box.git(ctx, name, repoDir, "diff", "--name-only", "-z", "--diff-filter=U")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	for f := range strings.SplitSeq(list, "\x00") {
 		if f != "" {
@@ -219,9 +221,13 @@ func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, 
 		}
 	}
 	if len(conflicts) == 0 {
-		return nil, fmt.Errorf("merge %s in the sandbox failed: %s", r.Git.BaseRef(), output)
+		// The same merge fails the same way on every try, so only a person can get past it. Like
+		// setup's, the output stays in the log.
+		slog.Warn("merge failed without a conflict", "sandbox", name, "exit", code, "output", output)
+		return nil, fmt.Sprintf("Merging `%s` into this Task's branch in the sandbox failed without a conflict, so the AI did not start. "+
+			"git's output is in coworker's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
 	}
-	return conflicts, nil
+	return conflicts, "", nil
 }
 
 func (r *resolver) harvest(ctx context.Context, name string, s started, n int) error {

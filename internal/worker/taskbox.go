@@ -55,7 +55,8 @@ echo $? > "$ctl/exit.tmp"
 mv "$ctl/exit.tmp" "$ctl/exit"
 `
 
-// errNoSlot means every sandbox slot was taken between the check and the start.
+// errNoSlot means the slots filled up between ready and the create, which only a sandbox made
+// outside this coworker can do.
 var errNoSlot = errors.New("no free sandbox slot")
 
 type state int
@@ -97,8 +98,10 @@ type taskbox struct {
 	gate *Gate
 	now  func() time.Time
 
-	// Held from counting the sandboxes until the new one exists.
+	// Held from counting the sandboxes until the new one exists. It also guards starting.
 	slots sync.Mutex
+	// The sandboxes whose starts hold a slot, from ready until release.
+	starting map[string]bool
 
 	mu    sync.Mutex
 	seen  map[string]progress
@@ -119,11 +122,12 @@ type tries struct {
 
 func newTaskbox(d Deps, gate *Gate) *taskbox {
 	return &taskbox{
-		Deps:  d,
-		gate:  gate,
-		now:   time.Now,
-		seen:  map[string]progress{},
-		tries: map[string]*tries{},
+		Deps:     d,
+		gate:     gate,
+		now:      time.Now,
+		starting: map[string]bool{},
+		seen:     map[string]progress{},
+		tries:    map[string]*tries{},
 	}
 }
 
@@ -298,8 +302,9 @@ func (t *taskbox) found(ctx context.Context, role string) ([]int, error) {
 }
 
 // ready reports whether a new run may start: the usage gate is open and a sandbox slot is free.
-// Another start can still take the slot, which open checks again.
-func (t *taskbox) ready(ctx context.Context) (bool, error) {
+// When it is, the slot is name's until release, so other starts count it while the template
+// builds and the code goes in, long before the sandbox exists.
+func (t *taskbox) ready(ctx context.Context, name string) (bool, error) {
 	if t.gate != nil {
 		if open, err := t.gate.Open(ctx); err != nil || !open {
 			return false, err
@@ -307,24 +312,40 @@ func (t *taskbox) ready(ctx context.Context) (bool, error) {
 	}
 	t.slots.Lock()
 	defer t.slots.Unlock()
-	return t.slotFree(ctx)
+	if free, err := t.slotFree(ctx, name); err != nil || !free {
+		return false, err
+	}
+	t.starting[name] = true
+	return true, nil
+}
+
+func (t *taskbox) release(name string) {
+	t.slots.Lock()
+	defer t.slots.Unlock()
+	delete(t.starting, name)
 }
 
 // slotFree counts every sandbox of this repository, stopped ones too, so the count stays right
-// across restarts.
-func (t *taskbox) slotFree(ctx context.Context) (bool, error) {
+// across restarts, and every start that holds a slot. self is the start asking. The caller holds
+// slots.
+func (t *taskbox) slotFree(ctx context.Context, self string) (bool, error) {
 	boxes, err := t.Sandboxes.List(ctx)
 	if err != nil {
 		return false, err
 	}
-	used := 0
+	// By name, since a started sandbox is still in starting until its start returns.
+	used := map[string]bool{}
 	for _, b := range boxes {
 		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
 		if _, _, ok := sandbox.ParseTask(t.SandboxPrefix, b.Name); ok {
-			used++
+			used[b.Name] = true
 		}
 	}
-	return used < t.SandboxLimit, nil
+	for name := range t.starting {
+		used[name] = true
+	}
+	delete(used, self)
+	return len(used) < t.SandboxLimit, nil
 }
 
 // launch is a run about to start.
@@ -334,8 +355,9 @@ type launch struct {
 	branch  string
 	start   started
 	request agent.Request // Instructions and Schema. The input comes from input.
-	// input runs once setup has run, and builds claude's input. It may fill in start.
-	input func(ctx context.Context, ranSetup bool, s *started) (string, error)
+	// input runs once setup has run, and builds claude's input. It may fill in start, and it
+	// returns a problem the way open does.
+	input func(ctx context.Context, ranSetup bool, s *started) (input, problem string, err error)
 }
 
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
@@ -371,7 +393,7 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 	}
 
 	t.slots.Lock()
-	free, err := t.slotFree(ctx)
+	free, err := t.slotFree(ctx, l.name)
 	if err == nil && !free {
 		err = errNoSlot
 	}
@@ -391,6 +413,12 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 	if _, err := t.git(ctx, l.name, "", "init", "-q", repoDir); err != nil {
 		return "", err
 	}
+	// Before setup, so the project's script can set another.
+	for _, kv := range [][2]string{{"user.name", t.GitName}, {"user.email", t.GitEmail}} {
+		if _, err := t.git(ctx, l.name, repoDir, "config", kv[0], kv[1]); err != nil {
+			return "", err
+		}
+	}
 	if err := t.Git.SendTo(ctx, t.Sandboxes.GitURL(l.name, repoDir), l.start.Base, l.branch, l.start.Before); err != nil {
 		return "", err
 	}
@@ -403,9 +431,9 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 		}
 	}
 
-	input, err := l.input(ctx, hasScript, &l.start)
-	if err != nil {
-		return "", err
+	input, problem, err := l.input(ctx, hasScript, &l.start)
+	if problem != "" || err != nil {
+		return problem, err
 	}
 	if err := os.WriteFile(filepath.Join(ctl, "input.md"), []byte(input), 0o644); err != nil {
 		return "", err

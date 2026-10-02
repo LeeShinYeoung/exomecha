@@ -70,12 +70,16 @@ func run() error {
 		return fmt.Errorf("check sbx secrets: %w", err)
 	} else if has {
 		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past coworker's checks.
-		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github")
+		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
 	}
 
 	gh, err := github.New(owner, name, token)
 	if err != nil {
 		return err
+	}
+	author, email, err := gh.Identity(ctx)
+	if err != nil {
+		return fmt.Errorf("read the token's GitHub user: %w", err)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -94,6 +98,8 @@ func run() error {
 		// template package uses, so the build sandbox and templates carry the same slug.
 		SandboxPrefix: "coworker-task-" + template.Slug(owner, name, 32) + "-",
 		SandboxLimit:  sandboxes,
+		GitName:       author,
+		GitEmail:      email,
 	}
 
 	created, err := gh.EnsureLabels(ctx)

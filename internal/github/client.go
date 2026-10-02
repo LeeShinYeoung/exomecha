@@ -1,8 +1,10 @@
 package github
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -35,6 +37,16 @@ func newClient(owner, repo string, opts ...gh.ClientOptionsFunc) (*Client, error
 		return nil, err
 	}
 	return &Client{api: api, owner: owner, repo: repo}, nil
+}
+
+// Identity is the commit identity of the token's user: the profile name, or the login when there
+// is none, and the noreply address GitHub links to the account.
+func (c *Client) Identity(ctx context.Context) (name, email string, err error) {
+	u, _, err := c.api.Users.Get(ctx, "")
+	if err != nil {
+		return "", "", err
+	}
+	return cmp.Or(u.GetName(), u.GetLogin()), fmt.Sprintf("%d+%s@users.noreply.github.com", u.GetID(), u.GetLogin()), nil
 }
 
 // WaitForRateLimit makes API calls under ctx wait for a used-up rate limit to reset instead of

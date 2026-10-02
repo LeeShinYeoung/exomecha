@@ -60,6 +60,8 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		SandboxDir:    t.TempDir(),
 		SandboxPrefix: "coworker-task-owner-repo-",
 		SandboxLimit:  2,
+		GitName:       "Owner Name",
+		GitEmail:      "4242+owner@users.noreply.github.com",
 	}
 	e.box = newTaskbox(e.deps, nil)
 	e.box.now = e.clock.now
@@ -171,6 +173,22 @@ func wantInts(t *testing.T, what string, got, want []int) {
 	t.Helper()
 	if !slices.Equal(got, want) {
 		t.Errorf("%s = %v, want %v", what, got, want)
+	}
+}
+
+func TestTrimClosingTags(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		// The end of the reason on #130.
+		{"then the test can be re-run.</stuck_reason>\n</invoke>", "then the test can be re-run."},
+		{"  need a decision on X \n", "need a decision on X"},
+		{"Close the `</div>` in index.html, or drop the page.", "Close the `</div>` in index.html, or drop the page."},
+		{"Which wins? </a> </b>\n</c>", "Which wins?"},
+		{"Line break with <br>", "Line break with <br>"},
+		{"An empty tag </>", "An empty tag </>"},
+	} {
+		if got := trimClosingTags(c.in); got != c.want {
+			t.Errorf("trimClosingTags(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

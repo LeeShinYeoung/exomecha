@@ -232,19 +232,23 @@ func TestFoundAndPrune(t *testing.T) {
 	}
 }
 
+func (e *env) wantReady(name string, want bool) {
+	e.t.Helper()
+	if got, err := e.box.ready(e.t.Context(), name); err != nil || got != want {
+		e.t.Errorf("ready(%s) = %v, %v, want %v", name, got, err, want)
+	}
+}
+
 func TestSlotsCountEveryTaskSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
 	e.sbx.add("coworker-task-other-repo-2-builder")
-	if ok, err := e.box.ready(t.Context()); err != nil || !ok {
-		t.Fatalf("ready with one of two slots used = %v, %v", ok, err)
-	}
+	e.wantReady(e.box.name(9, builderRole), true)
+	e.box.release(e.box.name(9, builderRole))
 	e.sbx.add(prefix + "2-resolver")
 	e.sbx.stop(prefix + "2-resolver")
-	if ok, err := e.box.ready(t.Context()); err != nil || ok {
-		t.Errorf("ready with both slots used = %v, %v", ok, err)
-	}
+	e.wantReady(e.box.name(9, builderRole), false)
 }
 
 // owner/repo-v2's sandboxes start with owner/repo's prefix too, and must not take owner/repo's slots.
@@ -253,7 +257,25 @@ func TestSlotsCountOnlyThisRepository(t *testing.T) {
 	e.sbx.add(e.deps.SandboxPrefix + "1-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-3-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-4-resolver")
-	if ok, err := e.box.ready(t.Context()); err != nil || !ok {
-		t.Errorf("ready with one slot of this repository used = %v, %v", ok, err)
-	}
+	e.wantReady(e.box.name(9, builderRole), true)
+}
+
+func TestReadyHoldsTheSlotUntilRelease(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	first, second := e.box.name(1, builderRole), e.box.name(2, resolverRole)
+	third, fourth := e.box.name(3, builderRole), e.box.name(4, builderRole)
+	e.wantReady(first, true)
+	e.wantReady(second, true)
+	e.wantReady(third, false)
+
+	// The first start's sandbox now exists, and counts once.
+	e.sbx.add(first)
+	e.box.release(second)
+	e.wantReady(third, true)
+
+	// Released, the first start's slot is still taken by its sandbox.
+	e.box.release(first)
+	e.wantReady(fourth, false)
+	e.sbx.drop(first)
+	e.wantReady(fourth, true)
 }
