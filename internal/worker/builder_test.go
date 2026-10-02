@@ -84,16 +84,6 @@ func (e *env) wantAuthor(ref string) {
 	}
 }
 
-func (e *env) relabel(n int, from, to label.Status) {
-	e.t.Helper()
-	if err := e.deps.GitHub.RemoveLabel(e.t.Context(), n, string(from)); err != nil {
-		e.t.Fatal(err)
-	}
-	if err := e.deps.GitHub.AddLabel(e.t.Context(), n, string(to)); err != nil {
-		e.t.Fatal(err)
-	}
-}
-
 func TestBuilderPicks(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	blocker := e.gh.AddIssue("blocker", "", label.Task, string(label.Queued))
@@ -142,8 +132,8 @@ func TestBuilderPlace(t *testing.T) {
 	}{
 		{true, status(label.Queued), ready},
 		{true, status(label.Working), working},
-		// A move between the two that failed halfway.
-		{true, status(label.Queued, label.Working), working},
+		// exomecha moves a status in one call, so two are a person's doing.
+		{true, status(label.Queued, label.Working), away},
 		{true, status(label.Working, label.Stuck), away},
 		{true, status(label.Pending), away},
 		{true, []string{string(label.Working)}, away},

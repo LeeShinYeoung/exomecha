@@ -156,9 +156,7 @@ func TestSplitterFirstFailureMakesThePRDStuck(t *testing.T) {
 	}
 	wantInts(t, "Pick while stuck", picked, nil)
 
-	if err := e.deps.GitHub.RemoveLabel(t.Context(), prd, string(label.Stuck)); err != nil {
-		t.Fatal(err)
-	}
+	e.gh.Relabel(prd, string(label.Stuck), "")
 	e.split(prd)
 	e.wantState(name, running)
 }

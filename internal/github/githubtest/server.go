@@ -136,7 +136,7 @@ func New(t *testing.T) *Server {
 	s.route(mux, "GET "+repo+"/labels", s.listLabels)
 	s.route(mux, "POST "+repo+"/labels", s.createLabel)
 	s.route(mux, "POST "+repo+"/issues/{n}/labels", s.addLabels)
-	s.route(mux, "DELETE "+repo+"/issues/{n}/labels/{name}", s.removeLabel)
+	s.route(mux, "PUT "+repo+"/issues/{n}/labels", s.setLabels)
 	s.route(mux, "GET "+repo+"/issues/{n}/sub_issues", s.listSubIssues)
 	s.route(mux, "POST "+repo+"/issues/{n}/sub_issues", s.addSubIssue)
 	s.route(mux, "GET "+repo+"/issues/{n}/parent", s.getParent)
@@ -435,16 +435,16 @@ func (s *Server) addLabels(r *http.Request) (int, any) {
 	return http.StatusOK, labelsJSON(i.Labels)
 }
 
-func (s *Server) removeLabel(r *http.Request) (int, any) {
+func (s *Server) setLabels(r *http.Request) (int, any) {
 	i := s.pathIssue(r)
 	if i == nil {
 		return notFound()
 	}
-	k := slices.Index(i.Labels, r.PathValue("name"))
-	if k < 0 {
-		return http.StatusNotFound, message("Label does not exist")
+	var names []string
+	if !s.decode(r, &names) {
+		return http.StatusBadRequest, message("bad body")
 	}
-	i.Labels = slices.Delete(i.Labels, k, k+1)
+	i.Labels = slices.Compact(names)
 	return http.StatusOK, labelsJSON(i.Labels)
 }
 
@@ -723,6 +723,18 @@ func (s *Server) AddBlockedBy(n, blocker int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.issues[n].BlockedBy = append(s.issues[n].BlockedBy, blocker)
+}
+
+// Relabel takes label from off issue n and puts to on, as a person does by hand. An empty from or
+// to only adds or only removes.
+func (s *Server) Relabel(n int, from, to string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.issues[n]
+	i.Labels = slices.DeleteFunc(i.Labels, func(l string) bool { return l == from })
+	if to != "" && !slices.Contains(i.Labels, to) {
+		i.Labels = append(i.Labels, to)
+	}
 }
 
 func (s *Server) CloseIssue(n int) {

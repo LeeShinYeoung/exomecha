@@ -294,24 +294,20 @@ func taskPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok boo
 	return pr, err == nil, err
 }
 
-// holds reports whether the issue is open, has the kind label, and has a status label, all of
-// them among statuses. SetStatus adds the new label before it removes the old one, so any other
-// status means the issue is on its way somewhere else, to stuck or back to a person.
-func holds(i github.Issue, kind string, statuses ...label.Status) bool {
+// holds reports whether the issue is open, has the kind label, and has status as its only status.
+// exomecha changes a status in one call, so two statuses are a person's doing, and every worker
+// leaves the issue to them.
+func holds(i github.Issue, kind string, status label.Status) bool {
 	if !i.Open || !i.HasLabel(kind) {
 		return false
 	}
-	found := false
+	statuses := 0
 	for _, l := range i.Labels {
-		if !label.IsStatus(l) {
-			continue
+		if label.IsStatus(l) {
+			statuses++
 		}
-		if !slices.Contains(statuses, label.Status(l)) {
-			return false
-		}
-		found = true
 	}
-	return found
+	return statuses == 1 && i.HasLabel(string(status))
 }
 
 // back is where the person sends the Task after answering, so it returns to the worker that

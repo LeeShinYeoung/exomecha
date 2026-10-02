@@ -357,7 +357,7 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 
 const (
 	issuesRoute   = "POST /repos/{owner}/{repo}/issues"
-	labelsRoute   = "POST /repos/{owner}/{repo}/issues/{n}/labels"
+	labelsRoute   = "PUT /repos/{owner}/{repo}/issues/{n}/labels"
 	blockedRoute  = "POST /repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by"
 	commentsRoute = "POST /repos/{owner}/{repo}/issues/{n}/comments"
 	pullsRoute    = "POST /repos/{owner}/{repo}/pulls"
@@ -457,6 +457,11 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			if got := len(e.gh.Pulls()); got != 1 {
 				e.t.Errorf("%d PRs, want one", got)
 			}
+		}},
+		// The Task keeps its one status, so the next try still finds it working.
+		{"builder", "collect's SetStatus", built, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
+			e.wantStatus(n, label.Review)
+			e.wantRemoved(name)
 		}},
 		{"builder", "restart's SetStatus", func(e *env) (int, string) {
 			task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))

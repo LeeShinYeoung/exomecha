@@ -54,7 +54,7 @@ func builderCells(t *testing.T) tableWorker {
 		},
 		put: func(e *env, n int, p place) {
 			if p == ready {
-				e.relabel(n, label.Working, label.Queued)
+				e.gh.Relabel(n, string(label.Working), string(label.Queued))
 			}
 		},
 		away: leave(label.Pending),
@@ -186,8 +186,8 @@ func splitterCells(t *testing.T) tableWorker {
 		put: func(*env, int, place) {},
 		away: []func(e *env, n int){
 			func(e *env, n int) { e.gh.CloseIssue(n) },
-			func(e *env, n int) { e.addLabel(n, label.Tasked) },
-			func(e *env, n int) { e.addLabel(n, string(label.Stuck)) },
+			func(e *env, n int) { e.gh.Relabel(n, "", label.Tasked) },
+			func(e *env, n int) { e.gh.Relabel(n, "", string(label.Stuck)) },
 		},
 		place: func(e *env, n int) place {
 			return e.splitter().place(e.issue(n))
@@ -242,20 +242,13 @@ func sequencerCells(t *testing.T) tableWorker {
 	}
 }
 
-// leave returns the ways a Task leaves a worker: closed, relabeled to, and on its way to stuck
-// with the old status still on. to must be none of the worker's own statuses.
+// leave returns the ways a Task leaves a worker: closed, relabeled to, and given a second status
+// by a person. to must be none of the worker's own statuses.
 func leave(to label.Status) []func(e *env, n int) {
 	return []func(e *env, n int){
 		func(e *env, n int) { e.gh.CloseIssue(n) },
-		func(e *env, n int) { e.relabel(n, label.Status(e.statuses(n)[0]), to) },
-		func(e *env, n int) { e.addLabel(n, string(label.Stuck)) },
-	}
-}
-
-func (e *env) addLabel(n int, name string) {
-	e.t.Helper()
-	if err := e.deps.GitHub.AddLabel(e.t.Context(), n, name); err != nil {
-		e.t.Fatal(err)
+		func(e *env, n int) { e.gh.Relabel(n, e.statuses(n)[0], string(to)) },
+		func(e *env, n int) { e.gh.Relabel(n, "", string(label.Stuck)) },
 	}
 }
 

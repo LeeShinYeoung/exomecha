@@ -92,7 +92,7 @@ const (
 type place int
 
 const (
-	away       place = iota // closed, another worker's, or on its way to stuck
+	away       place = iota // closed, another worker's, or given a second status by a person
 	ready                   // the worker may start a run
 	working                 // a Task builder is working on
 	clean                   // a Task in review whose PR does not conflict, or that has no PR

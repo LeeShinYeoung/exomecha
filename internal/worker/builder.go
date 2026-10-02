@@ -107,14 +107,12 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 
 func (b *builder) place(task github.Issue) place {
 	switch {
-	case !holds(task, label.Task, label.Queued, label.Working):
-		return away
-	// Both labels are left by a move between them that failed halfway. As working, the Task
-	// starts over, which finishes the move to queued.
-	case task.HasLabel(string(label.Working)):
+	case holds(task, label.Task, label.Queued):
+		return ready
+	case holds(task, label.Task, label.Working):
 		return working
 	}
-	return ready
+	return away
 }
 
 func (b *builder) start(ctx context.Context, task github.Issue) error {
