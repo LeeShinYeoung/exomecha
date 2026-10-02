@@ -120,9 +120,9 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	e.sbx.fail["allow"] = errors.New("allow hosts")
 	s, _ := e.testSpec()
 	s.branch = ""
-	name := e.runs.name(readerRole, 1)
+	name := e.runs.name(reviewerRole, 1)
 
-	if problem, err := e.runs.open(t.Context(), readerRole, 1, s); problem != "" || err != nil {
+	if problem, err := e.runs.open(t.Context(), reviewerRole, 1, s); problem != "" || err != nil {
 		t.Fatalf("open = %q, %v", problem, err)
 	}
 

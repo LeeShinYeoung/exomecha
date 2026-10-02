@@ -11,9 +11,6 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
-// readerRole is a reader's role for the tests of runs. open reads the prompt of the role's name.
-var readerRole = role{name: "reviewer", schema: reviewerSchema}
-
 func (e *env) state(name string) state {
 	e.t.Helper()
 	r, err := e.runs.read(e.t.Context(), name)
@@ -221,14 +218,14 @@ func TestSlotsCountEachKindApart(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit, e.runs.ReadLimit = 1, 1
 	e.sbx.add(e.runs.name(builderRole, 1))
-	e.wantReserve(readerRole, 2, true)
+	e.wantReserve(reviewerRole, 2, true)
 	e.wantReserve(resolverRole, 3, false)
-	e.wantReserve(readerRole, 4, false)
+	e.wantReserve(reviewerRole, 4, false)
 
 	e.sbx.drop(e.runs.name(builderRole, 1))
 	e.wantReserve(resolverRole, 3, true)
-	e.runs.release(e.runs.name(readerRole, 2))
-	e.wantReserve(readerRole, 4, true)
+	e.runs.release(e.runs.name(reviewerRole, 2))
+	e.wantReserve(reviewerRole, 4, true)
 }
 
 func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
@@ -254,7 +251,7 @@ func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
 // run's commits are only in its sandbox.
 func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	reader, project := e.runs.name(readerRole, 7), e.runs.name(builderRole, 7)
+	reader, project := e.runs.name(reviewerRole, 7), e.runs.name(builderRole, 7)
 	for _, name := range []string{reader, project} {
 		e.sbx.add(name)
 		e.writeCtl(name, "stream.jsonl", "{}\n")
@@ -272,7 +269,7 @@ func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
 func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ReadLimit = 1
-	reader, project := e.runs.name(readerRole, 7), e.runs.name(builderRole, 8)
+	reader, project := e.runs.name(reviewerRole, 7), e.runs.name(builderRole, 8)
 	for _, name := range []string{reader, project} {
 		e.sbx.add(name)
 		e.writeCtl(name, "stream.jsonl", "{}\n")
@@ -281,10 +278,10 @@ func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
 		}
 		e.writeCtl(name, "exit", "0\n")
 	}
-	e.wantReserve(readerRole, 9, false)
+	e.wantReserve(reviewerRole, 9, false)
 
 	// Every action idle, so only the finished reader's step itself acts.
-	if err := e.runs.step(t.Context(), readerRole, 7, row{}, nil, nil); err != nil {
+	if err := e.runs.step(t.Context(), reviewerRole, 7, row{}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.runs.step(t.Context(), builderRole, 8, row{}, nil, nil); err != nil {
@@ -298,5 +295,5 @@ func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
 	if !e.sbx.exists(project) {
 		t.Error("the finished project run's sandbox was removed before its commits were taken")
 	}
-	e.wantReserve(readerRole, 9, true)
+	e.wantReserve(reviewerRole, 9, true)
 }

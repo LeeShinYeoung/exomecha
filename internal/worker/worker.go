@@ -37,9 +37,9 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent // runs claude on this machine, for splitter, sequencer and reviewer
+	Agent  agent.Agent // runs claude on this machine, for splitter and sequencer
 
-	// builder and resolver run claude in sandboxes.
+	// builder, resolver and reviewer run claude in sandboxes.
 	Sandboxes   Sandboxes
 	Environment Environment
 	// SandboxDir holds one directory per run, shared with the run's sandbox.
@@ -86,8 +86,8 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	// builder and resolver check the gate themselves, only before they start a run, so runs
-	// already in sandboxes are still watched and finished while usage is over the limit.
+	// builder, resolver and reviewer check the gate themselves, only before they start a run, so
+	// runs already in sandboxes are still watched and finished while usage is over the limit.
 	runs := newRuns(d, gate)
 	workers := []struct {
 		worker Worker
@@ -97,7 +97,7 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 		{&splitter{d}, 1, gate},
 		{&sequencer{d}, 1, gate},
 		{&builder{d, runs}, 0, nil},
-		{&reviewer{d}, 0, gate},
+		{&reviewer{d, runs}, 0, nil},
 		{&resolver{d, runs}, 0, nil},
 	}
 	var wg sync.WaitGroup

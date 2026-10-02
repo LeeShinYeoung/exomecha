@@ -164,7 +164,7 @@ func TestRoundSkipsWorkOverTheLimit(t *testing.T) {
 	wantInts(t, "handled", w.took(), nil)
 }
 
-// builder and resolver run with no gate in round, and check it themselves before a start.
+// builder, resolver and reviewer run with no gate in round, and check it themselves before a start.
 func TestRoundWithoutGateHandlesEverything(t *testing.T) {
 	w := &fakeWorker{picks: []int{1, 2}}
 	newRounds(w, newClock()).run(t.Context(), nil)

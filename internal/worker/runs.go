@@ -92,10 +92,14 @@ const (
 type place int
 
 const (
-	away    place = iota // closed, another worker's, or on its way to stuck
-	ready                // the worker may start a run
-	working              // a Task builder is working on
-	clean                // a Task in review whose PR does not conflict, or that has no PR
+	away       place = iota // closed, another worker's, or on its way to stuck
+	ready                   // the worker may start a run
+	working                 // a Task builder is working on
+	clean                   // a Task in review whose PR does not conflict, or that has no PR
+	waiting                 // a Task in review whose PR GitHub or CI has not checked yet
+	conflicted              // a Task in review whose PR conflicts
+	closed                  // a Task in review with no open PR
+	failing                 // a Task in review whose PR's CI failed
 )
 
 // role is what runs needs to know about the worker a run belongs to.
@@ -252,7 +256,7 @@ func (r *runs) quiet(name string) (bool, error) {
 }
 
 // roles holds every role, so that a run's name tells its kind.
-var roles = []role{builderRole, resolverRole}
+var roles = []role{builderRole, resolverRole, reviewerRole}
 
 // kind reads whether the run named name is a project run from the role its name ends with. ok is
 // false when name is no run of this repository.

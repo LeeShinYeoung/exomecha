@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
@@ -115,6 +117,54 @@ func resolverCells(t *testing.T) tableWorker {
 	}
 }
 
+func reviewerCells(t *testing.T) tableWorker {
+	return tableWorker{
+		role:  reviewerRole,
+		table: reviewerTable,
+		want: table{
+			away:       {idle, drop, drop, drop, drop, drop, drop},
+			conflicted: {idle, drop, drop, drop, drop, drop, drop},
+			waiting:    {idle, restart, idle, fail, fail, fail, idle},
+			ready:      {begin, restart, idle, fail, fail, fail, harvest},
+		},
+		start: func(e *env) int {
+			task, _, _, _ := e.reviewing()
+			return task
+		},
+		put: func(e *env, n int, p place) {
+			pr := e.gh.Pulls()[0].Number
+			switch p {
+			case conflicted:
+				e.gh.SetMergeable(pr, new(false))
+			case waiting:
+				e.gh.SetMergeable(pr, nil)
+			}
+		},
+		place: func(e *env, n int) place {
+			p, _, _, err := e.reviewer().look(t.Context(), e.issue(n))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return p
+		},
+		handle: func(e *env, n int) error {
+			return e.reviewer().Handle(t.Context(), n)
+		},
+		running: label.Review,
+		finish: func(e *env, name string) {
+			e.play(name, nil, approve)
+		},
+		harvested: func(e *env, n int) {
+			if !e.gh.Pulls()[0].Merged {
+				t.Error("PR not merged")
+			}
+			if e.gh.Issue(n).Open {
+				t.Error("Task still open")
+			}
+		},
+	}
+}
+
 // awayBy are the ways an issue leaves a worker. The table test takes each state's issue away a
 // different way, so every way is covered.
 var awayBy = []func(e *env, n int){
@@ -128,7 +178,10 @@ var awayBy = []func(e *env, n int){
 	},
 }
 
-var placeNames = map[place]string{away: "away", ready: "ready", working: "working", clean: "clean"}
+var placeNames = map[place]string{
+	away: "away", ready: "ready", working: "working", clean: "clean",
+	waiting: "waiting", conflicted: "conflicted", closed: "closed", failing: "failing",
+}
 
 func actionNames(r row) []string {
 	var out []string
@@ -139,7 +192,7 @@ func actionNames(r row) []string {
 }
 
 func TestTables(t *testing.T) {
-	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells} {
+	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells} {
 		w := cells(t)
 		if len(w.table) != len(w.want) {
 			t.Errorf("%s table has %d rows, want %d", w.role.name, len(w.table), len(w.want))
@@ -229,6 +282,46 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 	case harvest:
 		e.wantRemoved(name)
 		w.harvested(e, n)
+	}
+}
+
+// reviewer settles a closed or failing PR before the run's step, so those places have no row.
+// Whatever state its run is in, the run goes.
+func TestReviewerDropsTheRunOfAClosedOrFailingPR(t *testing.T) {
+	for _, p := range []place{closed, failing} {
+		for s := range finished + 1 {
+			t.Run(fmt.Sprintf("%s/%s", placeNames[p], s), func(t *testing.T) {
+				w := reviewerCells(t)
+				e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+				n := w.start(e)
+				name := e.runs.name(w.role, n)
+				e.runTo(name, s, w.finish)
+				pr := e.gh.Pulls()[0].Number
+				if p == closed {
+					e.gh.ClosePull(pr)
+				} else {
+					e.gh.SetRuns(gittest.Head(e.origin, branchName(n)), githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
+				}
+				if got := w.place(e, n); got != p {
+					t.Fatalf("place = %s, want %s", placeNames[got], placeNames[p])
+				}
+
+				if err := w.handle(e, n); err != nil {
+					t.Fatal(err)
+				}
+
+				e.wantRemoved(name)
+				if p == closed {
+					e.wantStatus(n, label.Stuck)
+					wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Pending)
+					return
+				}
+				e.wantStatus(n, label.Queued)
+				if reviews := e.gh.Pull(pr).Reviews; len(reviews) != 1 || !strings.Contains(reviews[0].Body, "CI failed") {
+					t.Errorf("reviews = %+v, want one on the failed CI", reviews)
+				}
+			})
+		}
 	}
 }
 

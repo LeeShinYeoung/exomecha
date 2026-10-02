@@ -1,15 +1,31 @@
 package worker
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
+
+const approve = `{"verdict": "approve", "body": "fine"}`
+
+func (e *env) reviewer() *reviewer { return &reviewer{e.deps, e.runs} }
+
+// review runs one reviewer round for the Task and fails the test on an error.
+func (e *env) review(n int) {
+	e.t.Helper()
+	if err := e.reviewer().Handle(e.t.Context(), n); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) reviewerBox(n int) string { return e.runs.name(reviewerRole, n) }
 
 // reviewTask sets up a Task in review under a PRD, with a pushed branch and an open,
 // mergeable PR. With no CI runs set, its head commit is an hour old.
@@ -23,10 +39,20 @@ func (e *env) reviewTask() (task, pr int, sha string) {
 	return task, pr, sha
 }
 
+// reviewing is a Task in review with reviewer's run started for it.
+func (e *env) reviewing() (task, pr int, sha, name string) {
+	e.t.Helper()
+	task, pr, sha = e.reviewTask()
+	e.review(task)
+	name = e.reviewerBox(task)
+	e.wantState(name, running)
+	return task, pr, sha, name
+}
+
 func (e *env) wantUntouched(task, pr int) {
 	e.t.Helper()
-	if n := e.claude.callCount(); n != 0 {
-		e.t.Errorf("claude called %d times, want none", n)
+	if e.sbx.exists(e.reviewerBox(task)) {
+		e.t.Error("a review started")
 	}
 	e.wantStatus(task, label.Review)
 	if p := e.gh.Pull(pr); p.Merged || len(p.Reviews) != 0 {
@@ -41,7 +67,7 @@ func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
 	e.gh.SetMergeable(pr, nil)
 	conflicting, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
-	picked, err := (&reviewer{e.deps}).Pick(t.Context())
+	picked, err := e.reviewer().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,17 +80,28 @@ func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
 	wantInts(t, "resolver Pick", picked, []int{conflicting})
 }
 
+func TestReviewerPicksEveryTaskWithARun(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	conflicting, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	e.sbx.add(e.reviewerBox(conflicting))
+	e.sbx.add(e.runs.name(builderRole, 99))
+
+	picked, err := e.reviewer().Pick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInts(t, "Pick", picked, []int{conflicting})
+}
+
 func TestReviewerStuckWhenPRClosedByHand(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, pr, _ := e.reviewTask()
 	e.gh.ClosePull(pr)
 
-	if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
+	e.review(task)
 
-	if n := e.claude.callCount(); n != 0 {
-		t.Errorf("claude called %d times for a closed PR", n)
+	if e.sbx.exists(e.reviewerBox(task)) {
+		t.Error("a review started for a closed PR")
 	}
 	e.wantStatus(task, label.Stuck)
 	wantStuckComment(t, e.lastComment(task), "closed without being merged", label.Pending)
@@ -76,9 +113,7 @@ func TestReviewerWaitsForMergeable(t *testing.T) {
 		task, pr, _ := e.reviewTask()
 		e.gh.SetMergeable(pr, mergeable)
 
-		if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-			t.Fatal(err)
-		}
+		e.review(task)
 		e.wantUntouched(task, pr)
 	}
 }
@@ -88,9 +123,7 @@ func TestReviewerWaitsForRunningCI(t *testing.T) {
 	task, pr, sha := e.reviewTask()
 	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "in_progress"})
 
-	if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
+	e.review(task)
 	e.wantUntouched(task, pr)
 }
 
@@ -102,12 +135,10 @@ func TestReviewerRequeuesOnFailedCI(t *testing.T) {
 		githubtest.Run{Name: "lint", Status: "completed", Conclusion: "success", URL: "http://ci/lint"},
 	)
 
-	if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
+	e.review(task)
 
-	if n := e.claude.callCount(); n != 0 {
-		t.Errorf("claude called %d times on failed CI", n)
+	if e.sbx.exists(e.reviewerBox(task)) {
+		t.Error("a review started on failed CI")
 	}
 	e.wantStatus(task, label.Queued)
 	reviews := e.gh.Pull(pr).Reviews
@@ -125,52 +156,53 @@ func TestReviewerWaitsForCIToAppear(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, pr, sha := e.reviewTask()
 	e.gh.SetCommitTime(sha, time.Now().Add(-time.Minute))
-	r := &reviewer{e.deps}
 
-	if err := r.Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
+	e.review(task)
 	e.wantUntouched(task, pr)
 
 	e.gh.SetCommitTime(sha, time.Now().Add(-10*time.Minute))
-	e.claude.answer(`{"verdict": "approve", "body": "fine"}`)
-	if err := r.Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR not merged once the wait for CI was over")
-	}
+	e.review(task)
+	e.wantState(e.reviewerBox(task), running)
 }
 
 func TestReviewerApproveMerges(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, pr, sha := e.reviewTask()
 	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "success"})
-	e.claude.answer(`{"verdict": "approve", "body": "fine"}`)
-
-	if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
+	e.review(task)
+	name := e.reviewerBox(task)
+	repo := e.sbx.repo(name)
+	if got := gittest.Run(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); got != branchName(task) {
+		t.Errorf("sandbox repository is on %q, want the PR branch", got)
 	}
+	if got := gittest.Run(t, repo, "rev-parse", "HEAD"); got != sha {
+		t.Errorf("sandbox repository is at %s, want the PR head %s", got, sha)
+	}
+	if got := gittest.Run(t, repo, "rev-parse", "origin/main"); got != gittest.Head(e.origin, "main") {
+		t.Errorf("origin/main in the sandbox = %s", got)
+	}
+	wantContains(t, "claude input", e.readCtl(name, "input.md"), "task body", "why we decided this", "git diff origin/main...HEAD")
+
+	e.play(name, nil, approve)
+	e.review(task)
 
 	p := e.gh.Pull(pr)
 	if !p.Merged || p.MergeMethod != "merge" || p.MergedSHA != sha {
-		t.Errorf("PR merged=%v method=%q sha=%q, want merged with merge at %s", p.Merged, p.MergeMethod, p.MergedSHA, sha)
+		t.Errorf("PR merged=%v method=%q sha=%q, want merged with merge at the reviewed head %s", p.Merged, p.MergeMethod, p.MergedSHA, sha)
 	}
 	if got := e.gh.Issue(task); got.Open || got.StateReason != "completed" {
 		t.Errorf("task open=%v reason=%q, want closed as completed", got.Open, got.StateReason)
 	}
 	e.wantStatus(task, label.None)
-	wantContains(t, "claude input", e.claude.lastInput(), "task body", "why we decided this", "origin/main")
+	e.wantRemoved(name)
 }
 
 func TestReviewerChangesRequeues(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, pr, _ := e.reviewTask()
-	e.claude.answer(`{"verdict": "changes", "body": "rename the function"}`)
+	task, pr, _, name := e.reviewing()
+	e.play(name, nil, `{"verdict": "changes", "body": "rename the function"}`)
 
-	if err := (&reviewer{e.deps}).Handle(t.Context(), task); err != nil {
-		t.Fatal(err)
-	}
+	e.review(task)
 
 	e.wantStatus(task, label.Queued)
 	p := e.gh.Pull(pr)
@@ -179,6 +211,116 @@ func TestReviewerChangesRequeues(t *testing.T) {
 	}
 	if len(p.Reviews) != 1 || p.Reviews[0].Body != github.Marker+"\nrename the function" {
 		t.Errorf("reviews = %+v", p.Reviews)
+	}
+	e.wantRemoved(name)
+}
+
+// The review was of a head that is no longer the PR's. The next round reviews the new head.
+func TestReviewerDiscardsWhenThePRMoved(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, _, name := e.reviewing()
+	pushed := gittest.Commit(t, e.origin, branchName(task), "", map[string]string{"other.txt": "a person's push\n"})
+	e.play(name, nil, approve)
+
+	e.review(task)
+
+	e.wantRemoved(name)
+	e.wantStatus(task, label.Review)
+	if p := e.gh.Pull(pr); p.Merged || len(p.Reviews) != 0 {
+		t.Errorf("PR merged=%v reviews=%d, want the review thrown away", p.Merged, len(p.Reviews))
+	}
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a push during the review left %d comments", n)
+	}
+	e.review(task)
+	if got := gittest.Run(t, e.sbx.repo(name), "rev-parse", "HEAD"); got != pushed {
+		t.Errorf("the next review is of %s, want the new head %s", got, pushed)
+	}
+}
+
+func TestReviewerFailedRunGoesStuckBackToReview(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, _, name := e.reviewing()
+	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
+		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}`+"\n")
+	e.writeCtl(name, "exit", "1\n")
+
+	e.review(task)
+
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "The AI's run failed because claude ended with an error", label.Review)
+	e.wantRemoved(name)
+	e.wantKept(name, "stream.jsonl")
+	if e.gh.Pull(pr).Merged {
+		t.Error("PR merged after a failed review")
+	}
+}
+
+func TestReviewerUnknownVerdictFails(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, _, name := e.reviewing()
+	e.play(name, nil, `{"verdict": "maybe", "body": ""}`)
+
+	e.review(task)
+
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "The AI's run failed because "+badResult, label.Review)
+	e.wantKept(name, "stream.jsonl")
+	if e.gh.Pull(pr).Merged {
+		t.Error("PR merged on an unknown verdict")
+	}
+}
+
+// A finished review gives its slot back at once, and a new exomecha still collects it from the
+// run's directory.
+func TestReviewerFinishesARunAfterRestart(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, _, name := e.reviewing()
+	e.play(name, nil, approve)
+	e.gh.SetMergeable(pr, nil)
+	e.review(task)
+	if e.sbx.exists(name) {
+		t.Fatal("the finished review still holds its sandbox")
+	}
+
+	e.runs = newRuns(e.deps, nil)
+	e.runs.now = e.clock.now
+	e.gh.SetMergeable(pr, new(true))
+	picked, err := e.reviewer().Pick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInts(t, "Pick", picked, []int{task})
+	e.review(task)
+
+	if !e.gh.Pull(pr).Merged {
+		t.Error("PR not merged")
+	}
+	e.wantRemoved(name)
+}
+
+// Over the usage limit, no review starts, and a review already going is still collected.
+func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	running, pr, _, name := e.reviewing()
+	e.runs.gate = &Gate{
+		Check: func(context.Context) (agent.Usage, error) {
+			return agent.Usage{Known: true, FiveHour: agent.Window{Used: 0.99}}, nil
+		},
+		FiveHour: 0.9,
+		Weekly:   0.8,
+	}
+	waiting, _, _ := e.reviewTask()
+
+	e.review(waiting)
+	e.play(name, nil, approve)
+	e.review(running)
+
+	if e.sbx.exists(e.reviewerBox(waiting)) {
+		t.Error("a review started while the gate was closed")
+	}
+	if !e.gh.Pull(pr).Merged {
+		t.Error("the review already going was not collected")
 	}
 }
 
@@ -195,7 +337,7 @@ func TestReviewerSweepClosesFinishedPRDs(t *testing.T) {
 	e.gh.AddSubIssue(prd1, t1)
 	e.gh.AddSubIssue(prd2, t2)
 	e.gh.CloseIssue(t1)
-	r := &reviewer{e.deps}
+	r := e.reviewer()
 
 	if err := r.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
