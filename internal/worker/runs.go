@@ -92,14 +92,13 @@ const (
 type place int
 
 const (
-	away       place = iota // closed, another worker's, or given a second status by a person
-	ready                   // the worker may start a run
-	working                 // a Task builder is working on
-	clean                   // a Task in review whose PR does not conflict, or that has no PR
-	waiting                 // a Task in review whose PR GitHub or CI has not checked yet
-	conflicted              // a Task in review whose PR conflicts
-	closed                  // a Task in review with no open PR
-	failing                 // a Task in review whose PR's CI failed
+	away    place = iota // closed, another worker's, or given a second status by a person
+	ready                // the worker may start a run
+	working              // a Task builder is working on
+	clean                // a Task in review whose PR does not conflict, or that has no PR
+	waiting              // a Task in review whose PR GitHub or CI has not checked yet
+	closed               // a Task in review with no open PR
+	failing              // a Task in review whose PR's CI failed
 )
 
 // role is what runs needs to know about the worker a run belongs to.

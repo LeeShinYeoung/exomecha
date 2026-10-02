@@ -28,9 +28,12 @@ type tableWorker struct {
 	put func(e *env, n int, p place)
 	// away are the ways the issue leaves the worker. Each state's cells take a different one, so
 	// every way is covered.
-	away   []func(e *env, n int)
-	place  func(e *env, n int) place
-	handle func(e *env, n int) error
+	away []func(e *env, n int)
+	// settled checks what Handle did to the issue after the run's action, for the places where it
+	// does more than that.
+	settled map[place]func(e *env, n int)
+	place   func(e *env, n int) place
+	handle  func(e *env, n int) error
 	// running is the issue's status while its run goes.
 	running label.Status
 	// finish plays a run that ends with a result the worker takes, and harvested checks what the
@@ -127,10 +130,11 @@ func reviewerCells(t *testing.T) tableWorker {
 		role:  reviewerRole,
 		table: reviewerTable,
 		want: table{
-			away:       {idle, drop, drop, drop, drop, drop, drop},
-			conflicted: {idle, drop, drop, drop, drop, drop, drop},
-			waiting:    {idle, restart, idle, fail, fail, fail, idle},
-			ready:      {begin, restart, idle, fail, fail, fail, harvest},
+			away:    {idle, drop, drop, drop, drop, drop, drop},
+			closed:  {idle, drop, drop, drop, drop, drop, drop},
+			failing: {idle, drop, drop, drop, drop, drop, drop},
+			waiting: {idle, restart, idle, fail, fail, fail, idle},
+			ready:   {begin, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
 			task, _, _, _ := e.reviewing()
@@ -139,13 +143,28 @@ func reviewerCells(t *testing.T) tableWorker {
 		put: func(e *env, n int, p place) {
 			pr := e.gh.Pulls()[0].Number
 			switch p {
-			case conflicted:
-				e.gh.SetMergeable(pr, new(false))
+			case closed:
+				e.gh.ClosePull(pr)
+			case failing:
+				e.gh.SetRuns(gittest.Head(e.origin, branchName(n)), githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
 			case waiting:
 				e.gh.SetMergeable(pr, nil)
 			}
 		},
-		away: leave(label.Pending),
+		// A conflict is resolver's.
+		away: append(leave(label.Pending), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
+		settled: map[place]func(e *env, n int){
+			closed: func(e *env, n int) {
+				e.wantStatus(n, label.Stuck)
+				wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Pending)
+			},
+			failing: func(e *env, n int) {
+				e.wantStatus(n, label.Queued)
+				if reviews := e.gh.Pulls()[0].Reviews; len(reviews) != 1 || !strings.Contains(reviews[0].Body, "CI failed") {
+					t.Errorf("reviews = %+v, want one on the failed CI", reviews)
+				}
+			},
+		},
 		place: func(e *env, n int) place {
 			p, _, _, err := e.reviewer().look(t.Context(), e.issue(n))
 			if err != nil {
@@ -254,7 +273,7 @@ func leave(to label.Status) []func(e *env, n int) {
 
 var placeNames = map[place]string{
 	away: "away", ready: "ready", working: "working", clean: "clean",
-	waiting: "waiting", conflicted: "conflicted", closed: "closed", failing: "failing",
+	waiting: "waiting", closed: "closed", failing: "failing",
 }
 
 func actionNames(r row) []string {
@@ -308,15 +327,19 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 		t.Fatal(err)
 	}
 
+	settled := w.settled[p]
+	if settled != nil {
+		settled(e, n)
+	}
 	sameStatus := func() {
 		t.Helper()
-		if got := e.statuses(n); !slices.Equal(got, statuses) {
+		if got := e.statuses(n); settled == nil && !slices.Equal(got, statuses) {
 			t.Errorf("status labels = %q, want %q left as they were", got, statuses)
 		}
 	}
 	noComment := func() {
 		t.Helper()
-		if got := len(e.gh.Issue(n).Comments); got != comments {
+		if got := len(e.gh.Issue(n).Comments); settled == nil && got != comments {
 			t.Errorf("%d new comments, want none", got-comments)
 		}
 	}
@@ -356,46 +379,6 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 	case harvest:
 		e.wantRemoved(name)
 		w.harvested(e, n)
-	}
-}
-
-// reviewer settles a closed or failing PR before the run's step, so those places have no row.
-// Whatever state its run is in, the run goes.
-func TestReviewerDropsTheRunOfAClosedOrFailingPR(t *testing.T) {
-	for _, p := range []place{closed, failing} {
-		for s := range finished + 1 {
-			t.Run(fmt.Sprintf("%s/%s", placeNames[p], s), func(t *testing.T) {
-				w := reviewerCells(t)
-				e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-				n := w.start(e)
-				name := e.runs.name(w.role, n)
-				e.runTo(name, s, w.finish)
-				pr := e.gh.Pulls()[0].Number
-				if p == closed {
-					e.gh.ClosePull(pr)
-				} else {
-					e.gh.SetRuns(gittest.Head(e.origin, branchName(n)), githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
-				}
-				if got := w.place(e, n); got != p {
-					t.Fatalf("place = %s, want %s", placeNames[got], placeNames[p])
-				}
-
-				if err := w.handle(e, n); err != nil {
-					t.Fatal(err)
-				}
-
-				e.wantRemoved(name)
-				if p == closed {
-					e.wantStatus(n, label.Stuck)
-					wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Pending)
-					return
-				}
-				e.wantStatus(n, label.Queued)
-				if reviews := e.gh.Pull(pr).Reviews; len(reviews) != 1 || !strings.Contains(reviews[0].Body, "CI failed") {
-					t.Errorf("reviews = %+v, want one on the failed CI", reviews)
-				}
-			})
-		}
 	}
 }
 

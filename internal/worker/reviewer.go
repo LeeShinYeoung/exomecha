@@ -34,13 +34,15 @@ var reviewerRole = role{
 	back:   label.Review,
 }
 
-// Handle settles closed and failing before the run's step, so they have no row.
+// closed and failing drop the run, which was about a PR that no longer stands, and Handle then
+// settles the Task.
 var reviewerTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
-	away:       {idle, drop, drop, drop, drop, drop, drop},
-	conflicted: {idle, drop, drop, drop, drop, drop, drop},
-	waiting:    {idle, restart, idle, fail, fail, fail, idle},
-	ready:      {begin, restart, idle, fail, fail, fail, harvest},
+	away:    {idle, drop, drop, drop, drop, drop, drop},
+	closed:  {idle, drop, drop, drop, drop, drop, drop},
+	failing: {idle, drop, drop, drop, drop, drop, drop},
+	waiting: {idle, restart, idle, fail, fail, fail, idle},
+	ready:   {begin, restart, idle, fail, fail, fail, harvest},
 }
 
 // reviewer reviews each Task's PR in a sandbox of its own, which gets only the code.
@@ -140,18 +142,19 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
+	err = r.runs.step(ctx, reviewerRole, n, reviewerTable[p],
+		func(ctx context.Context) error { return r.start(ctx, task, pr) },
+		func(ctx context.Context, run run) error { return r.collect(ctx, n, pr, run.in) })
+	if err != nil {
+		return err
+	}
 	switch p {
-	case closed, failing:
-		// Whatever the run would say is about a PR that no longer stands.
-		if err := r.runs.step(ctx, reviewerRole, n, reviewerTable[away], nil, nil); err != nil {
-			return err
-		}
-		if p == closed {
-			// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
-			// person closed it. Only they know whether the work is still wanted.
-			return toStuck(ctx, r.GitHub, n, label.Review, label.Pending,
-				fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
-		}
+	case closed:
+		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
+		// person closed it. Only they know whether the work is still wanted.
+		return toStuck(ctx, r.GitHub, n, label.Review, label.Pending,
+			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
+	case failing:
 		var b strings.Builder
 		b.WriteString("CI failed.\n\n")
 		for _, f := range failed {
@@ -161,11 +164,8 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 			return err
 		}
 		slog.Info("requeued after CI failure", "task", n, "pr", pr.Number)
-		return nil
 	}
-	return r.runs.step(ctx, reviewerRole, n, reviewerTable[p],
-		func(ctx context.Context) error { return r.start(ctx, task, pr) },
-		func(ctx context.Context, run run) error { return r.collect(ctx, n, pr, run.in) })
+	return nil
 }
 
 // look finds the Task's place, with its open PR, and the CI runs that failed when the place is failing.
@@ -182,8 +182,9 @@ func (r *reviewer) look(ctx context.Context, task github.Issue) (place, github.P
 	// GitHub is still computing whether the PR merges.
 	case pr.Mergeable == nil:
 		return waiting, pr, nil, nil
+	// A conflict is resolver's.
 	case !*pr.Mergeable:
-		return conflicted, pr, nil, nil
+		return away, pr, nil, nil
 	}
 	ci, failed, err := r.GitHub.CheckCI(ctx, pr.HeadSHA)
 	if err != nil {
