@@ -95,12 +95,12 @@ func TestList(t *testing.T) {
 	f.answer("ls", `{
   "sandboxes": [
     {
-      "name": "exomecha-task-o-r-12-builder",
+      "name": "exomecha-run-o-r-12-builder",
       "id": "e6a2a78c-c537-45ef-b69d-54ad11643c2b",
       "agent": "claude",
       "status": "running",
       "last_used_at": "2026-10-01T09:19:41.677554Z",
-      "workspaces": ["/Users/me/.exomecha/o/r/sandboxes/exomecha-task-o-r-12-builder/box"],
+      "workspaces": ["/Users/me/.exomecha/o/r/sandboxes/exomecha-run-o-r-12-builder/box"],
       "created_at": "2026-10-01T09:19:37Z"
     },
     {"name": "other", "status": "stopped"}
@@ -110,7 +110,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Box{{Name: "exomecha-task-o-r-12-builder", Status: "running"}, {Name: "other", Status: "stopped"}}
+	want := []Box{{Name: "exomecha-run-o-r-12-builder", Status: "running"}, {Name: "other", Status: "stopped"}}
 	if !slices.Equal(boxes, want) {
 		t.Errorf("List = %+v, want %+v", boxes, want)
 	}
@@ -241,14 +241,14 @@ func TestSlugCutAtADash(t *testing.T) {
 }
 
 func TestPrefix(t *testing.T) {
-	if got := Prefix("LeeShinYeoung", "jazzing"); got != "exomecha-task-leeshinyeoung-jazzing-" {
+	if got := Prefix("LeeShinYeoung", "jazzing"); got != "exomecha-run-leeshinyeoung-jazzing-" {
 		t.Errorf("Prefix = %q", got)
 	}
 }
 
 func TestNameFits63(t *testing.T) {
 	prefix := Prefix("some-organization", strings.Repeat("long-repository-name-", 3))
-	for _, role := range []string{"builder", "resolver"} {
+	for _, role := range []string{"builder", "resolver", "reviewer", "splitter", "sequencer"} {
 		if name := Name(prefix, 9999999, role); len(name) > 63 {
 			t.Errorf("%s is %d chars, sbx allows 63", name, len(name))
 		}
@@ -277,6 +277,7 @@ func TestParse(t *testing.T) {
 		{prefix + "x-12-builder", 0, "", false},
 		{Name(Prefix("o", "r2"), 12, "builder"), 0, "", false},
 		{Name(Prefix("o", "r-2"), 12, "builder"), 0, "", false},
+		{"exomecha-task-o-r-12-builder", 0, "", false},
 		{"exomecha-build-o-r", 0, "", false},
 		{"impl-run-12-builder", 0, "", false},
 	} {

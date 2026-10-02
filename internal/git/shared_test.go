@@ -47,7 +47,7 @@ func TestSendToAndFetchFrom(t *testing.T) {
 	writeFile(t, filepath.Join(box, "new.txt"), "new\n")
 	gittest.CommitAll(t, box, "add new.txt")
 
-	head, err := f.git.FetchFrom(t.Context(), box, "exomecha-task-x-1-builder")
+	head, err := f.git.FetchFrom(t.Context(), box, "exomecha-run-x-1-builder")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,10 +67,10 @@ func TestSendToAndFetchFrom(t *testing.T) {
 		t.Errorf("Show(new.txt) on base = %q, %v, %v, want no file", got, ok, err)
 	}
 
-	if err := f.git.DropRef(t.Context(), "exomecha-task-x-1-builder"); err != nil {
+	if err := f.git.DropRef(t.Context(), "exomecha-run-x-1-builder"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := f.git.Rev(t.Context(), "refs/exomecha/exomecha-task-x-1-builder"); err != nil || ok {
+	if _, ok, err := f.git.Rev(t.Context(), "refs/exomecha/exomecha-run-x-1-builder"); err != nil || ok {
 		t.Errorf("ref left after DropRef: %v, %v", ok, err)
 	}
 }

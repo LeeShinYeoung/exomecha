@@ -95,7 +95,7 @@ The worker's comment says why it is blocked and what needs deciding.
 
 Stop exomecha, then remove what it keeps on this machine for the project:
 
-- its sandboxes, named `exomecha-task-<slug>-...` and `exomecha-build-<slug>`, with `sbx rm --force`
+- its sandboxes, named `exomecha-run-<slug>-...` and `exomecha-build-<slug>`, with `sbx rm --force`
 - its templates, `exomecha-<slug>` with any tag, with `sbx template rm --force`
 - `~/.exomecha/<owner>/<repo>`
 

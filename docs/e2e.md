@@ -31,7 +31,7 @@ The first takes about 2 minutes. The second spends a little Claude usage and tak
    ```
    R=<owner>/<practice repository>
    ```
-   `<sandbox>` is a Task's sandbox as `sbx ls` shows it, `exomecha-task-<slug>-<task>-builder` (see the README for the slug).
+   `<sandbox>` is a Task's sandbox as `sbx ls` shows it, `exomecha-run-<slug>-<task>-builder` (see the README for the slug).
 
 Stopping exomecha with Ctrl-C pauses every worker. A run already in a sandbox keeps going, and exomecha picks it up when it starts again. Use this to line up the state a scenario needs, then start exomecha again.
 

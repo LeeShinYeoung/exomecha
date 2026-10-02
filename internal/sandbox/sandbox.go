@@ -143,7 +143,7 @@ func Slug(owner, repo string) string {
 }
 
 func Prefix(owner, repo string) string {
-	return "exomecha-task-" + Slug(owner, repo) + "-"
+	return "exomecha-run-" + Slug(owner, repo) + "-"
 }
 
 func Name(prefix string, issue int, role string) string {
