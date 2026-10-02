@@ -25,8 +25,8 @@ var setupTimeout = 10 * time.Minute
 // the script breaks one of its rules, which only a person can fix: it exits 0 in time, and it
 // leaves the working copy as git had it. What it leaves running stays, since the AI's tests may
 // need it, and goes away with the sandbox.
-func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err error) {
-	upToDate, err := t.Git.IsAncestor(ctx, l.start.Base, l.start.Before)
+func (r *runs) setup(ctx context.Context, l launch) (problem string, err error) {
+	upToDate, err := r.Git.IsAncestor(ctx, l.in.Base, l.in.Head)
 	if err != nil {
 		return "", err
 	}
@@ -39,7 +39,7 @@ func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err erro
 	defer cancel()
 	start := time.Now()
 	env := []string{"EXOMECHA_TASK=" + strconv.Itoa(l.task)}
-	out, err := t.Sandboxes.Exec(runCtx, l.name, repoDir, env, "sh", "-c", script, "sh", t.ctl(l.name))
+	out, err := r.Sandboxes.Exec(runCtx, l.name, repoDir, env, "sh", "-c", script, "sh", r.ctl(l.name))
 	if err != nil {
 		return "", fmt.Errorf("run %s: %w", setupScript, err)
 	}
@@ -48,14 +48,14 @@ func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err erro
 		return "", fmt.Errorf("read the exit status of %s: %q", setupScript, out)
 	}
 
-	head, changes := l.start.Before, ""
+	head, changes := l.in.Head, ""
 	if code == 0 {
-		out, err := t.git(ctx, l.name, repoDir, "rev-parse", "HEAD")
+		out, err := r.git(ctx, l.name, repoDir, "rev-parse", "HEAD")
 		if err != nil {
 			return "", err
 		}
 		head = strings.TrimSpace(out)
-		if changes, err = t.git(ctx, l.name, repoDir, "status", "--porcelain"); err != nil {
+		if changes, err = r.git(ctx, l.name, repoDir, "status", "--porcelain"); err != nil {
 			return "", err
 		}
 		// Not TrimSpace: a line for an unstaged change starts with a space.
@@ -68,7 +68,7 @@ func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err erro
 		what = fmt.Sprintf("did not end cleanly (it ran past %d minutes). It must exit 0 within %d minutes.", minutes, minutes)
 	case code != 0:
 		what = fmt.Sprintf("did not end cleanly (exit status %d). It must exit 0 within %d minutes.", code, minutes)
-	case head != l.start.Before || changes != "":
+	case head != l.in.Head || changes != "":
 		// Anything git can see, the AI can commit into the PR.
 		what = "changed the working copy. Everything it creates must be ignored by git, and it must not edit tracked files or commit."
 	default:
@@ -78,7 +78,7 @@ func (t *taskbox) setup(ctx context.Context, l launch) (problem string, err erro
 
 	// The details stay in the log. The output can hold secrets, and the comment goes on the issue.
 	slog.Warn("setup script rejected", "task", l.task, "why", what, "exit", code,
-		"head_moved", head != l.start.Before, "changes", changes, "output", t.tail(l.name, "setup.log"))
+		"head_moved", head != l.in.Head, "changes", changes, "output", r.tail(l.name, "setup.log"))
 	fix := setupFix
 	if !upToDate {
 		// Fixing the base branch cannot help a branch that lacks what the script relies on, such as a newer .gitignore.

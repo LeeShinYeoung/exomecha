@@ -24,7 +24,7 @@ func (e *env) conflictTask(feature, main map[string]string) (task, pr int, head 
 	return task, pr, head
 }
 
-func (e *env) resolver() *resolver { return &resolver{e.deps, e.box} }
+func (e *env) resolver() *resolver { return &resolver{e.deps, e.runs} }
 
 // resolve runs one resolver round for the Task and fails the test on an error.
 func (e *env) resolve(n int) {
@@ -34,7 +34,7 @@ func (e *env) resolve(n int) {
 	}
 }
 
-func (e *env) resolverBox(n int) string { return e.box.name(n, resolverRole) }
+func (e *env) resolverBox(n int) string { return e.runs.name(n, resolverRole) }
 
 // commitMerge commits the merge in progress the way the AI does, with git's merge message.
 func commitMerge(t *testing.T, repo string) {
@@ -65,7 +65,7 @@ func TestResolverPicks(t *testing.T) {
 	conflicting, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	mergeable, _, _ := e.reviewTask()
 	e.sbx.add(e.resolverBox(mergeable))
-	e.sbx.add(e.box.name(99, builderRole))
+	e.sbx.add(e.runs.name(99, builderRole))
 
 	picked, err := e.resolver().Pick(t.Context())
 	if err != nil {
@@ -269,8 +269,8 @@ func TestResolverThreeFailuresGoStuck(t *testing.T) {
 
 func TestResolverWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
-	e.sbx.add(e.box.name(99, builderRole))
+	e.runs.SandboxLimit = 1
+	e.sbx.add(e.runs.name(99, builderRole))
 	task, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
 	e.resolve(task)
@@ -295,7 +295,7 @@ func TestResolverStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 		t.Errorf("branch = %s, want the person's push %s left alone", got, pushed)
 	}
 	e.clock.advance(time.Minute)
-	if got := e.box.fail(name); got != 1 {
+	if got := e.runs.fail(name); got != 1 {
 		t.Errorf("a branch change counted as a failed run")
 	}
 }

@@ -33,11 +33,11 @@ func (e *env) testLaunch() launch {
 	base := e.rev("origin/main")
 	return launch{
 		task:    1,
-		name:    e.box.name(1, "builder"),
+		name:    e.runs.name(1, "builder"),
 		branch:  branchName(1),
-		start:   started{Before: base, Base: base},
+		in:      inputs{Head: base, Base: base},
 		request: agent.Request{Instructions: "the builder prompt", Schema: builderSchema},
-		input: func(_ context.Context, ranSetup bool, _ *started) (string, string, error) {
+		input: func(_ context.Context, ranSetup bool, _ *inputs) (string, string, error) {
 			if ranSetup {
 				return "setup ran", "", nil
 			}
@@ -48,7 +48,7 @@ func (e *env) testLaunch() launch {
 
 func (e *env) open(l launch) string {
 	e.t.Helper()
-	problem, err := e.box.open(e.t.Context(), l)
+	problem, err := e.runs.open(e.t.Context(), l)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func (e *env) open(l launch) string {
 
 func (e *env) readCtl(name, file string) string {
 	e.t.Helper()
-	b, err := os.ReadFile(filepath.Join(e.box.ctl(name), file))
+	b, err := os.ReadFile(filepath.Join(e.runs.ctl(name), file))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	}
 
 	box := e.sbx.box(l.name)
-	if box.template != e.envr.ref || box.workspace != e.box.ctl(l.name) {
+	if box.template != e.envr.ref || box.workspace != e.runs.ctl(l.name) {
 		t.Errorf("created with template %q, workspace %q", box.template, box.workspace)
 	}
 	if !slices.Equal(box.deny, []string{"ssh.github.com"}) || !slices.Equal(box.allowed, e.envr.hosts) {
@@ -85,8 +85,8 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	if got := gittest.Run(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); got != l.branch {
 		t.Errorf("sandbox repository is on %q, want %s", got, l.branch)
 	}
-	if got := gittest.Run(t, repo, "rev-parse", "origin/main"); got != l.start.Base {
-		t.Errorf("origin/main in the sandbox = %s, want %s", got, l.start.Base)
+	if got := gittest.Run(t, repo, "rev-parse", "origin/main"); got != l.in.Base {
+		t.Errorf("origin/main in the sandbox = %s, want %s", got, l.in.Base)
 	}
 	if got := gittest.Run(t, repo, "remote"); got != "" {
 		t.Errorf("sandbox repository has remotes: %q", got)
@@ -100,7 +100,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	if len(box.starts) != 1 {
 		t.Fatalf("starts = %q, want one", box.starts)
 	}
-	ctl := e.box.ctl(l.name)
+	ctl := e.runs.ctl(l.name)
 	start := box.starts[0]
 	if !slices.Equal(start[:5], []string{repoDir, "sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}) {
 		t.Errorf("start = %q", start)
@@ -119,8 +119,8 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	if got := e.readCtl(l.name, "run.sh"); got != runScript {
 		t.Errorf("run.sh = %q", got)
 	}
-	r, err := e.box.read(t.Context(), l.name)
-	if err != nil || r.state != running || r.start.Before != l.start.Before {
+	r, err := e.runs.read(t.Context(), l.name)
+	if err != nil || r.state != running || r.in.Head != l.in.Head {
 		t.Errorf("after open: %+v, %v", r, err)
 	}
 }
@@ -152,17 +152,17 @@ func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 func TestOpenEnvironmentError(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.envr.err = errors.New("sbx template ls: daemon not running")
-	if problem, err := e.box.open(t.Context(), e.testLaunch()); problem != "" || err == nil {
+	if problem, err := e.runs.open(t.Context(), e.testLaunch()); problem != "" || err == nil {
 		t.Errorf("open = %q, %v, want an error and no problem", problem, err)
 	}
 }
 
 func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
+	e.runs.SandboxLimit = 1
 	e.sbx.add(e.deps.SandboxPrefix + "9-resolver")
 	l := e.testLaunch()
-	if _, err := e.box.open(t.Context(), l); !errors.Is(err, errNoSlot) {
+	if _, err := e.runs.open(t.Context(), l); !errors.Is(err, errNoSlot) {
 		t.Errorf("open = %v, want errNoSlot", err)
 	}
 	if e.sbx.exists(l.name) {
@@ -269,7 +269,7 @@ func TestSetupOnABranchOlderThanTheScript(t *testing.T) {
 	old := gittest.Commit(t, e.origin, branchName(1), "main", map[string]string{"feature.txt": "first\n"})
 	gittest.Commit(t, e.origin, "main", "", setupRepo("echo ran > "+setupMarker+"\n"))
 	l := e.testLaunch()
-	l.start.Before = old
+	l.in.Head = old
 
 	e.wantOpenProblem(l, "changed the working copy", "merge the base branch into `"+branchName(1)+"`")
 }

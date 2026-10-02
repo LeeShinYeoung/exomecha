@@ -20,7 +20,7 @@ import (
 
 const builderDone = `{"result": "done", "summary": "did it", "stuck_reason": ""}`
 
-func (e *env) builder() *builder { return &builder{e.deps, e.box} }
+func (e *env) builder() *builder { return &builder{e.deps, e.runs} }
 
 // step runs one builder round for the Task and fails the test on an error.
 func (e *env) step(n int) {
@@ -30,7 +30,7 @@ func (e *env) step(n int) {
 	}
 }
 
-func (e *env) builderBox(n int) string { return e.box.name(n, builderRole) }
+func (e *env) builderBox(n int) string { return e.runs.name(n, builderRole) }
 
 // play acts as the AI in a started sandbox: work changes the sandbox's repository, then claude
 // ends with the structured result.
@@ -63,7 +63,7 @@ func (e *env) wantRemoved(name string) {
 	if e.sbx.exists(name) {
 		e.t.Errorf("sandbox %s still exists", name)
 	}
-	if _, err := os.Stat(e.box.dir(name)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(e.runs.dir(name)); !errors.Is(err, os.ErrNotExist) {
 		e.t.Errorf("directory of %s still exists: %v", name, err)
 	}
 }
@@ -99,7 +99,7 @@ func TestBuilderPicks(t *testing.T) {
 	working := e.gh.AddIssue("working", "", label.Task, string(label.Working))
 	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.Task, string(label.Review))
 	e.sbx.add(e.builderBox(reviewed))
-	e.sbx.add(e.box.name(waiting, "resolver"))
+	e.sbx.add(e.runs.name(waiting, "resolver"))
 
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
@@ -279,10 +279,10 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 		t.Errorf("an sbx error left %d comments", n)
 	}
 	// An error of exomecha's own is no failure of the run, but the next try waits.
-	if e.box.due(e.builderBox(task)) {
+	if e.runs.due(e.builderBox(task)) {
 		t.Error("no backoff after an error")
 	}
-	if got := e.box.fail(e.builderBox(task)); got != 1 {
+	if got := e.runs.fail(e.builderBox(task)); got != 1 {
 		t.Errorf("an sbx error counted as a failed run: %d", got-1)
 	}
 }
@@ -304,8 +304,8 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
 	e.deps.Environment = template.New(e.deps.Git, "owner", "repo")
-	e.box = newTaskbox(e.deps, nil)
-	e.box.now = e.clock.now
+	e.runs = newRuns(e.deps, nil)
+	e.runs.now = e.clock.now
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 
 	e.step(task)
@@ -321,7 +321,7 @@ func TestBuilderRequeuesWorkingTaskWithoutSandbox(t *testing.T) {
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
 	e.step(task)
 	e.wantStatus(task, label.Queued)
-	if got := e.box.fail(e.builderBox(task)); got != 1 {
+	if got := e.runs.fail(e.builderBox(task)); got != 1 {
 		t.Errorf("a working Task with no sandbox counted as a failure")
 	}
 }
@@ -384,7 +384,7 @@ func TestBuilderDeadAndGoneRuns(t *testing.T) {
 			e.step(task)
 			e.wantStatus(task, label.Queued)
 			e.wantRemoved(name)
-			if got := e.box.fail(name); got != 2 {
+			if got := e.runs.fail(name); got != 2 {
 				t.Errorf("the run was counted %d times, want once", got-1)
 			}
 		})
@@ -448,7 +448,7 @@ func TestBuilderUsageLimitEndIsNotCounted(t *testing.T) {
 
 	e.wantStatus(task, label.Queued)
 	e.wantRemoved(name)
-	if got := e.box.fail(name); got != 1 {
+	if got := e.runs.fail(name); got != 1 {
 		t.Errorf("a usage limit end counted as a failed run")
 	}
 }
@@ -466,8 +466,8 @@ func TestBuilderRemovesTheSandboxWhenTheLabelChanges(t *testing.T) {
 
 func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
-	e.sbx.add(e.box.name(99, "resolver"))
+	e.runs.SandboxLimit = 1
+	e.sbx.add(e.runs.name(99, "resolver"))
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 
 	e.step(task)
@@ -481,7 +481,7 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 // A template build takes minutes before the sandbox exists. The start must hold its slot all along.
 func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.box.SandboxLimit = 1
+	e.runs.SandboxLimit = 1
 	e.envr.wait = make(chan chan struct{})
 	first := e.gh.AddIssue("First", "", label.Task, string(label.Queued))
 	second := e.gh.AddIssue("Second", "", label.Task, string(label.Queued))
@@ -517,7 +517,7 @@ func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	running, name := e.startedTask()
-	e.box.gate = &Gate{
+	e.runs.gate = &Gate{
 		Check: func(context.Context) (agent.Usage, error) {
 			return agent.Usage{Known: true, FiveHour: agent.Window{Used: 0.99}}, nil
 		},
@@ -543,8 +543,8 @@ func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 	task, name := e.startedTask()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
 
-	e.box = newTaskbox(e.deps, nil)
-	e.box.now = e.clock.now
+	e.runs = newRuns(e.deps, nil)
+	e.runs.now = e.clock.now
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -574,7 +574,7 @@ func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	if got := gittest.Head(e.origin, branch); got != pushed {
 		t.Errorf("branch = %s, want the person's push %s left alone", got, pushed)
 	}
-	if got := e.box.fail(name); got != 1 {
+	if got := e.runs.fail(name); got != 1 {
 		t.Errorf("a branch change counted as a failed run")
 	}
 }

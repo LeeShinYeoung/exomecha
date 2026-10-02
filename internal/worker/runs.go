@@ -55,7 +55,7 @@ echo $? > "$ctl/exit.tmp"
 mv "$ctl/exit.tmp" "$ctl/exit"
 `
 
-// errNoSlot means the slots filled up between ready and the create, which only a sandbox made
+// errNoSlot means the slots filled up between reserve and the create, which only a sandbox made
 // outside this exomecha can do.
 var errNoSlot = errors.New("no free sandbox slot")
 
@@ -77,30 +77,30 @@ func (s state) String() string {
 
 type run struct {
 	state state
-	start started
+	in    inputs
 }
 
-// started is what exomecha records once claude is running. It lives outside the directory the
+// inputs is what exomecha records once claude is running. It lives outside the directory the
 // sandbox shares, so the AI cannot change what its work is checked against.
-type started struct {
-	Before    string   `json:"before"` // the commit claude started from
+type inputs struct {
+	Head      string   `json:"head"`   // the commit claude started from
 	Remote    string   `json:"remote"` // the Task branch on GitHub at the start, "" when there was none
 	Base      string   `json:"base"`   // the base branch commit the sandbox got
 	PR        int      `json:"pr,omitempty"`
 	Conflicts []string `json:"conflicts,omitempty"`
 }
 
-// taskbox is what builder and resolver share: the sandboxes, the limit on how many run at once,
+// runs is what builder and resolver share: the sandboxes, the limit on how many run at once,
 // and what exomecha remembers about each run. Memory is lost on restart, and nothing depends on
 // it except stall times and failure counts.
-type taskbox struct {
+type runs struct {
 	Deps
 	gate *Gate
 	now  func() time.Time
 
 	// Held from counting the sandboxes until the new one exists. It also guards starting.
 	slots sync.Mutex
-	// The sandboxes whose starts hold a slot, from ready until release.
+	// The sandboxes whose starts hold a slot, from reserve until release.
 	starting map[string]bool
 
 	mu    sync.Mutex
@@ -120,8 +120,8 @@ type tries struct {
 	next     time.Time
 }
 
-func newTaskbox(d Deps, gate *Gate) *taskbox {
-	return &taskbox{
+func newRuns(d Deps, gate *Gate) *runs {
+	return &runs{
 		Deps:     d,
 		gate:     gate,
 		now:      time.Now,
@@ -131,153 +131,153 @@ func newTaskbox(d Deps, gate *Gate) *taskbox {
 	}
 }
 
-func (t *taskbox) name(task int, role string) string {
-	return sandbox.Name(t.SandboxPrefix, task, role)
+func (r *runs) name(task int, role string) string {
+	return sandbox.Name(r.SandboxPrefix, task, role)
 }
 
 // dir holds what exomecha keeps about one sandbox on this machine.
-func (t *taskbox) dir(name string) string { return filepath.Join(t.SandboxDir, name) }
+func (r *runs) dir(name string) string { return filepath.Join(r.SandboxDir, name) }
 
 // ctl is the sandbox's workspace: the part of dir the sandbox sees, at the same path. The AI can
 // write anything there.
-func (t *taskbox) ctl(name string) string { return filepath.Join(t.dir(name), "ctl") }
+func (r *runs) ctl(name string) string { return filepath.Join(r.dir(name), "ctl") }
 
-func (t *taskbox) read(ctx context.Context, name string) (run, error) {
-	boxes, err := t.Sandboxes.List(ctx)
+func (r *runs) read(ctx context.Context, name string) (run, error) {
+	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return run{}, err
 	}
 	i := slices.IndexFunc(boxes, func(b sandbox.Box) bool { return b.Name == name })
-	var r run
-	b, err := os.ReadFile(filepath.Join(t.dir(name), "start.json"))
+	var out run
+	b, err := os.ReadFile(filepath.Join(r.dir(name), "start.json"))
 	if errors.Is(err, fs.ErrNotExist) {
-		_, err := os.Lstat(t.dir(name))
+		_, err := os.Lstat(r.dir(name))
 		switch {
 		case i < 0 && errors.Is(err, fs.ErrNotExist):
-			r.state = none
+			out.state = none
 		case err != nil && !errors.Is(err, fs.ErrNotExist):
-			return r, err
+			return out, err
 		default:
-			r.state = preparing
+			out.state = preparing
 		}
-		return r, nil
+		return out, nil
 	}
 	if err != nil {
-		return r, err
+		return out, err
 	}
-	if err := json.Unmarshal(b, &r.start); err != nil {
-		return r, fmt.Errorf("read start of %s: %w", name, err)
+	if err := json.Unmarshal(b, &out.in); err != nil {
+		return out, fmt.Errorf("read start of %s: %w", name, err)
 	}
 	if i < 0 {
-		r.state = gone
-		return r, nil
+		out.state = gone
+		return out, nil
 	}
-	if _, err := os.Lstat(filepath.Join(t.ctl(name), "exit")); err == nil {
-		r.state = finished
-		return r, nil
+	if _, err := os.Lstat(filepath.Join(r.ctl(name), "exit")); err == nil {
+		out.state = finished
+		return out, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return r, err
+		return out, err
 	}
 	if !boxes[i].Running() {
-		r.state = dead
-		return r, nil
+		out.state = dead
+		return out, nil
 	}
-	quiet, err := t.quiet(name)
+	quiet, err := r.quiet(name)
 	if err != nil {
-		return r, err
+		return out, err
 	}
-	r.state = running
+	out.state = running
 	if quiet {
-		r.state = stalled
+		out.state = stalled
 	}
-	return r, nil
+	return out, nil
 }
 
 // quiet reports whether the run's output has not changed for stallAfter, as exomecha saw it.
 // It counts only time exomecha watched, on a clock that stands still while this machine sleeps.
-func (t *taskbox) quiet(name string) (bool, error) {
+func (r *runs) quiet(name string) (bool, error) {
 	size, mod := int64(-1), time.Time{}
-	info, err := os.Lstat(filepath.Join(t.ctl(name), "stream.jsonl"))
+	info, err := os.Lstat(filepath.Join(r.ctl(name), "stream.jsonl"))
 	if err == nil {
 		size, mod = info.Size(), info.ModTime()
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	now := t.now()
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	p, ok := t.seen[name]
+	now := r.now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.seen[name]
 	if !ok || p.size != size || !p.mod.Equal(mod) {
-		t.seen[name] = progress{size: size, mod: mod, at: now}
+		r.seen[name] = progress{size: size, mod: mod, at: now}
 		return false, nil
 	}
 	return now.Sub(p.at) >= stallAfter, nil
 }
 
-func (t *taskbox) due(name string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	tr, ok := t.tries[name]
-	return !ok || !t.now().Before(tr.next)
+func (r *runs) due(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tr, ok := r.tries[name]
+	return !ok || !r.now().Before(tr.next)
 }
 
 // strike puts off the next attempt, twice as long as the last one each time in a row.
-func (t *taskbox) strike(name string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.strikeLocked(name)
+func (r *runs) strike(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.strikeLocked(name)
 }
 
-func (t *taskbox) strikeLocked(name string) *tries {
-	tr := t.tries[name]
+func (r *runs) strikeLocked(name string) *tries {
+	tr := r.tries[name]
 	if tr == nil {
 		tr = &tries{}
-		t.tries[name] = tr
+		r.tries[name] = tr
 	}
 	tr.strikes++
-	tr.next = t.now().Add(min(maxBackoff, minBackoff<<min(tr.strikes-1, 10)))
+	tr.next = r.now().Add(min(maxBackoff, minBackoff<<min(tr.strikes-1, 10)))
 	return tr
 }
 
-func (t *taskbox) failures(name string) int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if tr := t.tries[name]; tr != nil {
+func (r *runs) failures(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if tr := r.tries[name]; tr != nil {
 		return tr.failures
 	}
 	return 0
 }
 
 // fail counts a failed run and returns how many failed in a row.
-func (t *taskbox) fail(name string) int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	tr := t.strikeLocked(name)
+func (r *runs) fail(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tr := r.strikeLocked(name)
 	tr.failures++
 	return tr.failures
 }
 
-func (t *taskbox) forget(name string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.tries, name)
+func (r *runs) forget(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.tries, name)
 }
 
 // prune forgets the failures of role's Tasks that are not in keep, the Tasks still under that
 // worker's labels.
-func (t *taskbox) prune(role string, keep map[int]bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for name := range t.tries {
-		if n, r, ok := sandbox.Parse(t.SandboxPrefix, name); ok && r == role && !keep[n] {
-			delete(t.tries, name)
+func (r *runs) prune(role string, keep map[int]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name := range r.tries {
+		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == role && !keep[n] {
+			delete(r.tries, name)
 		}
 	}
 }
 
 // found returns the Tasks that have a sandbox or a directory for role.
-func (t *taskbox) found(ctx context.Context, role string) ([]int, error) {
-	boxes, err := t.Sandboxes.List(ctx)
+func (r *runs) found(ctx context.Context, role string) ([]int, error) {
+	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +285,7 @@ func (t *taskbox) found(ctx context.Context, role string) ([]int, error) {
 	for _, b := range boxes {
 		names = append(names, b.Name)
 	}
-	entries, err := os.ReadDir(t.SandboxDir)
+	entries, err := os.ReadDir(r.SandboxDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
@@ -294,42 +294,42 @@ func (t *taskbox) found(ctx context.Context, role string) ([]int, error) {
 	}
 	var out []int
 	for _, name := range names {
-		if n, r, ok := sandbox.Parse(t.SandboxPrefix, name); ok && r == role && !slices.Contains(out, n) {
+		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == role && !slices.Contains(out, n) {
 			out = append(out, n)
 		}
 	}
 	return out, nil
 }
 
-// ready reports whether a new run may start: the usage gate is open and a sandbox slot is free.
+// reserve reports whether a new run may start: the usage gate is open and a sandbox slot is free.
 // When it is, the slot is name's until release, so other starts count it while the template
 // builds and the code goes in, long before the sandbox exists.
-func (t *taskbox) ready(ctx context.Context, name string) (bool, error) {
-	if t.gate != nil {
-		if open, err := t.gate.Open(ctx); err != nil || !open {
+func (r *runs) reserve(ctx context.Context, name string) (bool, error) {
+	if r.gate != nil {
+		if open, err := r.gate.Open(ctx); err != nil || !open {
 			return false, err
 		}
 	}
-	t.slots.Lock()
-	defer t.slots.Unlock()
-	if free, err := t.slotFree(ctx, name); err != nil || !free {
+	r.slots.Lock()
+	defer r.slots.Unlock()
+	if free, err := r.slotFree(ctx, name); err != nil || !free {
 		return false, err
 	}
-	t.starting[name] = true
+	r.starting[name] = true
 	return true, nil
 }
 
-func (t *taskbox) release(name string) {
-	t.slots.Lock()
-	defer t.slots.Unlock()
-	delete(t.starting, name)
+func (r *runs) release(name string) {
+	r.slots.Lock()
+	defer r.slots.Unlock()
+	delete(r.starting, name)
 }
 
 // slotFree counts every sandbox of this repository, stopped ones too, so the count stays right
 // across restarts, and every start that holds a slot. self is the start asking. The caller holds
 // slots.
-func (t *taskbox) slotFree(ctx context.Context, self string) (bool, error) {
-	boxes, err := t.Sandboxes.List(ctx)
+func (r *runs) slotFree(ctx context.Context, self string) (bool, error) {
+	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -337,15 +337,15 @@ func (t *taskbox) slotFree(ctx context.Context, self string) (bool, error) {
 	used := map[string]bool{}
 	for _, b := range boxes {
 		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
-		if _, r, ok := sandbox.Parse(t.SandboxPrefix, b.Name); ok && (r == builderRole || r == resolverRole) {
+		if _, role, ok := sandbox.Parse(r.SandboxPrefix, b.Name); ok && (role == builderRole || role == resolverRole) {
 			used[b.Name] = true
 		}
 	}
-	for name := range t.starting {
+	for name := range r.starting {
 		used[name] = true
 	}
 	delete(used, self)
-	return len(used) < t.SandboxLimit, nil
+	return len(used) < r.SandboxLimit, nil
 }
 
 // launch is a run about to start.
@@ -353,30 +353,30 @@ type launch struct {
 	task    int
 	name    string
 	branch  string
-	start   started
+	in      inputs
 	request agent.Request // Instructions and Schema. The input comes from input.
-	// input runs once setup has run, and builds claude's input. It may fill in start, and it
-	// returns a problem the way open does.
-	input func(ctx context.Context, ranSetup bool, s *started) (input, problem string, err error)
+	// input runs once setup has run, and builds claude's input. It may fill in the inputs, and
+	// it returns a problem the way open does.
+	input func(ctx context.Context, ranSetup bool, in *inputs) (input, problem string, err error)
 }
 
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
-func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error) {
-	ref, err := t.Environment.Template(ctx)
+func (r *runs) open(ctx context.Context, l launch) (problem string, err error) {
+	ref, err := r.Environment.Template(ctx)
 	if problem, err := needsPerson(l.task, err); problem != "" || err != nil {
 		return problem, err
 	}
-	hosts, err := t.Environment.AllowedHosts(ctx)
+	hosts, err := r.Environment.AllowedHosts(ctx)
 	if problem, err := needsPerson(l.task, err); problem != "" || err != nil {
 		return problem, err
 	}
-	script, hasScript, err := t.Git.Show(ctx, l.start.Base, setupScript)
+	script, hasScript, err := r.Git.Show(ctx, l.in.Base, setupScript)
 	if err != nil {
 		return "", err
 	}
 
-	ctl := t.ctl(l.name)
+	ctl := r.ctl(l.name)
 	if err := os.MkdirAll(ctl, 0o755); err != nil {
 		return "", err
 	}
@@ -389,46 +389,46 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 		}
 	}
 
-	t.slots.Lock()
-	free, err := t.slotFree(ctx, l.name)
+	r.slots.Lock()
+	free, err := r.slotFree(ctx, l.name)
 	if err == nil && !free {
 		err = errNoSlot
 	}
 	if err == nil {
 		// Every other start waits on the slot lock, so a create that hangs must give up.
 		createCtx, cancel := context.WithTimeout(ctx, createTimeout)
-		err = t.Sandboxes.Create(createCtx, l.name, ref, ctl, deniedHosts)
+		err = r.Sandboxes.Create(createCtx, l.name, ref, ctl, deniedHosts)
 		cancel()
 	}
-	t.slots.Unlock()
+	r.slots.Unlock()
 	if err != nil {
 		return "", err
 	}
-	if err := t.Sandboxes.Allow(ctx, l.name, hosts); err != nil {
+	if err := r.Sandboxes.Allow(ctx, l.name, hosts); err != nil {
 		return "", err
 	}
-	if _, err := t.git(ctx, l.name, "", "init", "-q", repoDir); err != nil {
+	if _, err := r.git(ctx, l.name, "", "init", "-q", repoDir); err != nil {
 		return "", err
 	}
 	// Before setup, so the project's script can set another.
-	for _, kv := range [][2]string{{"user.name", t.GitName}, {"user.email", t.GitEmail}} {
-		if _, err := t.git(ctx, l.name, repoDir, "config", kv[0], kv[1]); err != nil {
+	for _, kv := range [][2]string{{"user.name", r.GitName}, {"user.email", r.GitEmail}} {
+		if _, err := r.git(ctx, l.name, repoDir, "config", kv[0], kv[1]); err != nil {
 			return "", err
 		}
 	}
-	if err := t.Git.SendTo(ctx, t.Sandboxes.GitURL(l.name, repoDir), l.start.Base, l.branch, l.start.Before); err != nil {
+	if err := r.Git.SendTo(ctx, r.Sandboxes.GitURL(l.name, repoDir), l.in.Base, l.branch, l.in.Head); err != nil {
 		return "", err
 	}
-	if _, err := t.git(ctx, l.name, repoDir, "checkout", "-q", l.branch); err != nil {
+	if _, err := r.git(ctx, l.name, repoDir, "checkout", "-q", l.branch); err != nil {
 		return "", err
 	}
 	if hasScript {
-		if problem, err := t.setup(ctx, l); problem != "" || err != nil {
+		if problem, err := r.setup(ctx, l); problem != "" || err != nil {
 			return problem, err
 		}
 	}
 
-	input, problem, err := l.input(ctx, hasScript, &l.start)
+	input, problem, err := l.input(ctx, hasScript, &l.in)
 	if problem != "" || err != nil {
 		return problem, err
 	}
@@ -436,22 +436,22 @@ func (t *taskbox) open(ctx context.Context, l launch) (problem string, err error
 		return "", err
 	}
 	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.StreamArgs(l.request)...)
-	if err := t.Sandboxes.Start(ctx, l.name, repoDir, args...); err != nil {
+	if err := r.Sandboxes.Start(ctx, l.name, repoDir, args...); err != nil {
 		return "", err
 	}
-	if err := t.record(l.name, l.start); err != nil {
+	if err := r.record(l.name, l.in); err != nil {
 		return "", err
 	}
 	slog.Info("started claude in a sandbox", "task", l.task, "sandbox", l.name, "template", ref)
 	return "", nil
 }
 
-func (t *taskbox) record(name string, s started) error {
-	b, err := json.Marshal(s)
+func (r *runs) record(name string, in inputs) error {
+	b, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(t.dir(name), "start.json")
+	path := filepath.Join(r.dir(name), "start.json")
 	if err := os.WriteFile(path+".tmp", b, 0o644); err != nil {
 		return err
 	}
@@ -470,8 +470,8 @@ func needsPerson(task int, err error) (string, error) {
 }
 
 // git runs git in the sandbox, in dir if it is not empty.
-func (t *taskbox) git(ctx context.Context, name, dir string, args ...string) (string, error) {
-	out, err := t.Sandboxes.Exec(ctx, name, dir, nil, append([]string{"git"}, args...)...)
+func (r *runs) git(ctx context.Context, name, dir string, args ...string) (string, error) {
+	out, err := r.Sandboxes.Exec(ctx, name, dir, nil, append([]string{"git"}, args...)...)
 	return string(out), err
 }
 
@@ -479,20 +479,20 @@ const noCommit = "The AI left its repository with no commit checked out, so ther
 
 // committed reports whether the sandbox's repository has a commit checked out. Without one a fetch
 // fails the same way on every try, so it has to be caught before.
-func (t *taskbox) committed(ctx context.Context, name string) (bool, error) {
+func (r *runs) committed(ctx context.Context, name string) (bool, error) {
 	// rev-parse exits 1 for an unborn HEAD, which Exec would report as an error.
-	out, err := t.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", "git rev-parse -q --verify HEAD || true")
+	out, err := r.Sandboxes.Exec(ctx, name, repoDir, nil, "sh", "-c", "git rev-parse -q --verify HEAD || true")
 	return strings.TrimSpace(string(out)) != "", err
 }
 
-func (t *taskbox) fetch(ctx context.Context, name string) (string, error) {
-	return t.Git.FetchFrom(ctx, t.Sandboxes.GitURL(name, repoDir), name)
+func (r *runs) fetch(ctx context.Context, name string) (string, error) {
+	return r.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, repoDir), name)
 }
 
 // outcome reads a finished run. failure says why the run failed, in words fit for a comment, and
 // detail adds what only the log gets. limited is set when the run ended at the Claude usage limit.
-func (t *taskbox) outcome(name string, schema bool) (res agent.Result, failure, detail string, limited bool) {
-	b, err := readCtl(t.ctl(name), "exit", 64)
+func (r *runs) outcome(name string, schema bool) (res agent.Result, failure, detail string, limited bool) {
+	b, err := readCtl(r.ctl(name), "exit", 64)
 	if err != nil {
 		return res, "exomecha could not read how claude ended", err.Error(), false
 	}
@@ -500,7 +500,7 @@ func (t *taskbox) outcome(name string, schema bool) (res agent.Result, failure, 
 	if err != nil {
 		return res, "exomecha could not read how claude ended", fmt.Sprintf("exit file holds %q", b), false
 	}
-	f, err := openCtl(t.ctl(name), "stream.jsonl")
+	f, err := openCtl(r.ctl(name), "stream.jsonl")
 	if err != nil {
 		return res, "exomecha could not read claude's output", err.Error(), false
 	}
@@ -525,8 +525,8 @@ func (t *taskbox) outcome(name string, schema bool) (res agent.Result, failure, 
 }
 
 // tail returns the end of a file in the sandbox's directory, for the log.
-func (t *taskbox) tail(name, file string) string {
-	f, err := openCtl(t.ctl(name), file)
+func (r *runs) tail(name, file string) string {
+	f, err := openCtl(r.ctl(name), file)
 	if err != nil {
 		return ""
 	}
@@ -580,18 +580,18 @@ func openCtl(ctl, file string) (*os.File, error) {
 
 // remove deletes the sandbox, which stops everything in it, and then its directory. keep moves
 // the run's files to failed/<name> first, for a person to read.
-func (t *taskbox) remove(ctx context.Context, name string, keep bool) error {
-	if err := t.Sandboxes.Remove(ctx, name); err != nil {
+func (r *runs) remove(ctx context.Context, name string, keep bool) error {
+	if err := r.Sandboxes.Remove(ctx, name); err != nil {
 		return fmt.Errorf("remove sandbox %s: %w", name, err)
 	}
 	if keep {
-		kept := filepath.Join(t.SandboxDir, "failed", name)
+		kept := filepath.Join(r.SandboxDir, "failed", name)
 		err := os.RemoveAll(kept)
 		if err == nil {
 			err = os.MkdirAll(filepath.Dir(kept), 0o755)
 		}
 		if err == nil {
-			err = os.Rename(t.ctl(name), kept)
+			err = os.Rename(r.ctl(name), kept)
 		}
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			slog.Warn("keep the failed run's files", "sandbox", name, "err", err)
@@ -599,14 +599,14 @@ func (t *taskbox) remove(ctx context.Context, name string, keep bool) error {
 			slog.Info("kept the failed run's files", "sandbox", name, "dir", kept)
 		}
 	}
-	if err := os.RemoveAll(t.dir(name)); err != nil {
+	if err := os.RemoveAll(r.dir(name)); err != nil {
 		return err
 	}
 	// The ref only matters while a run is harvested, and the next fetch for this name replaces it.
-	t.Git.DropRef(context.WithoutCancel(ctx), name)
-	t.mu.Lock()
-	delete(t.seen, name)
-	t.mu.Unlock()
+	r.Git.DropRef(context.WithoutCancel(ctx), name)
+	r.mu.Lock()
+	delete(r.seen, name)
+	r.mu.Unlock()
 	slog.Info("removed sandbox", "sandbox", name)
 	return nil
 }

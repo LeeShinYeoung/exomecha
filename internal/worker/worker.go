@@ -79,7 +79,7 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
 	// builder and resolver check the gate themselves, only before they start a run, so runs
 	// already in sandboxes are still watched and finished while usage is over the limit.
-	box := newTaskbox(d, gate)
+	runs := newRuns(d, gate)
 	workers := []struct {
 		worker Worker
 		limit  int // 0 means no limit
@@ -87,9 +87,9 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 	}{
 		{&splitter{d}, 1, gate},
 		{&sequencer{d}, 1, gate},
-		{&builder{d, box}, 0, nil},
+		{&builder{d, runs}, 0, nil},
 		{&reviewer{d}, 0, gate},
-		{&resolver{d, box}, 0, nil},
+		{&resolver{d, runs}, 0, nil},
 	}
 	var wg sync.WaitGroup
 	for _, w := range workers {

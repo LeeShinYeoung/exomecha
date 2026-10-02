@@ -29,7 +29,7 @@ type env struct {
 	envr   *fakeEnvironment
 	clock  *clock
 	deps   Deps
-	box    *taskbox
+	runs   *runs
 }
 
 func newEnv(t *testing.T, files map[string]string) *env {
@@ -64,8 +64,8 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
 	}
-	e.box = newTaskbox(e.deps, nil)
-	e.box.now = e.clock.now
+	e.runs = newRuns(e.deps, nil)
+	e.runs.now = e.clock.now
 	return e
 }
 

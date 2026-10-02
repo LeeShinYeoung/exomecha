@@ -61,7 +61,7 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
 	e.deps.SandboxPrefix = prefix
-	e.box = newTaskbox(e.deps, nil)
+	e.runs = newRuns(e.deps, nil)
 	task := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`. Commit it with the message `feat: add hello`.\n",
 		label.Task, string(label.Queued))
@@ -84,7 +84,7 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("still working after 10 minutes. stderr: %s", e.box.tail(name, "stderr.log"))
+			t.Fatalf("still working after 10 minutes. stderr: %s", e.runs.tail(name, "stderr.log"))
 		case <-time.After(5 * time.Second):
 		}
 	}
@@ -117,7 +117,7 @@ func TestRealResolverRun(t *testing.T) {
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-r%d-", time.Now().UnixNano()%100_000)
-	e.box = newTaskbox(e.deps, nil)
+	e.runs = newRuns(e.deps, nil)
 	task, _, head := e.conflictTask(map[string]string{"greeting.txt": "hello\nfrom the feature\n"}, map[string]string{"greeting.txt": "hello\nfrom main\n"})
 	e.gh.AddComment(task, "If greeting.txt conflicts, keep both added lines, main's line first.")
 	name := e.resolverBox(task)
@@ -138,7 +138,7 @@ func TestRealResolverRun(t *testing.T) {
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("not resolved after 10 minutes. stderr: %s", e.box.tail(name, "stderr.log"))
+			t.Fatalf("not resolved after 10 minutes. stderr: %s", e.runs.tail(name, "stderr.log"))
 		case <-time.After(5 * time.Second):
 		}
 	}
