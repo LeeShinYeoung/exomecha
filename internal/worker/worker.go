@@ -42,13 +42,14 @@ type Deps struct {
 	// builder and resolver run claude in sandboxes.
 	Sandboxes   Sandboxes
 	Environment Environment
-	// SandboxDir holds one directory per task sandbox, shared with that sandbox.
+	// SandboxDir holds one directory per run, shared with the run's sandbox.
 	SandboxDir string
-	// SandboxPrefix starts the name of every task sandbox of this repository and nothing else.
+	// SandboxPrefix starts the name of every run's sandbox of this repository and nothing else.
 	SandboxPrefix string
-	// SandboxLimit is how many task sandboxes may exist at once.
-	SandboxLimit int
-	// The commit identity for task sandboxes, the token owner's. A sandbox has none of its own.
+	// How many sandboxes of project runs, and of reader runs, may exist at once.
+	ProjectLimit int
+	ReadLimit    int
+	// The commit identity for project runs, the token owner's. A sandbox has none of its own.
 	GitName  string
 	GitEmail string
 }

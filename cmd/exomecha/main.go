@@ -47,7 +47,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	sandboxes, err := sandboxLimit()
+	projectLimit, err := limit("EXOMECHA_SANDBOX_LIMIT", 2)
+	if err != nil {
+		return err
+	}
+	readLimit, err := limit("EXOMECHA_READ_SANDBOX_LIMIT", 2)
 	if err != nil {
 		return err
 	}
@@ -95,7 +99,8 @@ func run() error {
 		Environment:   template.New(g, owner, name),
 		SandboxDir:    filepath.Join(root, "sandboxes"),
 		SandboxPrefix: sandbox.Prefix(owner, name),
-		SandboxLimit:  sandboxes,
+		ProjectLimit:  projectLimit,
+		ReadLimit:     readLimit,
 		GitName:       author,
 		GitEmail:      email,
 	}
@@ -108,7 +113,8 @@ func run() error {
 		slog.Info("created label", "label", l)
 	}
 
-	slog.Info("exomecha started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly, "sandbox_limit", sandboxes)
+	slog.Info("exomecha started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly,
+		"sandbox_limit", projectLimit, "read_sandbox_limit", readLimit)
 	gate := &worker.Gate{Check: agent.Claude{}.Usage, FiveHour: fiveHour, Weekly: weekly}
 	worker.Run(ctx, deps, gate)
 	slog.Info("exomecha stopped")
@@ -128,15 +134,15 @@ func usageLimit(name string, fallback int) (float64, error) {
 	return float64(n) / 100, nil
 }
 
-// sandboxLimit reads how many task sandboxes may exist at once.
-func sandboxLimit() (int, error) {
-	v := os.Getenv("EXOMECHA_SANDBOX_LIMIT")
+// limit reads how many sandboxes of one kind may exist at once.
+func limit(name string, fallback int) (int, error) {
+	v := os.Getenv(name)
 	if v == "" {
-		return 2, nil
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 {
-		return 0, fmt.Errorf("EXOMECHA_SANDBOX_LIMIT must be a whole number of at least 1: %q", v)
+		return 0, fmt.Errorf("%s must be a whole number of at least 1: %q", name, v)
 	}
 	return n, nil
 }

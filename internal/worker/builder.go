@@ -25,6 +25,7 @@ const builderSchema = `{
 var builderRole = role{
 	name:    "builder",
 	schema:  builderSchema,
+	project: true,
 	queued:  label.Queued,
 	working: label.Working,
 	from:    label.Working,

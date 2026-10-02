@@ -11,6 +11,9 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
+// readerRole is a reader's role for the tests of runs. open reads the prompt of the role's name.
+var readerRole = role{name: "reviewer", schema: reviewerSchema}
+
 func (e *env) state(name string) state {
 	e.t.Helper()
 	r, err := e.runs.read(e.t.Context(), name)
@@ -186,10 +189,10 @@ func TestFound(t *testing.T) {
 	wantInts(t, "found builder", found, []int{3, 5})
 }
 
-func (e *env) wantReserve(name string, want bool) {
+func (e *env) wantReserve(ro role, n int, want bool) {
 	e.t.Helper()
-	if got, err := e.runs.reserve(e.t.Context(), name); err != nil || got != want {
-		e.t.Errorf("reserve(%s) = %v, %v, want %v", name, got, err, want)
+	if got, err := e.runs.reserve(e.t.Context(), ro, e.runs.name(ro, n)); err != nil || got != want {
+		e.t.Errorf("reserve(%s) = %v, %v, want %v", e.runs.name(ro, n), got, err, want)
 	}
 }
 
@@ -198,11 +201,11 @@ func TestSlotsCountEveryTaskSandbox(t *testing.T) {
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
 	e.sbx.add(sandbox.Name(sandbox.Prefix("other", "repo"), 2, builderRole.name))
-	e.wantReserve(e.runs.name(builderRole, 9), true)
+	e.wantReserve(builderRole, 9, true)
 	e.runs.release(e.runs.name(builderRole, 9))
 	e.sbx.add(prefix + "2-resolver")
 	e.sbx.stop(prefix + "2-resolver")
-	e.wantReserve(e.runs.name(builderRole, 9), false)
+	e.wantReserve(builderRole, 9, false)
 }
 
 // owner/repo-v2's sandboxes start with owner/repo's prefix too, and must not take owner/repo's slots.
@@ -211,25 +214,89 @@ func TestSlotsCountOnlyThisRepository(t *testing.T) {
 	e.sbx.add(e.deps.SandboxPrefix + "1-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-3-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-4-resolver")
-	e.wantReserve(e.runs.name(builderRole, 9), true)
+	e.wantReserve(builderRole, 9, true)
+}
+
+func TestSlotsCountEachKindApart(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.runs.ProjectLimit, e.runs.ReadLimit = 1, 1
+	e.sbx.add(e.runs.name(builderRole, 1))
+	e.wantReserve(readerRole, 2, true)
+	e.wantReserve(resolverRole, 3, false)
+	e.wantReserve(readerRole, 4, false)
+
+	e.sbx.drop(e.runs.name(builderRole, 1))
+	e.wantReserve(resolverRole, 3, true)
+	e.runs.release(e.runs.name(readerRole, 2))
+	e.wantReserve(readerRole, 4, true)
 }
 
 func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	first, second := e.runs.name(builderRole, 1), e.runs.name(resolverRole, 2)
-	third, fourth := e.runs.name(builderRole, 3), e.runs.name(builderRole, 4)
-	e.wantReserve(first, true)
-	e.wantReserve(second, true)
-	e.wantReserve(third, false)
+	e.wantReserve(builderRole, 1, true)
+	e.wantReserve(resolverRole, 2, true)
+	e.wantReserve(builderRole, 3, false)
 
 	// The first start's sandbox now exists, and counts once.
 	e.sbx.add(first)
 	e.runs.release(second)
-	e.wantReserve(third, true)
+	e.wantReserve(builderRole, 3, true)
 
 	// Released, the first start's slot is still taken by its sandbox.
 	e.runs.release(first)
-	e.wantReserve(fourth, false)
+	e.wantReserve(builderRole, 4, false)
 	e.sbx.drop(first)
-	e.wantReserve(fourth, true)
+	e.wantReserve(builderRole, 4, true)
+}
+
+// A reader's result is all in its directory, so a finished reader run needs no sandbox. A project
+// run's commits are only in its sandbox.
+func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	reader, project := e.runs.name(readerRole, 7), e.runs.name(builderRole, 7)
+	for _, name := range []string{reader, project} {
+		e.sbx.add(name)
+		e.writeCtl(name, "stream.jsonl", "{}\n")
+		if err := e.runs.record(name, inputs{}); err != nil {
+			t.Fatal(err)
+		}
+		e.sbx.drop(name)
+		e.wantState(name, gone)
+		e.writeCtl(name, "exit", "0\n")
+	}
+	e.wantState(reader, finished)
+	e.wantState(project, gone)
+}
+
+func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.runs.ReadLimit = 1
+	reader, project := e.runs.name(readerRole, 7), e.runs.name(builderRole, 8)
+	for _, name := range []string{reader, project} {
+		e.sbx.add(name)
+		e.writeCtl(name, "stream.jsonl", "{}\n")
+		if err := e.runs.record(name, inputs{}); err != nil {
+			t.Fatal(err)
+		}
+		e.writeCtl(name, "exit", "0\n")
+	}
+	e.wantReserve(readerRole, 9, false)
+
+	// Every action idle, so only the finished reader's step itself acts.
+	if err := e.runs.step(t.Context(), readerRole, 7, row{}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runs.step(t.Context(), builderRole, 8, row{}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if e.sbx.exists(reader) {
+		t.Error("the finished reader's sandbox is still there")
+	}
+	e.wantState(reader, finished)
+	if !e.sbx.exists(project) {
+		t.Error("the finished project run's sandbox was removed before its commits were taken")
+	}
+	e.wantReserve(readerRole, 9, true)
 }

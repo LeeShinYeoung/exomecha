@@ -61,7 +61,8 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
 		SandboxPrefix: sandbox.Prefix("owner", "repo"),
-		SandboxLimit:  2,
+		ProjectLimit:  2,
+		ReadLimit:     2,
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
 	}

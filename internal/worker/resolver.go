@@ -22,10 +22,11 @@ const resolverSchema = `{
 }`
 
 var resolverRole = role{
-	name:   "resolver",
-	schema: resolverSchema,
-	from:   label.Review,
-	back:   label.Review,
+	name:    "resolver",
+	schema:  resolverSchema,
+	project: true,
+	from:    label.Review,
+	back:    label.Review,
 }
 
 var resolverTable = table{

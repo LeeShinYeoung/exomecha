@@ -75,6 +75,22 @@ func TestSendToAndFetchFrom(t *testing.T) {
 	}
 }
 
+func TestSendToWithoutABranch(t *testing.T) {
+	f := setup(t, map[string]string{"README.md": "hello\n"})
+	if err := f.git.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	base := f.rev(t, "origin/main")
+	box := sandboxRepo(t)
+
+	if err := f.git.SendTo(t.Context(), box, base, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := gittest.Run(t, box, "for-each-ref", "--format=%(refname) %(objectname)"); got != "refs/remotes/origin/main "+base {
+		t.Errorf("refs in the sandbox = %q, want only origin/main at %s", got, base)
+	}
+}
+
 // The sandbox side of a transfer is a command git runs from the URL. It must not find the token
 // in its environment.
 func TestSandboxTransfersCarryNoAuth(t *testing.T) {

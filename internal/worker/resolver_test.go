@@ -234,7 +234,7 @@ func TestResolverNothingToMerge(t *testing.T) {
 
 func TestResolverWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.runs.SandboxLimit = 1
+	e.runs.ProjectLimit = 1
 	e.sbx.add(e.runs.name(builderRole, 99))
 	task, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 

@@ -113,6 +113,51 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	}
 }
 
+// A reader's run does not run the project, so none of the project's environment goes in.
+func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
+	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
+	e.envr.err = errors.New("read the project's environment")
+	e.sbx.fail["allow"] = errors.New("allow hosts")
+	s, _ := e.testSpec()
+	s.branch = ""
+	name := e.runs.name(readerRole, 1)
+
+	if problem, err := e.runs.open(t.Context(), readerRole, 1, s); problem != "" || err != nil {
+		t.Fatalf("open = %q, %v", problem, err)
+	}
+
+	box := e.sbx.box(name)
+	if box.template != "" || !slices.Equal(box.deny, []string{"ssh.github.com"}) {
+		t.Errorf("created with template %q, deny %q, want sbx's own template with ssh.github.com denied", box.template, box.deny)
+	}
+	repo := e.sbx.repo(name)
+	if got := gittest.Run(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
+		t.Errorf("sandbox repository is on %q, want a detached HEAD", got)
+	}
+	if got := gittest.Run(t, repo, "rev-parse", "HEAD"); got != s.base {
+		t.Errorf("sandbox repository is at %s, want the base %s", got, s.base)
+	}
+	if got := gittest.Run(t, repo, "for-each-ref", "--format=%(refname)"); got != "refs/remotes/origin/main" {
+		t.Errorf("sandbox refs = %q, want only origin/main", got)
+	}
+	if got := gittest.Run(t, repo, "config", "--local", "--list"); strings.Contains(got, "user.") {
+		t.Errorf("sandbox repository has a commit identity: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo, setupMarker)); err == nil {
+		t.Error("the setup script ran")
+	}
+	if _, err := os.Stat(filepath.Join(e.runs.ctl(name), "setup.sh")); err == nil {
+		t.Error("the setup script went into the run's directory")
+	}
+	if got := e.readCtl(name, "input.md"); got != s.input {
+		t.Errorf("input.md = %q, want the input alone", got)
+	}
+	if start := box.starts; len(start) != 1 || !slices.Contains(start[0], prompt("reviewer")) {
+		t.Errorf("starts = %.200q, want one with reviewer's prompt", start)
+	}
+	e.wantState(name, running)
+}
+
 func TestOpenWithoutDockerfileUsesTheDefaultTemplate(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	s, name := e.testSpec()
@@ -148,7 +193,7 @@ func TestOpenEnvironmentError(t *testing.T) {
 
 func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.runs.SandboxLimit = 1
+	e.runs.ProjectLimit = 1
 	e.sbx.add(e.deps.SandboxPrefix + "9-resolver")
 	s, name := e.testSpec()
 	if _, err := e.runs.open(t.Context(), builderRole, 1, s); !errors.Is(err, errNoSlot) {

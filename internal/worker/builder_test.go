@@ -444,7 +444,7 @@ func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 
 func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.runs.SandboxLimit = 1
+	e.runs.ProjectLimit = 1
 	e.sbx.add(e.runs.name(resolverRole, 99))
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 
@@ -459,7 +459,7 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 // A template build takes minutes before the sandbox exists. The start must hold its slot all along.
 func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.runs.SandboxLimit = 1
+	e.runs.ProjectLimit = 1
 	e.envr.wait = make(chan chan struct{})
 	first := e.gh.AddIssue("First", "", label.Task, string(label.Queued))
 	second := e.gh.AddIssue("Second", "", label.Task, string(label.Queued))

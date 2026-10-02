@@ -102,6 +102,9 @@ const (
 type role struct {
 	name   string
 	schema string
+	// A project run gets the project's template, allowed hosts, setup script and a commit identity.
+	// Any other run is a reader's, which gets only the code in sbx's own template.
+	project bool
 	// The labels builder moves a Task between when a run starts and when it starts over. Other
 	// workers leave the label alone.
 	queued, working label.Status
@@ -113,6 +116,7 @@ type role struct {
 type run struct {
 	state state
 	in    inputs
+	box   bool // the sandbox exists
 }
 
 // inputs is what exomecha records once claude is running. It lives outside the directory the
@@ -124,8 +128,8 @@ type inputs struct {
 	Conflicts []string `json:"conflicts,omitempty"`
 }
 
-// runs is what builder and resolver share: the sandboxes, the limit on how many run at once,
-// and what exomecha remembers about each run. Memory is lost on restart, and nothing depends on
+// runs is what the workers share: the sandboxes, the limits on how many run at once, and what
+// exomecha remembers about each run. Memory is lost on restart, and nothing depends on
 // it except stall times.
 type runs struct {
 	Deps
@@ -194,15 +198,22 @@ func (r *runs) read(ctx context.Context, name string) (run, error) {
 	if err := json.Unmarshal(b, &out.in); err != nil {
 		return out, fmt.Errorf("read start of %s: %w", name, err)
 	}
-	if i < 0 {
-		out.state = gone
-		return out, nil
+	out.box = i >= 0
+	exited := true
+	if _, err := os.Lstat(filepath.Join(r.ctl(name), "exit")); errors.Is(err, fs.ErrNotExist) {
+		exited = false
+	} else if err != nil {
+		return out, err
 	}
-	if _, err := os.Lstat(filepath.Join(r.ctl(name), "exit")); err == nil {
+	project, _ := r.kind(name)
+	switch {
+	// A reader's result is all in its directory, so its sandbox may already be gone.
+	case exited && (out.box || !project):
 		out.state = finished
 		return out, nil
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return out, err
+	case !out.box:
+		out.state = gone
+		return out, nil
 	}
 	if !boxes[i].Running() {
 		out.state = dead
@@ -240,6 +251,20 @@ func (r *runs) quiet(name string) (bool, error) {
 	return now.Sub(p.at) >= stallAfter, nil
 }
 
+// roles holds every role, so that a run's name tells its kind.
+var roles = []role{builderRole, resolverRole}
+
+// kind reads whether the run named name is a project run from the role its name ends with. ok is
+// false when name is no run of this repository.
+func (r *runs) kind(name string) (project, ok bool) {
+	_, got, ok := sandbox.Parse(r.SandboxPrefix, name)
+	if !ok {
+		return false, false
+	}
+	i := slices.IndexFunc(roles, func(ro role) bool { return ro.name == got })
+	return i >= 0 && roles[i].project, true
+}
+
 // found returns the issues that have a sandbox or a directory for ro.
 func (r *runs) found(ctx context.Context, ro role) ([]int, error) {
 	boxes, err := r.Sandboxes.List(ctx)
@@ -266,10 +291,10 @@ func (r *runs) found(ctx context.Context, ro role) ([]int, error) {
 	return out, nil
 }
 
-// reserve reports whether a new run may start: the usage gate is open and a sandbox slot is free.
-// When it is, the slot is name's until release, so other starts count it while the template
-// builds and the code goes in, long before the sandbox exists.
-func (r *runs) reserve(ctx context.Context, name string) (bool, error) {
+// reserve reports whether a new run of ro may start: the usage gate is open and a sandbox slot of
+// its kind is free. When it is, the slot is name's until release, so other starts count it while
+// the template builds and the code goes in, long before the sandbox exists.
+func (r *runs) reserve(ctx context.Context, ro role, name string) (bool, error) {
 	if r.gate != nil {
 		if open, err := r.gate.Open(ctx); err != nil || !open {
 			return false, err
@@ -277,7 +302,7 @@ func (r *runs) reserve(ctx context.Context, name string) (bool, error) {
 	}
 	r.slots.Lock()
 	defer r.slots.Unlock()
-	if free, err := r.slotFree(ctx, name); err != nil || !free {
+	if free, err := r.slotFree(ctx, ro, name); err != nil || !free {
 		return false, err
 	}
 	r.starting[name] = true
@@ -290,10 +315,10 @@ func (r *runs) release(name string) {
 	delete(r.starting, name)
 }
 
-// slotFree counts every sandbox of this repository, stopped ones too, so the count stays right
-// across restarts, and every start that holds a slot. self is the start asking. The caller holds
-// slots.
-func (r *runs) slotFree(ctx context.Context, self string) (bool, error) {
+// slotFree counts every sandbox of this repository of ro's kind, stopped ones too, so the count
+// stays right across restarts, and every start of that kind that holds a slot. self is the start
+// asking. The caller holds slots.
+func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error) {
 	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return false, err
@@ -301,25 +326,41 @@ func (r *runs) slotFree(ctx context.Context, self string) (bool, error) {
 	// By name, since a started sandbox is still in starting until its start returns.
 	used := map[string]bool{}
 	for _, b := range boxes {
-		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
-		if _, role, ok := sandbox.Parse(r.SandboxPrefix, b.Name); ok && (role == builderRole.name || role == resolverRole.name) {
-			used[b.Name] = true
-		}
+		used[b.Name] = true
 	}
 	for name := range r.starting {
 		used[name] = true
 	}
 	delete(used, self)
-	return len(used) < r.SandboxLimit, nil
+	count := 0
+	for name := range used {
+		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
+		if project, ok := r.kind(name); ok && project == ro.project {
+			count++
+		}
+	}
+	limit := r.ReadLimit
+	if ro.project {
+		limit = r.ProjectLimit
+	}
+	return count < limit, nil
 }
 
 // step takes the action row gives for the state of the run of ro for issue n. start begins a run,
 // and collect takes what a finished run did.
 func (r *runs) step(ctx context.Context, ro role, n int, row row,
 	start func(context.Context) error, collect func(context.Context, run) error) error {
-	run, err := r.read(ctx, r.name(ro, n))
+	name := r.name(ro, n)
+	run, err := r.read(ctx, name)
 	if err != nil {
 		return err
+	}
+	// The result stays in the directory, so the slot comes back while the result waits to be collected.
+	if run.state == finished && run.box && !ro.project {
+		if err := r.Sandboxes.Remove(ctx, name); err != nil {
+			return fmt.Errorf("remove sandbox %s: %w", name, err)
+		}
+		slog.Info("removed a finished reader's sandbox", "sandbox", name)
 	}
 	switch row[run.state] {
 	case begin:
@@ -370,7 +411,7 @@ type spec struct {
 // sends the issue to stuck, and an error leaves builder's Task queued and returns the error.
 func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Context) (spec, error)) error {
 	name := r.name(ro, n)
-	if ready, err := r.reserve(ctx, name); err != nil || !ready {
+	if ready, err := r.reserve(ctx, ro, name); err != nil || !ready {
 		return err
 	}
 	defer r.release(name)
@@ -410,17 +451,24 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
 func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
 	name := r.name(ro, n)
-	ref, err := r.Environment.Template(ctx)
-	if problem, err := needsPerson(n, err); problem != "" || err != nil {
-		return problem, err
-	}
-	hosts, err := r.Environment.AllowedHosts(ctx)
-	if problem, err := needsPerson(n, err); problem != "" || err != nil {
-		return problem, err
-	}
-	script, hasScript, err := r.Git.Show(ctx, s.base, setupScript)
-	if err != nil {
-		return "", err
+	var (
+		ref, script string
+		hosts       []string
+		hasScript   bool
+	)
+	if ro.project {
+		ref, err = r.Environment.Template(ctx)
+		if problem, err := needsPerson(n, err); problem != "" || err != nil {
+			return problem, err
+		}
+		hosts, err = r.Environment.AllowedHosts(ctx)
+		if problem, err := needsPerson(n, err); problem != "" || err != nil {
+			return problem, err
+		}
+		script, hasScript, err = r.Git.Show(ctx, s.base, setupScript)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	ctl := r.ctl(name)
@@ -437,7 +485,7 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 	}
 
 	r.slots.Lock()
-	free, err := r.slotFree(ctx, name)
+	free, err := r.slotFree(ctx, ro, name)
 	if err == nil && !free {
 		err = errNoSlot
 	}
@@ -451,22 +499,32 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 	if err != nil {
 		return "", err
 	}
-	if err := r.Sandboxes.Allow(ctx, name, hosts); err != nil {
-		return "", err
+	if ro.project {
+		if err := r.Sandboxes.Allow(ctx, name, hosts); err != nil {
+			return "", err
+		}
 	}
 	if _, err := r.git(ctx, name, "", "init", "-q", repoDir); err != nil {
 		return "", err
 	}
-	// Before setup, so the project's script can set another.
-	for _, kv := range [][2]string{{"user.name", r.GitName}, {"user.email", r.GitEmail}} {
-		if _, err := r.git(ctx, name, repoDir, "config", kv[0], kv[1]); err != nil {
-			return "", err
+	if ro.project {
+		// Before setup, so the project's script can set another.
+		for _, kv := range [][2]string{{"user.name", r.GitName}, {"user.email", r.GitEmail}} {
+			if _, err := r.git(ctx, name, repoDir, "config", kv[0], kv[1]); err != nil {
+				return "", err
+			}
 		}
 	}
 	if err := r.Git.SendTo(ctx, r.Sandboxes.GitURL(name, repoDir), s.base, s.branch, s.head); err != nil {
 		return "", err
 	}
-	if _, err := r.git(ctx, name, repoDir, "checkout", "-q", s.branch); err != nil {
+	checkout := []string{"checkout", "-q", s.branch}
+	if s.branch == "" {
+		// Detached, since SendTo sent no branch: git refuses a push to the branch checked out, and
+		// a new repository's unborn branch has whatever name the image's git config gives it.
+		checkout = []string{"checkout", "-q", "--detach", r.Git.BaseRef()}
+	}
+	if _, err := r.git(ctx, name, repoDir, checkout...); err != nil {
 		return "", err
 	}
 

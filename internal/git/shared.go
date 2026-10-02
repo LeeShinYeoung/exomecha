@@ -77,14 +77,16 @@ func hasConflictMarker(content string) bool {
 // on an sbx that stopped answering, would otherwise hold mu and stall every worker.
 var sandboxTransferTimeout = 5 * time.Minute
 
-// SendTo pushes the base branch's commit as origin/<base>, and commit as branch, into the
-// repository at url.
+// SendTo pushes the base branch's commit as origin/<base>, and commit as branch unless branch is
+// empty, into the repository at url.
 func (g *Git) SendTo(ctx context.Context, url, baseCommit, branch, commit string) error {
 	ctx, cancel := context.WithTimeout(ctx, sandboxTransferTimeout)
 	defer cancel()
-	_, err := g.runSandbox(ctx, g.repoDir(), "push", "--quiet", url,
-		baseCommit+":refs/remotes/origin/"+g.base,
-		commit+":refs/heads/"+branch)
+	refs := []string{baseCommit + ":refs/remotes/origin/" + g.base}
+	if branch != "" {
+		refs = append(refs, commit+":refs/heads/"+branch)
+	}
+	_, err := g.runSandbox(ctx, g.repoDir(), append([]string{"push", "--quiet", url}, refs...)...)
 	return err
 }
 

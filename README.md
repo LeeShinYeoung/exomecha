@@ -52,6 +52,7 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
      ```
    - Optional: `EXOMECHA_FIVE_HOUR_LIMIT` (default 90) and `EXOMECHA_WEEKLY_LIMIT` (default 80), in percent of the Claude plan's 5-hour and weekly limits. exomecha starts no new work at or above them.
    - Optional: `EXOMECHA_SANDBOX_LIMIT` (default 2), how many Task sandboxes builder and resolver may have at once, together.
+   - Optional: `EXOMECHA_READ_SANDBOX_LIMIT` (default 2), how many sandboxes that only read the code may exist at once, together. `EXOMECHA_SANDBOX_LIMIT` does not count them.
    - Run:
      ```
      set -a; source <project>.env; set +a; exomecha
