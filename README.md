@@ -1,6 +1,6 @@
 # exomecha
 
-exomecha watches the labels on a repository's GitHub issues. Five workers split each PRD into Tasks, put the Tasks in order, build them, review and merge the PRs, and resolve merge conflicts. builder, resolver and reviewer run claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person only makes the decisions up front (three skills) and answers when a Task is blocked.
+exomecha watches the labels on a repository's GitHub issues. Five workers split each PRD into Tasks, put the Tasks in order, build them, review and merge the PRs, and resolve merge conflicts. builder, resolver, reviewer and splitter run claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person only makes the decisions up front (three skills) and answers when a Task is blocked.
 
 ```
 [person] /exomecha:issue   → type:problem issue (the problem only)
@@ -61,8 +61,8 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
 
 ## Notes
 
-- splitter, sequencer and the usage check use the claude login on this machine. builder, resolver and reviewer run claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
-- reviewer only reads the code. Its sandbox starts from sbx's default claude template and gets only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed as soon as claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
+- sequencer and the usage check use the claude login on this machine. builder, resolver, reviewer and splitter run claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
+- reviewer and splitter only read the code. Their sandboxes start from sbx's default claude template and gets only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed as soon as claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
 - When there is work to start, exomecha first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
 - exomecha sends a Task's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. Task sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
 - A run keeps going in its sandbox while exomecha is stopped. Ctrl-C leaves working Tasks as they are, and exomecha picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.exomecha/<owner>/<repo>/sandboxes/`.
@@ -88,12 +88,13 @@ The worker's comment says why it is blocked and what needs deciding.
   - `status:pending` when builder got stuck. It goes through sequencer and builder again, and builder continues on the existing PR branch.
   - `status:review` when resolver got stuck on a conflict. resolver merges the base branch again and settles the conflict the way you answered.
   - `status:review` when reviewer's run failed. reviewer reviews the PR again.
+- A PRD whose split failed gets `status:stuck` too. Remove the label, and splitter splits the PRD again.
 - When the AI says the sandbox blocked a host, add that host to `.exomecha/allowed-hosts` on the base branch if the Task really needs it. Then relabel the Task the way the comment says.
 - When `.exomecha/setup.sh` failed, there is nothing to answer. The script's output is in exomecha's log. Fix the script on the base branch, or merge the base branch into the Task's branch if the comment says the branch is behind. Then relabel the Task the way the comment says.
 - When `.exomecha/Dockerfile` failed to build or ran over 30 minutes, or `.exomecha/allowed-hosts` has a bad line, there is nothing to answer either. The build output is only in exomecha's log. Fix the file on the base branch, then relabel the Task the way the comment says.
 - When resolver's merge of the base branch failed without a conflict (for example, a git setting from `.exomecha/setup.sh` refused it), there is nothing to answer either. git's output is only in exomecha's log. Fix what it reports, then relabel the Task the way the comment says.
 - When GitHub refused to merge a PR the AI approved, the comment quotes GitHub's message. A rule of the base branch, such as a required approval, is the usual cause. Merge the PR yourself, or change the rule and relabel the Task the way the comment says.
-- When the AI's run fails (the sandbox stopped or went away, claude's output did not change for 15 minutes, or claude ended without a usable result), the Task goes to stuck at once, and the comment says why. There is nothing to answer. The details are in exomecha's log, and the failed run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/`. To try again, relabel the Task the way the comment says.
+- When the AI's run fails (the sandbox stopped or went away, claude's output did not change for 15 minutes, claude ended without a usable result, or splitter split a PRD into no Tasks), the Task or PRD goes to stuck at once, and the comment says why. There is nothing to answer. The details are in exomecha's log, and the failed run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/`. To try again, relabel the Task or PRD the way the comment says.
 - A run that ended at the Claude usage limit is not a failure, and starts again once the limit resets. Other failures in exomecha's own steps (sbx, git, GitHub) do not send the Task to stuck either. exomecha tries the step again after 1, 2, 4, 8 and 16 minutes, then every 30 minutes until it works.
 
 ## Removing a project

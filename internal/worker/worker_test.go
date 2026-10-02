@@ -197,13 +197,17 @@ func TestTrimClosingTags(t *testing.T) {
 }
 
 // wantStuckComment also checks which label the comment tells the person to set,
-// since that decides which worker gets the Task back.
+// since that decides which worker gets the Task back. A PRD's comment says to remove the label.
 func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 	t.Helper()
 	if !strings.HasPrefix(comment, github.Marker) {
 		t.Errorf("stuck comment does not start with the exomecha marker:\n%s", comment)
 	}
-	wantContains(t, "stuck comment", comment, reason, "relabel it `"+string(back)+"`")
+	again := "relabel it `" + string(back) + "`"
+	if back == label.None {
+		again = "remove the `" + string(label.Stuck) + "` label"
+	}
+	wantContains(t, "stuck comment", comment, reason, again)
 }
 
 // fakeWorker picks fixed numbers, and its Handle returns the error the test set for the number.
@@ -404,6 +408,7 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 }
 
 const (
+	issuesRoute   = "POST /repos/{owner}/{repo}/issues"
 	labelsRoute   = "POST /repos/{owner}/{repo}/issues/{n}/labels"
 	commentsRoute = "POST /repos/{owner}/{repo}/issues/{n}/comments"
 	pullsRoute    = "POST /repos/{owner}/{repo}/pulls"
@@ -457,6 +462,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 	builderHandle := func(e *env, n int) error { return e.builder().Handle(e.t.Context(), n) }
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
+	splitterHandle := func(e *env, n int) error { return e.splitter().Handle(e.t.Context(), n) }
 	queued := func(e *env) (int, string) {
 		task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
 		return task, e.builderBox(task)
@@ -568,6 +574,32 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 				e.t.Error("PR not merged")
 			}
 			e.wantRemoved(name)
+		}},
+		{"splitter", "start's create", func(e *env) (int, string) {
+			prd := e.gh.AddIssue("PRD", "the plan", label.PRD)
+			return prd, e.splitterBox(prd)
+		}, sbxFault("create"), splitterHandle, func(e *env, n int, name string) {
+			e.wantState(name, running)
+		}},
+		// A Task left from an earlier try is closed on every try, the one that works too.
+		{"splitter", "collect's CreateIssue", func(e *env) (int, string) {
+			prd, name := e.splitting()
+			e.gh.AddSubIssue(prd, e.gh.AddIssue("left over", "", label.Task, string(label.Pending)))
+			e.play(name, nil, `{"tasks": [{"title": "A", "body": "a", "blocked_by": []}, {"title": "B", "body": "b", "blocked_by": [1]}]}`)
+			return prd, name
+		}, githubFault(issuesRoute), splitterHandle, func(e *env, n int, name string) {
+			e.wantRemoved(name)
+			subs := e.gh.Issue(n).SubIssues
+			if len(subs) != 3 || e.gh.Issue(subs[0]).Open {
+				e.t.Fatalf("PRD sub-issues = %v, want the left-over Task closed and two new ones", subs)
+			}
+			for _, task := range subs[1:] {
+				e.wantStatus(task, label.Pending)
+			}
+			wantInts(e.t, "B blocked by", e.gh.Issue(subs[2]).BlockedBy, []int{subs[1]})
+			if !e.gh.Issue(n).HasLabel(label.Tasked) {
+				e.t.Errorf("PRD has no %s label", label.Tasked)
+			}
 		}},
 	} {
 		t.Run(c.worker+"/"+c.step, func(t *testing.T) {

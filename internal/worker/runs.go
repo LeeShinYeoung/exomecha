@@ -256,7 +256,7 @@ func (r *runs) quiet(name string) (bool, error) {
 }
 
 // roles holds every role, so that a run's name tells its kind.
-var roles = []role{builderRole, resolverRole, reviewerRole}
+var roles = []role{builderRole, resolverRole, reviewerRole, splitterRole}
 
 // kind reads whether the run named name is a project run from the role its name ends with. ok is
 // false when name is no run of this repository.

@@ -25,7 +25,10 @@ type tableWorker struct {
 	// start makes an issue in the ready place and starts its run.
 	start func(e *env) int
 	// put moves a started issue from ready to p, for every place but away.
-	put    func(e *env, n int, p place)
+	put func(e *env, n int, p place)
+	// away are the ways the issue leaves the worker. Each state's cells take a different one, so
+	// every way is covered.
+	away   []func(e *env, n int)
 	place  func(e *env, n int) place
 	handle func(e *env, n int) error
 	// running is the issue's status while its run goes.
@@ -54,6 +57,7 @@ func builderCells(t *testing.T) tableWorker {
 				e.relabel(n, label.Working, label.Queued)
 			}
 		},
+		away: leave(label.Pending),
 		place: func(e *env, n int) place {
 			return e.builder().place(e.issue(n))
 		},
@@ -94,6 +98,7 @@ func resolverCells(t *testing.T) tableWorker {
 				e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(true))
 			}
 		},
+		away: leave(label.Pending),
 		place: func(e *env, n int) place {
 			p, err := e.resolver().place(t.Context(), e.issue(n))
 			if err != nil {
@@ -140,6 +145,7 @@ func reviewerCells(t *testing.T) tableWorker {
 				e.gh.SetMergeable(pr, nil)
 			}
 		},
+		away: leave(label.Pending),
 		place: func(e *env, n int) place {
 			p, _, _, err := e.reviewer().look(t.Context(), e.issue(n))
 			if err != nil {
@@ -165,17 +171,60 @@ func reviewerCells(t *testing.T) tableWorker {
 	}
 }
 
-// awayBy are the ways an issue leaves a worker. The table test takes each state's issue away a
-// different way, so every way is covered.
-var awayBy = []func(e *env, n int){
-	func(e *env, n int) { e.gh.CloseIssue(n) },
-	func(e *env, n int) { e.relabel(n, label.Status(e.statuses(n)[0]), label.Pending) },
-	// On its way to stuck, with the old status still on.
-	func(e *env, n int) {
-		if err := e.deps.GitHub.AddLabel(e.t.Context(), n, string(label.Stuck)); err != nil {
-			e.t.Fatal(err)
-		}
-	},
+func splitterCells(t *testing.T) tableWorker {
+	return tableWorker{
+		role:  splitterRole,
+		table: splitterTable,
+		want: table{
+			away:  {idle, drop, drop, drop, drop, drop, drop},
+			ready: {begin, restart, idle, fail, fail, fail, harvest},
+		},
+		start: func(e *env) int {
+			prd, _ := e.splitting()
+			return prd
+		},
+		put: func(*env, int, place) {},
+		away: []func(e *env, n int){
+			func(e *env, n int) { e.gh.CloseIssue(n) },
+			func(e *env, n int) { e.addLabel(n, label.Tasked) },
+			func(e *env, n int) { e.addLabel(n, string(label.Stuck)) },
+		},
+		place: func(e *env, n int) place {
+			return e.splitter().place(e.issue(n))
+		},
+		handle: func(e *env, n int) error {
+			return e.splitter().Handle(t.Context(), n)
+		},
+		running: label.None,
+		finish: func(e *env, name string) {
+			e.play(name, nil, `{"tasks": [{"title": "A", "body": "a", "blocked_by": []}]}`)
+		},
+		harvested: func(e *env, n int) {
+			if !e.gh.Issue(n).HasLabel(label.Tasked) {
+				t.Errorf("PRD has no %s label", label.Tasked)
+			}
+			if subs := e.gh.Issue(n).SubIssues; len(subs) != 1 {
+				t.Errorf("PRD sub-issues = %v, want one Task", subs)
+			}
+		},
+	}
+}
+
+// leave returns the ways a Task leaves a worker: closed, relabeled to, and on its way to stuck
+// with the old status still on. to must be none of the worker's own statuses.
+func leave(to label.Status) []func(e *env, n int) {
+	return []func(e *env, n int){
+		func(e *env, n int) { e.gh.CloseIssue(n) },
+		func(e *env, n int) { e.relabel(n, label.Status(e.statuses(n)[0]), to) },
+		func(e *env, n int) { e.addLabel(n, string(label.Stuck)) },
+	}
+}
+
+func (e *env) addLabel(n int, name string) {
+	e.t.Helper()
+	if err := e.deps.GitHub.AddLabel(e.t.Context(), n, name); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 var placeNames = map[place]string{
@@ -192,7 +241,7 @@ func actionNames(r row) []string {
 }
 
 func TestTables(t *testing.T) {
-	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells} {
+	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells, splitterCells} {
 		w := cells(t)
 		if len(w.table) != len(w.want) {
 			t.Errorf("%s table has %d rows, want %d", w.role.name, len(w.table), len(w.want))
@@ -220,7 +269,7 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 	name := e.runs.name(w.role, n)
 	e.runTo(name, s, w.finish)
 	if p == away {
-		awayBy[int(s)%len(awayBy)](e, n)
+		w.away[int(s)%len(w.away)](e, n)
 	} else {
 		w.put(e, n, p)
 	}

@@ -37,9 +37,9 @@ type Sweeper interface {
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
-	Agent  agent.Agent // runs claude on this machine, for splitter and sequencer
+	Agent  agent.Agent // runs claude on this machine, for sequencer
 
-	// builder, resolver and reviewer run claude in sandboxes.
+	// builder, resolver, reviewer and splitter run claude in sandboxes.
 	Sandboxes   Sandboxes
 	Environment Environment
 	// SandboxDir holds one directory per run, shared with the run's sandbox.
@@ -86,15 +86,15 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	// builder, resolver and reviewer check the gate themselves, only before they start a run, so
-	// runs already in sandboxes are still watched and finished while usage is over the limit.
+	// builder, resolver, reviewer and splitter check the gate themselves, only before they start a
+	// run, so runs already in sandboxes are still watched and finished while usage is over the limit.
 	runs := newRuns(d, gate)
 	workers := []struct {
 		worker Worker
 		limit  int // 0 means no limit
 		gate   *Gate
 	}{
-		{&splitter{d}, 1, gate},
+		{&splitter{d, runs}, 0, nil},
 		{&sequencer{d}, 1, gate},
 		{&builder{d, runs}, 0, nil},
 		{&reviewer{d, runs}, 0, nil},
@@ -381,14 +381,19 @@ func holds(i github.Issue, kind string, statuses ...label.Status) bool {
 }
 
 // back is where the person sends the Task after answering, so it returns to the worker that
-// owns the problem: pending leads back to builder, review leads back to resolver.
+// owns the problem: pending leads back to builder, review leads back to resolver. A PRD has no
+// status to go back to, and splitter takes it again once the stuck label is gone.
 func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
 	trimmed := trimClosingTags(reason)
 	if trimmed != strings.TrimSpace(reason) {
 		slog.Warn("trimmed closing tags from a stuck reason", "task", n, "reason", reason)
 	}
-	body := "This Task is blocked and needs a person.\n\n" + trimmed +
-		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
+	issue, again := "Task", "relabel it `"+string(back)+"`"
+	if back == label.None {
+		issue, again = "PRD", "remove the `"+string(label.Stuck)+"` label"
+	}
+	body := "This " + issue + " is blocked and needs a person.\n\n" + trimmed +
+		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and " + again + "."
 	if err := gh.AddComment(ctx, n, body); err != nil {
 		return err
 	}

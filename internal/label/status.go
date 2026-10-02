@@ -16,7 +16,7 @@ const (
 var statuses = []Status{Pending, Queued, Working, Review, Stuck}
 
 var transitions = map[Status][]Status{
-	None:    {Pending},
+	None:    {Pending, Stuck},
 	Pending: {Queued},
 	Queued:  {Working},
 	Working: {Review, Queued, Stuck},

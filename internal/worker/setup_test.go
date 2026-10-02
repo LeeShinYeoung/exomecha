@@ -47,20 +47,6 @@ func cancelWhenExists(ctx context.Context, cancel context.CancelFunc, path strin
 	}()
 }
 
-func TestSplitterDoesNotRunSetup(t *testing.T) {
-	e := newEnv(t, setupRepo("exit 1\n"))
-	prd := e.gh.AddIssue("PRD", "the plan", label.PRD)
-	e.claude.answer(`{"tasks": [{"title": "A", "body": "a", "blocked_by": []}]}`)
-
-	if err := (&splitter{e.deps}).Handle(t.Context(), prd); err != nil {
-		t.Fatal(err)
-	}
-
-	if !e.gh.Issue(prd).HasLabel(label.Tasked) {
-		t.Errorf("PRD has no %s label", label.Tasked)
-	}
-}
-
 func TestSequencerDoesNotRunSetup(t *testing.T) {
 	e := newEnv(t, setupRepo("exit 1\n"))
 	e.gh.AddIssue("lower", "touches x.go", label.Task, string(label.Queued))
@@ -88,6 +74,10 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 		{reviewerRole, func(e *env) int {
 			task, _, _, _ := e.reviewing()
 			return task
+		}},
+		{splitterRole, func(e *env) int {
+			prd, _ := e.splitting()
+			return prd
 		}},
 	} {
 		t.Run(c.role.name, func(t *testing.T) {

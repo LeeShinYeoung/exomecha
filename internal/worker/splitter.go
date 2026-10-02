@@ -2,11 +2,10 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
@@ -33,31 +32,99 @@ const splitterSchema = `{
   "additionalProperties": false
 }`
 
-type splitter struct{ Deps }
+// A PRD has no status while splitter works on it. A failed split puts status:stuck on it, and
+// once a person removes that label, splitter takes the PRD again.
+var splitterRole = role{
+	name:   "splitter",
+	schema: splitterSchema,
+	from:   label.None,
+	back:   label.None,
+}
+
+var splitterTable = table{
+	// none, preparing, running, stalled, dead, gone, finished
+	away:  {idle, drop, drop, drop, drop, drop, drop},
+	ready: {begin, restart, idle, fail, fail, fail, harvest},
+}
+
+// splitter splits each PRD into Tasks in a sandbox of its own, which gets only the code.
+type splitter struct {
+	Deps
+	runs *runs
+}
 
 func (*splitter) Name() string { return "splitter" }
 
+// Pick returns the PRDs ready to split, and every PRD that has a splitter run.
 func (s *splitter) Pick(ctx context.Context) ([]int, error) {
 	prds, err := s.GitHub.ListOpen(ctx, label.PRD)
 	if err != nil {
 		return nil, err
 	}
-	var out []int
+	found, err := s.runs.found(ctx, splitterRole)
+	if err != nil {
+		return nil, err
+	}
+	out := found
 	for _, p := range prds {
-		if !p.HasLabel(label.Tasked) {
+		if s.place(p) == ready {
 			out = append(out, p.Number)
 		}
 	}
-	return out, nil
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 func (s *splitter) Handle(ctx context.Context, n int) error {
-	prd, ok, err := reload(ctx, s.GitHub, n, label.PRD)
-	if err != nil || !ok || prd.HasLabel(label.Tasked) {
+	prd, err := s.GitHub.Issue(ctx, n)
+	if err != nil {
 		return err
 	}
+	return s.runs.step(ctx, splitterRole, n, splitterTable[s.place(prd)],
+		func(ctx context.Context) error { return s.start(ctx, prd) },
+		func(ctx context.Context, _ run) error { return s.collect(ctx, n) })
+}
 
-	// Sub-issues on an untasked PRD mean an earlier split stopped halfway: close them and start over.
+// A PRD gets a status only from a failed split, so any status keeps it away until a person removes it.
+func (*splitter) place(prd github.Issue) place {
+	if !prd.Open || !prd.HasLabel(label.PRD) || prd.HasLabel(label.Tasked) || prd.Status() != label.None {
+		return away
+	}
+	return ready
+}
+
+func (s *splitter) start(ctx context.Context, prd github.Issue) error {
+	n := prd.Number
+	return s.runs.start(ctx, splitterRole, n, func(ctx context.Context) (spec, error) {
+		base, err := baseCommit(ctx, s.Git)
+		if err != nil {
+			return spec{}, err
+		}
+		comments, err := issueComments(ctx, s.GitHub, n)
+		if err != nil {
+			return spec{}, err
+		}
+		input := fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n%s", n, prd.Title, prd.Body, comments)
+		return spec{base: base, head: base, input: input}, nil
+	})
+}
+
+func (s *splitter) collect(ctx context.Context, n int) error {
+	var out struct {
+		Tasks []struct {
+			Title     string `json:"title"`
+			Body      string `json:"body"`
+			BlockedBy []int  `json:"blocked_by"`
+		} `json:"tasks"`
+	}
+	if ok, err := s.runs.result(ctx, splitterRole, n, &out); err != nil || !ok {
+		return err
+	}
+	if len(out.Tasks) == 0 {
+		return s.runs.failed(ctx, splitterRole, n, "the AI split the PRD into no Tasks", "")
+	}
+
+	// Sub-issues on an untasked PRD mean an earlier try stopped halfway: close them and start over.
 	subs, err := s.GitHub.SubIssues(ctx, n)
 	if err != nil {
 		return err
@@ -75,40 +142,8 @@ func (s *splitter) Handle(ctx context.Context, n int) error {
 		slog.Info("closed task from an unfinished split", "prd", n, "task", sub.Number)
 	}
 
-	comments, err := issueComments(ctx, s.GitHub, n)
-	if err != nil {
-		return err
-	}
-	wt, err := s.Git.OpenBase(ctx)
-	if err != nil {
-		return err
-	}
-	defer wt.Remove()
-	res, err := s.Agent.Run(ctx, agent.Request{
-		Dir:          wt.Dir,
-		Instructions: prompt("splitter"),
-		Input:        fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n%s", n, prd.Title, prd.Body, comments),
-		Schema:       splitterSchema,
-	})
-	if err != nil {
-		return err
-	}
-	var out struct {
-		Tasks []struct {
-			Title     string `json:"title"`
-			Body      string `json:"body"`
-			BlockedBy []int  `json:"blocked_by"`
-		} `json:"tasks"`
-	}
-	if err := decode(res, &out); err != nil {
-		return err
-	}
-	if len(out.Tasks) == 0 {
-		return errors.New("AI returned no tasks")
-	}
-
 	// pending goes on only after every Task is created and linked, and tasked goes on the PRD last, so no
-	// worker picks up a half-built set. Each Task is attached right away so the recovery above can find it.
+	// worker picks up a half-built set. Each Task is attached right away so the cleanup above can find it.
 	tasks := make([]github.Issue, len(out.Tasks))
 	for i, t := range out.Tasks {
 		tasks[i], err = s.GitHub.CreateIssue(ctx, t.Title, t.Body, []string{label.Task})
@@ -144,5 +179,5 @@ func (s *splitter) Handle(ctx context.Context, n int) error {
 		numbers[i] = t.Number
 	}
 	slog.Info("split PRD into tasks", "prd", n, "tasks", numbers)
-	return nil
+	return s.runs.done(ctx, splitterRole, n)
 }
