@@ -338,20 +338,13 @@ func (b *builder) stuck(ctx context.Context, n int, name, reason string) error {
 	return b.runs.remove(ctx, name, false)
 }
 
-// failed removes a run that failed and starts the Task over, or after maxFailures in a row sends it to stuck.
+// failed sends the Task to stuck and keeps the run's files for a person to read.
 func (b *builder) failed(ctx context.Context, n int, name, why, detail string) error {
 	slog.Warn("builder run failed", "task", n, "sandbox", name, "why", why, "detail", detail, "stderr", b.runs.tail(name, "stderr.log"))
 	// Stuck goes first. A Task left working with no sandbox by a failed GitHub call would start again.
-	if count := b.runs.failures(name) + 1; count >= maxFailures {
-		if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, failedReason(count, why)); err != nil {
-			return err
-		}
-		b.runs.forget(name)
-		return b.runs.remove(ctx, name, true)
-	}
-	if err := b.runs.remove(ctx, name, true); err != nil {
+	if err := toStuck(ctx, b.GitHub, n, label.Working, label.Pending, failedReason(why)); err != nil {
 		return err
 	}
-	b.runs.fail(name)
-	return b.GitHub.SetStatus(ctx, n, label.Working, label.Queued)
+	b.runs.forget(name)
+	return b.runs.remove(ctx, name, true)
 }

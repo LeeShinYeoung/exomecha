@@ -29,10 +29,9 @@ const (
 	repoDir = "/home/agent/repo"
 
 	// A foreground command is capped at 10 minutes, so a run that is working still writes within this.
-	stallAfter  = 15 * time.Minute
-	maxFailures = 3
-	minBackoff  = time.Minute
-	maxBackoff  = 30 * time.Minute
+	stallAfter = 15 * time.Minute
+	minBackoff = time.Minute
+	maxBackoff = 30 * time.Minute
 
 	// A create takes seconds. The first one may pull sbx's own template, which takes longer.
 	createTimeout = 15 * time.Minute
@@ -92,7 +91,7 @@ type inputs struct {
 
 // runs is what builder and resolver share: the sandboxes, the limit on how many run at once,
 // and what exomecha remembers about each run. Memory is lost on restart, and nothing depends on
-// it except stall times and failure counts.
+// it except stall times and backoff.
 type runs struct {
 	Deps
 	gate *Gate
@@ -115,9 +114,8 @@ type progress struct {
 }
 
 type tries struct {
-	failures int // runs that failed in a row
-	strikes  int // failures and errors in a row, for the backoff
-	next     time.Time
+	strikes int // errors in a row
+	next    time.Time
 }
 
 func newRuns(d Deps, gate *Gate) *runs {
@@ -225,10 +223,6 @@ func (r *runs) due(name string) bool {
 func (r *runs) strike(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.strikeLocked(name)
-}
-
-func (r *runs) strikeLocked(name string) *tries {
 	tr := r.tries[name]
 	if tr == nil {
 		tr = &tries{}
@@ -236,25 +230,6 @@ func (r *runs) strikeLocked(name string) *tries {
 	}
 	tr.strikes++
 	tr.next = r.now().Add(min(maxBackoff, minBackoff<<min(tr.strikes-1, 10)))
-	return tr
-}
-
-func (r *runs) failures(name string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if tr := r.tries[name]; tr != nil {
-		return tr.failures
-	}
-	return 0
-}
-
-// fail counts a failed run and returns how many failed in a row.
-func (r *runs) fail(name string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	tr := r.strikeLocked(name)
-	tr.failures++
-	return tr.failures
 }
 
 func (r *runs) forget(name string) {
@@ -263,7 +238,7 @@ func (r *runs) forget(name string) {
 	delete(r.tries, name)
 }
 
-// prune forgets the failures of role's Tasks that are not in keep, the Tasks still under that
+// prune forgets the backoff of role's Tasks that are not in keep, the Tasks still under that
 // worker's labels.
 func (r *runs) prune(role string, keep map[int]bool) {
 	r.mu.Lock()
@@ -631,6 +606,6 @@ func holds(task github.Issue, statuses ...label.Status) bool {
 	return found
 }
 
-func failedReason(count int, why string) string {
-	return fmt.Sprintf("The AI's run failed %d times in a row. The last time, %s. The details are in exomecha's log.", count, why)
+func failedReason(why string) string {
+	return fmt.Sprintf("The AI's run failed because %s. The details are in exomecha's log. To try again, relabel this issue as below. You don't need to answer.", why)
 }

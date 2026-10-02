@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -244,27 +243,22 @@ func TestResolverRemovesTheSandboxWhenTheTaskLeavesReview(t *testing.T) {
 	e.wantRemoved(name)
 }
 
-func TestResolverThreeFailuresGoStuck(t *testing.T) {
+func TestResolverFailedRunGoesStuck(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, name, _ := e.conflicted()
-	for i := 1; i <= 3; i++ {
-		e.writeCtl(name, "stream.jsonl", "{}\n")
-		e.resolve(task)
-		e.clock.advance(stallAfter)
-		e.resolve(task)
-		e.wantRemoved(name)
-		if i == 3 {
-			break
-		}
-		e.wantStatus(task, label.Review)
-		e.clock.advance(maxBackoff)
-		e.resolve(task)
-		e.wantState(name, running)
-	}
+	task, name, head := e.conflicted()
+	e.writeCtl(name, "stream.jsonl", "{}\n")
+	e.resolve(task)
+	e.clock.advance(stallAfter)
+
+	e.resolve(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "failed 3 times in a row", label.Review)
-	wantContains(t, "stuck comment", e.lastComment(task), "did not change for 15 minutes")
+	wantStuckComment(t, e.lastComment(task), "The AI's run failed because claude's output did not change for 15 minutes", label.Review)
+	e.wantRemoved(name)
+	e.wantKept(name, "stream.jsonl")
+	if got := gittest.Head(e.origin, branchName(task)); got != head {
+		t.Errorf("branch moved to %s, want it left at %s", got, head)
+	}
 }
 
 func TestResolverWaitsForAFreeSlot(t *testing.T) {
@@ -294,9 +288,8 @@ func TestResolverStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	if got := gittest.Head(e.origin, branchName(task)); got != pushed {
 		t.Errorf("branch = %s, want the person's push %s left alone", got, pushed)
 	}
-	e.clock.advance(time.Minute)
-	if got := e.runs.fail(name); got != 1 {
-		t.Errorf("a branch change counted as a failed run")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a branch change left %d comments", n)
 	}
 }
 

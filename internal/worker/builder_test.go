@@ -68,6 +68,14 @@ func (e *env) wantRemoved(name string) {
 	}
 }
 
+// wantKept checks that the failed run's file was kept for a person to read.
+func (e *env) wantKept(name, file string) {
+	e.t.Helper()
+	if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name, file)); err != nil {
+		e.t.Errorf("the failed run's %s was not kept: %v", file, err)
+	}
+}
+
 // wantAuthor checks that the token owner from Deps made the commit at ref in origin.
 func (e *env) wantAuthor(ref string) {
 	e.t.Helper()
@@ -282,9 +290,6 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 	if e.runs.due(e.builderBox(task)) {
 		t.Error("no backoff after an error")
 	}
-	if got := e.runs.fail(e.builderBox(task)); got != 1 {
-		t.Errorf("an sbx error counted as a failed run: %d", got-1)
-	}
 }
 
 func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
@@ -321,8 +326,8 @@ func TestBuilderRequeuesWorkingTaskWithoutSandbox(t *testing.T) {
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
 	e.step(task)
 	e.wantStatus(task, label.Queued)
-	if got := e.runs.fail(e.builderBox(task)); got != 1 {
-		t.Errorf("a working Task with no sandbox counted as a failure")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a working Task with no sandbox left %d comments", n)
 	}
 }
 
@@ -362,31 +367,30 @@ func TestBuilderStalledRun(t *testing.T) {
 	e.clock.advance(2 * time.Second)
 	e.step(task)
 
-	e.wantStatus(task, label.Queued)
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "claude's output did not change for 15 minutes", label.Pending)
 	e.wantRemoved(name)
-	if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name, "stream.jsonl")); err != nil {
-		t.Errorf("the stalled run's files were not kept: %v", err)
-	}
+	e.wantKept(name, "stream.jsonl")
 }
 
 func TestBuilderDeadAndGoneRuns(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		kill func(e *env, name string)
+		why  string
 	}{
-		{"stopped", func(e *env, name string) { e.sbx.stop(name) }},
-		{"removed", func(e *env, name string) { e.sbx.drop(name) }},
+		{"stopped", func(e *env, name string) { e.sbx.stop(name) }, "the sandbox stopped"},
+		{"removed", func(e *env, name string) { e.sbx.drop(name) }, "the sandbox was removed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			task, name := e.startedTask()
 			c.kill(e, name)
 			e.step(task)
-			e.wantStatus(task, label.Queued)
+			e.wantStatus(task, label.Stuck)
+			wantStuckComment(t, e.lastComment(task), c.why, label.Pending)
 			e.wantRemoved(name)
-			if got := e.runs.fail(name); got != 2 {
-				t.Errorf("the run was counted %d times, want once", got-1)
-			}
+			e.wantKept(name, "input.md")
 		})
 	}
 }
@@ -399,41 +403,30 @@ func TestBuilderRunNotInAutoModeFails(t *testing.T) {
 
 	e.step(task)
 
-	e.wantStatus(task, label.Queued)
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "claude did not run in auto permission mode", label.Pending)
 	if head := gittest.Head(e.origin, branchName(task)); head != "" {
 		t.Errorf("work from a run outside auto mode was pushed: %s", head)
 	}
 }
 
-func TestBuilderThreeFailuresGoStuck(t *testing.T) {
+func TestBuilderFailedRunGoesStuck(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, name := e.startedTask()
-	for i := 1; i <= 3; i++ {
-		e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
-			`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"secret detail"}`+"\n")
-		e.writeCtl(name, "exit", "1\n")
-		e.step(task)
-		e.wantRemoved(name)
-		if i == 3 {
-			break
-		}
-		e.wantStatus(task, label.Queued)
-		e.step(task)
-		if e.sbx.exists(name) {
-			t.Fatalf("restarted before the backoff passed, after failure %d", i)
-		}
-		e.clock.advance(maxBackoff)
-		e.step(task)
-		e.wantState(name, running)
-	}
+	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
+		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"secret detail"}`+"\n")
+	e.writeCtl(name, "exit", "1\n")
+
+	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "failed 3 times in a row", label.Pending)
-	wantContains(t, "stuck comment", comment, "claude ended with an error")
+	wantStuckComment(t, comment, "The AI's run failed because claude ended with an error", label.Pending)
 	wantNotContains(t, "stuck comment", comment, "secret detail")
 	wantContains(t, "log", log.String(), "secret detail")
+	e.wantRemoved(name)
+	e.wantKept(name, "stream.jsonl")
 }
 
 func TestBuilderUsageLimitEndIsNotCounted(t *testing.T) {
@@ -448,8 +441,8 @@ func TestBuilderUsageLimitEndIsNotCounted(t *testing.T) {
 
 	e.wantStatus(task, label.Queued)
 	e.wantRemoved(name)
-	if got := e.runs.fail(name); got != 1 {
-		t.Errorf("a usage limit end counted as a failed run")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a usage limit end left %d comments", n)
 	}
 }
 
@@ -574,8 +567,8 @@ func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	if got := gittest.Head(e.origin, branch); got != pushed {
 		t.Errorf("branch = %s, want the person's push %s left alone", got, pushed)
 	}
-	if got := e.runs.fail(name); got != 1 {
-		t.Errorf("a branch change counted as a failed run")
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("a branch change left %d comments", n)
 	}
 }
 

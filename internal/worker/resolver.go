@@ -332,22 +332,14 @@ func (r *resolver) stuck(ctx context.Context, n int, name, reason string) error 
 	return r.runs.remove(ctx, name, false)
 }
 
-// failed removes a run that failed, or after maxFailures in a row sends the Task to stuck. The
-// Task stays in review, so resolver starts over at a later round.
+// failed sends the Task to stuck and keeps the run's files for a person to read.
 func (r *resolver) failed(ctx context.Context, n int, name, why, detail string) error {
 	slog.Warn("resolver run failed", "task", n, "sandbox", name, "why", why, "detail", detail, "stderr", r.runs.tail(name, "stderr.log"))
 	// Stuck goes first. With the sandbox gone and the Task still in review, a failed GitHub call
-	// would start a fourth run.
-	if count := r.runs.failures(name) + 1; count >= maxFailures {
-		if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, failedReason(count, why)); err != nil {
-			return err
-		}
-		r.runs.forget(name)
-		return r.runs.remove(ctx, name, true)
-	}
-	if err := r.runs.remove(ctx, name, true); err != nil {
+	// would start another run.
+	if err := toStuck(ctx, r.GitHub, n, label.Review, label.Review, failedReason(why)); err != nil {
 		return err
 	}
-	r.runs.fail(name)
-	return nil
+	r.runs.forget(name)
+	return r.runs.remove(ctx, name, true)
 }

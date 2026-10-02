@@ -165,13 +165,12 @@ With `.exomecha/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 17. Sandbox stopped or removed
 
-- While a Task is `status:working`, run `sbx stop <sandbox>`. Within a minute the Task goes back to `status:queued`, and builder starts it again a minute later.
-- Again, with `sbx rm --force <sandbox>`. Same result.
-- A third time in a row on the same Task. The Task goes `status:stuck`, and the comment says the run failed 3 times in a row. The last run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/<sandbox>`.
+- While a Task is `status:working`, run `sbx stop <sandbox>`. Within a minute the Task goes `status:stuck`, and the comment says the sandbox stopped while claude was running. The run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/<sandbox>`.
+- Relabel the Task `status:pending`. Once builder starts it again, run `sbx rm --force <sandbox>`. The Task goes `status:stuck` the same way, and the comment says the sandbox was removed.
 
 ### 18. Stalled run
 
-- While a Task is `status:working`, freeze claude with `sbx exec <sandbox> pkill -STOP -f claude`. After 15 minutes the sandbox is removed and the Task goes back to `status:queued`.
+- While a Task is `status:working`, freeze claude with `sbx exec <sandbox> pkill -STOP -f claude`. After 15 minutes the sandbox is removed, and the Task goes `status:stuck` with a comment that claude's output did not change for 15 minutes.
 
 ### 19. A working Task relabeled
 

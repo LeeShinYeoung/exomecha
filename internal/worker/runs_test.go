@@ -113,20 +113,6 @@ func TestBackoffDoubles(t *testing.T) {
 	}
 }
 
-func TestFailCountsInARow(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	name := e.runs.name(7, "builder")
-	for want := 1; want <= 3; want++ {
-		if got := e.runs.fail(name); got != want {
-			t.Errorf("fail = %d, want %d", got, want)
-		}
-	}
-	e.runs.forget(name)
-	if got := e.runs.fail(name); got != 1 {
-		t.Errorf("fail after forget = %d, want 1", got)
-	}
-}
-
 func TestOutcome(t *testing.T) {
 	const init = `{"type":"system","subtype":"init","permissionMode":"auto"}` + "\n"
 	for _, c := range []struct {
@@ -222,15 +208,15 @@ func TestFoundAndPrune(t *testing.T) {
 	slices.Sort(found)
 	wantInts(t, "found builder", found, []int{3, 5})
 
-	e.runs.fail(prefix + "3-builder")
-	e.runs.fail(prefix + "5-builder")
-	e.runs.fail(prefix + "3-resolver")
+	e.runs.strike(prefix + "3-builder")
+	e.runs.strike(prefix + "5-builder")
+	e.runs.strike(prefix + "3-resolver")
 	e.runs.prune("builder", map[int]bool{5: true})
 	if !e.runs.due(prefix + "3-builder") {
-		t.Error("prune kept the failures of a Task builder no longer owns")
+		t.Error("prune kept the backoff of a Task builder no longer owns")
 	}
 	if e.runs.due(prefix+"5-builder") || e.runs.due(prefix+"3-resolver") {
-		t.Error("prune dropped failures it should keep")
+		t.Error("prune dropped backoff it should keep")
 	}
 }
 
