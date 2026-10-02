@@ -191,11 +191,20 @@ func TestReviewerApproveMerges(t *testing.T) {
 	if !p.Merged || p.MergeMethod != "merge" || p.MergedSHA != sha {
 		t.Errorf("PR merged=%v method=%q sha=%q, want merged with merge at the reviewed head %s", p.Merged, p.MergeMethod, p.MergedSHA, sha)
 	}
+	e.wantFinished(task)
+	e.wantRemoved(name)
+}
+
+// wantFinished checks that the Task is closed as completed, with no status and no comment.
+func (e *env) wantFinished(task int) {
+	e.t.Helper()
 	if got := e.gh.Issue(task); got.Open || got.StateReason != "completed" {
-		t.Errorf("task open=%v reason=%q, want closed as completed", got.Open, got.StateReason)
+		e.t.Errorf("task open=%v reason=%q, want closed as completed", got.Open, got.StateReason)
 	}
 	e.wantStatus(task, label.None)
-	e.wantRemoved(name)
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		e.t.Errorf("%d comments, want none", n)
+	}
 }
 
 func TestReviewerChangesRequeues(t *testing.T) {
@@ -347,6 +356,52 @@ func TestReviewerMergeRefusedWhileGitHubChecksKeepsTheResult(t *testing.T) {
 	if !e.gh.Pull(pr).Merged {
 		t.Error("PR not merged from the kept result")
 	}
+}
+
+const closeRoute = "PATCH /repos/{owner}/{repo}/issues/{n}"
+
+// The merge went through and closing the Task did not. The Task stays in review with its PR
+// merged, and the next try closes it.
+func TestReviewerFinishesATaskWhoseCloseFailedAfterTheMerge(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.Fail(closeRoute, http.StatusBadGateway)
+
+	if err := e.reviewer().Handle(t.Context(), task); err == nil {
+		t.Fatal("Handle returned nil with the close failing")
+	}
+	if !e.gh.Pull(pr).Merged {
+		t.Fatal("PR not merged")
+	}
+	e.wantStatus(task, label.Review)
+
+	e.gh.Fail(closeRoute, 0)
+	e.review(task)
+	e.wantFinished(task)
+	e.wantRemoved(name)
+}
+
+// The Task closed and its status stayed. No worker takes a closed Task, and the run goes.
+func TestReviewerLeavesATaskWhoseStatusClearFailedAfterTheMerge(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, _, name := e.approved()
+	e.gh.Fail(labelsRoute, http.StatusBadGateway)
+
+	if err := e.reviewer().Handle(t.Context(), task); err == nil {
+		t.Fatal("Handle returned nil with the status clear failing")
+	}
+	e.gh.Fail(labelsRoute, 0)
+	picked, err := e.reviewer().Pick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInts(t, "Pick", picked, []int{task})
+	e.review(task)
+
+	if got := e.gh.Issue(task); got.Open || got.StateReason != "completed" || len(got.Comments) != 0 {
+		t.Errorf("task open=%v reason=%q comments=%d, want closed as completed with no comment", got.Open, got.StateReason, len(got.Comments))
+	}
+	e.wantRemoved(name)
 }
 
 // Another merge into the base branch went in at the same moment. The next try merges.

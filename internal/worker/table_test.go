@@ -131,6 +131,7 @@ func reviewerCells(t *testing.T) tableWorker {
 		table: reviewerTable,
 		want: table{
 			away:    {idle, drop, drop, drop, drop, drop, drop},
+			merged:  {idle, drop, drop, drop, drop, drop, drop},
 			closed:  {idle, drop, drop, drop, drop, drop, drop},
 			failing: {idle, drop, drop, drop, drop, drop, drop},
 			waiting: {idle, restart, idle, fail, fail, fail, idle},
@@ -143,6 +144,10 @@ func reviewerCells(t *testing.T) tableWorker {
 		put: func(e *env, n int, p place) {
 			pr := e.gh.Pulls()[0].Number
 			switch p {
+			case merged:
+				if err := e.deps.GitHub.Merge(t.Context(), pr, ""); err != nil {
+					t.Fatal(err)
+				}
 			case closed:
 				e.gh.ClosePull(pr)
 			case failing:
@@ -154,6 +159,9 @@ func reviewerCells(t *testing.T) tableWorker {
 		// A conflict is resolver's.
 		away: append(leave(label.Pending), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
 		settled: map[place]func(e *env, n int){
+			merged: func(e *env, n int) {
+				e.wantFinished(n)
+			},
 			closed: func(e *env, n int) {
 				e.wantStatus(n, label.Stuck)
 				wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Pending)
@@ -273,7 +281,7 @@ func leave(to label.Status) []func(e *env, n int) {
 
 var placeNames = map[place]string{
 	away: "away", ready: "ready", working: "working", clean: "clean",
-	waiting: "waiting", closed: "closed", failing: "failing",
+	waiting: "waiting", merged: "merged", closed: "closed", failing: "failing",
 }
 
 func actionNames(r row) []string {

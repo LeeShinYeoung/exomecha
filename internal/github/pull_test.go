@@ -53,3 +53,29 @@ func TestMerge(t *testing.T) {
 		})
 	}
 }
+
+func TestMerged(t *testing.T) {
+	s := githubtest.New(t)
+	client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const branch = "exomecha/task-1"
+	want := func(what string, merged bool) {
+		t.Helper()
+		if got, err := client.Merged(t.Context(), branch); err != nil || got != merged {
+			t.Errorf("%s: Merged = %v, %v, want %v", what, got, err, merged)
+		}
+	}
+
+	want("no PR", false)
+	first := s.AddPull(branch, "main")
+	s.ClosePull(first)
+	want("closed without a merge", false)
+	if err := client.Merge(t.Context(), s.AddPull(branch, "main"), ""); err != nil {
+		t.Fatal(err)
+	}
+	want("merged", true)
+	s.ClosePull(s.AddPull(branch, "main"))
+	want("closed after a merged one", false)
+}

@@ -34,11 +34,12 @@ var reviewerRole = role{
 	back:   label.Review,
 }
 
-// closed and failing drop the run, which was about a PR that no longer stands, and Handle then
-// settles the Task.
+// merged, closed and failing drop the run, which was about a PR that no longer stands, and Handle
+// then settles the Task.
 var reviewerTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:    {idle, drop, drop, drop, drop, drop, drop},
+	merged:  {idle, drop, drop, drop, drop, drop, drop},
 	closed:  {idle, drop, drop, drop, drop, drop, drop},
 	failing: {idle, drop, drop, drop, drop, drop, drop},
 	waiting: {idle, restart, idle, fail, fail, fail, idle},
@@ -149,6 +150,11 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		return err
 	}
 	switch p {
+	case merged:
+		if err := r.finish(ctx, n); err != nil {
+			return err
+		}
+		slog.Info("closed a task whose PR was merged", "task", n)
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
@@ -178,6 +184,15 @@ func (r *reviewer) look(ctx context.Context, task github.Issue) (place, github.P
 	case err != nil:
 		return away, pr, nil, err
 	case !ok:
+		// A PR can be merged with its Task still in review, since exomecha closes the Task after
+		// the merge and that can fail.
+		done, err := r.GitHub.Merged(ctx, branchName(task.Number))
+		switch {
+		case err != nil:
+			return away, pr, nil, err
+		case done:
+			return merged, pr, nil, nil
+		}
 		return closed, pr, nil, nil
 	// GitHub is still computing whether the PR merges.
 	case pr.Mergeable == nil:
@@ -260,10 +275,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 			// The result stays, so the next try merges without another review.
 			return err
 		}
-		if err := r.GitHub.ClearStatus(ctx, n); err != nil {
-			return err
-		}
-		if err := r.GitHub.Close(ctx, n, github.Completed); err != nil {
+		if err := r.finish(ctx, n); err != nil {
 			return err
 		}
 		slog.Info("merged and closed task", "task", n, "pr", pr.Number)
@@ -291,6 +303,15 @@ func (r *reviewer) refused(ctx context.Context, n, number int, message string) e
 	return r.runs.stuck(ctx, reviewerRole, n, fmt.Sprintf("The AI approved PR #%d, but GitHub refused to merge it: %s\n\n"+
 		"A rule of the base branch may need something exomecha cannot give, such as an approving review from someone else. "+
 		"Merge the PR yourself, or change the rule and relabel this issue as below.", number, message))
+}
+
+// finish closes the Task as completed and then clears its status. A Task left open in review
+// comes back to merged, and one closed with its status is left alone by every worker.
+func (r *reviewer) finish(ctx context.Context, n int) error {
+	if err := r.GitHub.Close(ctx, n, github.Completed); err != nil {
+		return err
+	}
+	return r.GitHub.ClearStatus(ctx, n)
 }
 
 // requeue leaves a review on the PR and sends the Task back to builder.

@@ -31,6 +31,20 @@ func (c *Client) OpenPR(ctx context.Context, branch string) (number int, ok bool
 	return prs[0].GetNumber(), true, nil
 }
 
+// Merged reports whether the newest closed PR from branch was merged.
+func (c *Client) Merged(ctx context.Context, branch string) (bool, error) {
+	// GitHub lists the newest first.
+	prs, _, err := c.api.PullRequests.List(ctx, c.owner, c.repo, &gh.PullRequestListOptions{
+		State:       "closed",
+		Head:        c.owner + ":" + branch,
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil || len(prs) == 0 {
+		return false, err
+	}
+	return prs[0].MergedAt != nil, nil
+}
+
 func (c *Client) CreatePR(ctx context.Context, branch, base, title, body string) (int, error) {
 	pr, _, err := c.api.PullRequests.Create(ctx, c.owner, c.repo, gh.CreatePullRequest{
 		Title: gh.Ptr(title),

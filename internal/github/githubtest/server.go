@@ -268,7 +268,7 @@ func (s *Server) pullJSON(p *Pull) any {
 	if !p.Open {
 		state = "closed"
 	}
-	return map[string]any{
+	m := map[string]any{
 		"number":    p.Number,
 		"state":     state,
 		"title":     p.Title,
@@ -278,6 +278,10 @@ func (s *Server) pullJSON(p *Pull) any {
 		"mergeable": p.Mergeable,
 		"merged":    p.Merged,
 	}
+	if p.Merged {
+		m["merged_at"] = commentEpoch.Format(time.RFC3339)
+	}
+	return m
 }
 
 func (s *Server) getUser(*http.Request) (int, any) {
@@ -530,7 +534,8 @@ func (s *Server) listPulls(r *http.Request) (int, any) {
 		}
 		numbers = append(numbers, n)
 	}
-	slices.Sort(numbers)
+	// GitHub lists newest first.
+	slices.SortFunc(numbers, func(a, b int) int { return cmp.Compare(b, a) })
 	out := []any{}
 	for _, n := range numbers {
 		out = append(out, s.pullJSON(s.pulls[n]))

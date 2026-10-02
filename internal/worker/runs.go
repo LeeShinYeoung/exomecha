@@ -97,7 +97,8 @@ const (
 	working              // a Task builder is working on
 	clean                // a Task in review whose PR does not conflict, or that has no PR
 	waiting              // a Task in review whose PR GitHub or CI has not checked yet
-	closed               // a Task in review with no open PR
+	merged               // a Task in review whose PR was merged
+	closed               // a Task in review whose PR was closed without a merge
 	failing              // a Task in review whose PR's CI failed
 )
 
