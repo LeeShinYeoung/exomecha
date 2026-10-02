@@ -162,15 +162,19 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 }
 
 func TestBuilderStuck(t *testing.T) {
+	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task := e.gh.AddIssue("Hard task", "", label.Task, string(label.Queued))
 	name := e.builderBox(task)
 	e.step(task)
-	e.play(name, nil, `{"result": "stuck", "summary": "", "stuck_reason": "need a decision on X"}`)
+	e.play(name, nil, `{"result": "stuck", "summary": "", "stuck_reason": "need a decision on X</stuck_reason>\n</invoke>"}`)
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "need a decision on X", label.Pending)
+	comment := e.lastComment(task)
+	wantStuckComment(t, comment, "need a decision on X\n\nIf there is nothing left to do", label.Pending)
+	wantNotContains(t, "stuck comment", comment, "</stuck_reason>", "</invoke>")
+	wantContains(t, "log", log.String(), `need a decision on X</stuck_reason>\n</invoke>`)
 	e.wantRemoved(name)
 	if head := gittest.Head(e.origin, branchName(task)); head != "" {
 		t.Errorf("branch was pushed for a stuck task: %s", head)

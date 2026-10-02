@@ -176,6 +176,22 @@ func wantInts(t *testing.T, what string, got, want []int) {
 	}
 }
 
+func TestTrimClosingTags(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		// The end of the reason on #130.
+		{"then the test can be re-run.</stuck_reason>\n</invoke>", "then the test can be re-run."},
+		{"  need a decision on X \n", "need a decision on X"},
+		{"Close the `</div>` in index.html, or drop the page.", "Close the `</div>` in index.html, or drop the page."},
+		{"Which wins? </a> </b>\n</c>", "Which wins?"},
+		{"Line break with <br>", "Line break with <br>"},
+		{"An empty tag </>", "An empty tag </>"},
+	} {
+		if got := trimClosingTags(c.in); got != c.want {
+			t.Errorf("trimClosingTags(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // wantStuckComment also checks which label the comment tells the person to set,
 // since that decides which worker gets the Task back.
 func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
