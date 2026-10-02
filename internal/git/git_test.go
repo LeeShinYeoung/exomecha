@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LeeShinYeoung/coworker/internal/git"
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/git"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 )
 
 type fixture struct {

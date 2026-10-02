@@ -9,11 +9,11 @@ import (
 
 	gh "github.com/google/go-github/v92/github"
 
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
-// Marker starts every comment and review coworker writes, to tell them apart from people's.
-const Marker = "<!-- coworker -->"
+// Marker starts every comment and review exomecha writes, to tell them apart from people's.
+const Marker = "<!-- exomecha -->"
 
 // trusted reports whether GitHub says the author can write to the repository. On a public
 // repository anyone can open issues, comment, and review, and none of that may steer the AI.
@@ -121,7 +121,7 @@ func (c *Client) Close(ctx context.Context, number int, reason CloseReason) erro
 type Comment struct {
 	Body      string
 	CreatedAt time.Time
-	Coworker  bool
+	Exomecha  bool
 	Trusted   bool // written by someone who can write to the repository
 }
 
@@ -135,7 +135,7 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 		out = append(out, Comment{
 			Body:      withoutMarker(cm.GetBody()),
 			CreatedAt: cm.GetCreatedAt().Time,
-			Coworker:  byCoworker(cm.GetBody()),
+			Exomecha:  byExomecha(cm.GetBody()),
 			Trusted:   trusted(cm.GetAuthorAssociation()),
 		})
 	}
@@ -150,7 +150,7 @@ func (c *Client) AddComment(ctx context.Context, number int, body string) error 
 	return err
 }
 
-func byCoworker(body string) bool {
+func byExomecha(body string) bool {
 	return strings.HasPrefix(strings.TrimSpace(body), Marker)
 }
 

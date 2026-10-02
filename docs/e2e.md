@@ -1,12 +1,12 @@
 # End-to-end check
 
-Unit tests cover coworker against a fake GitHub, a fake claude and a fake sbx. This checklist runs the real thing on a practice repository: real GitHub, real claude, real sbx, real skills. Run it once after changes to the workers, the prompts, or the skills.
+Unit tests cover exomecha against a fake GitHub, a fake claude and a fake sbx. This checklist runs the real thing on a practice repository: real GitHub, real claude, real sbx, real skills. Run it once after changes to the workers, the prompts, or the skills.
 
-Tests against the real sbx and claude, with no GitHub, run only when asked. Run them after changes to how coworker uses sbx:
+Tests against the real sbx and claude, with no GitHub, run only when asked. Run them after changes to how exomecha uses sbx:
 
 ```
-COWORKER_TEST_SBX=1 go test ./internal/sandbox ./internal/template
-COWORKER_TEST_SBX=1 COWORKER_TEST_CLAUDE=1 go test -run TestReal ./internal/worker
+EXOMECHA_TEST_SBX=1 go test ./internal/sandbox ./internal/template
+EXOMECHA_TEST_SBX=1 EXOMECHA_TEST_CLAUDE=1 go test -run TestReal ./internal/worker
 ```
 
 The first takes about 2 minutes. The second spends a little Claude usage and takes a few minutes. Both remove every sandbox and template they create.
@@ -16,40 +16,40 @@ The first takes about 2 minutes. The second spends a little Claude usage and tak
 1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule. No GitHub Actions workflow on `main` at the start.
 2. A fine-grained token for that repository only: Issues read and write, Pull requests read and write, Contents read and write, Actions read.
 3. sbx set up as in the README: signed in to Docker, the balanced network policy, the Claude login, and no global `github` secret.
-4. Install coworker and fill `<name>.env` (see the README). Run coworker in its own terminal and keep the log in view:
+4. Install exomecha and fill `<name>.env` (see the README). Run exomecha in its own terminal and keep the log in view:
    ```
-   go install ./cmd/coworker
-   set -a; source <name>.env; set +a; ~/go/bin/coworker
+   go install ./cmd/exomecha
+   set -a; source <name>.env; set +a; ~/go/bin/exomecha
    ```
-5. In the practice repository, install the plugin from your coworker checkout:
+5. In the practice repository, install the plugin from your exomecha checkout:
    ```
-   claude plugin marketplace add <path to coworker> --scope local
-   claude plugin install coworker@coworker --scope local
+   claude plugin marketplace add <path to exomecha> --scope local
+   claude plugin install exomecha@exomecha --scope local
    ```
-   After editing the skills, run `claude plugin update coworker@coworker` and restart Claude Code.
+   After editing the skills, run `claude plugin update exomecha@exomecha` and restart Claude Code.
 6. For the commands below:
    ```
    R=<owner>/<practice repository>
    ```
-   `<sandbox>` is a Task's sandbox as `sbx ls` shows it, `coworker-task-<slug>-<task>-builder` (see the README for the slug).
+   `<sandbox>` is a Task's sandbox as `sbx ls` shows it, `exomecha-task-<slug>-<task>-builder` (see the README for the slug).
 
-Stopping coworker with Ctrl-C pauses every worker. A run already in a sandbox keeps going, and coworker picks it up when it starts again. Use this to line up the state a scenario needs, then start coworker again.
+Stopping exomecha with Ctrl-C pauses every worker. A run already in a sandbox keeps going, and exomecha picks it up when it starts again. Use this to line up the state a scenario needs, then start exomecha again.
 
 ## Scenarios
 
 ### 1. Labels
 
-- Start coworker. `gh label list -R $R` shows the nine labels.
+- Start exomecha. `gh label list -R $R` shows the nine labels.
 - Stop and start it again. Still nine, and no error in the log.
 
 ### 2. Skills
 
 In the practice repository, in Claude Code:
 
-- `/coworker:issue` with a real problem from the project. A `type:problem` issue appears with Problem and Investigation notes, and no solution.
-- `/coworker:discuss <problem>`. The problem gets one comment with Direction, Re-checked on, Options considered, Decisions made, Open questions.
-- `/coworker:prd <problem>`. Check the plan file before approving: every ledger row is closed, and the draft has every section of the body format. After approval a `type:prd` issue appears as a sub-issue of the problem, with the same body.
-- `/coworker:setup`. `.coworker/Dockerfile` and `.coworker/setup.sh` appear, and `.coworker/allowed-hosts` too if a check needed a host. None of them is committed. The report has the files, how long the script took, the checks it ran, each added host with the step that needs it, and the blocked hosts it left out. Afterwards `sbx ls` and `sbx template ls` show nothing named `coworker-setup-`. Commit the files to `main`, together with `.gitignore` if it changed.
+- `/exomecha:issue` with a real problem from the project. A `type:problem` issue appears with Problem and Investigation notes, and no solution.
+- `/exomecha:discuss <problem>`. The problem gets one comment with Direction, Re-checked on, Options considered, Decisions made, Open questions.
+- `/exomecha:prd <problem>`. Check the plan file before approving: every ledger row is closed, and the draft has every section of the body format. After approval a `type:prd` issue appears as a sub-issue of the problem, with the same body.
+- `/exomecha:setup`. `.exomecha/Dockerfile` and `.exomecha/setup.sh` appear, and `.exomecha/allowed-hosts` too if a check needed a host. None of them is committed. The report has the files, how long the script took, the checks it ran, each added host with the step that needs it, and the blocked hosts it left out. Afterwards `sbx ls` and `sbx template ls` show nothing named `exomecha-setup-`. Commit the files to `main`, together with `.gitignore` if it changed.
 
 ### 3. splitter and sequencer
 
@@ -59,8 +59,8 @@ In the practice repository, in Claude Code:
 
 ### 4. Parallel builds and overlap
 
-- Stop coworker. File two PRDs whose Tasks touch different files, and a third whose Task touches the same file as the first.
-- Start coworker. The first two Tasks are `status:working` at the same time and each gets its own PR.
+- Stop exomecha. File two PRDs whose Tasks touch different files, and a third whose Task touches the same file as the first.
+- Start exomecha. The first two Tasks are `status:working` at the same time and each gets its own PR.
 - The third Task gets Blocked by the first Task and stays `status:queued` until that one closes.
 
 ### 5. Review, merge, and close
@@ -70,12 +70,12 @@ In the practice repository, in Claude Code:
 
 ### 6. Sent back by review
 
-- While a Task is in `status:review`, stop coworker and push an obviously wrong commit to its branch (for example, undo the fix).
-- Start coworker. reviewer leaves a COMMENT review and the Task goes `status:queued`. builder pushes a fix to the same PR. No second PR appears.
+- While a Task is in `status:review`, stop exomecha and push an obviously wrong commit to its branch (for example, undo the fix).
+- Start exomecha. reviewer leaves a COMMENT review and the Task goes `status:queued`. builder pushes a fix to the same PR. No second PR appears.
 
 ### 7. CI failure
 
-- While a Task is in `status:review`, stop coworker and push to its branch a workflow that runs the tests, together with a test that fails:
+- While a Task is in `status:review`, stop exomecha and push to its branch a workflow that runs the tests, together with a test that fails:
   ```yaml
   # .github/workflows/ci.yml
   name: ci
@@ -90,7 +90,7 @@ In the practice repository, in Claude Code:
             go-version: stable
         - run: go test ./...
   ```
-- Start coworker. reviewer waits while the run is in progress, then leaves a review listing the failed run, and the Task goes `status:queued`. builder fixes it on the same PR.
+- Start exomecha. reviewer waits while the run is in progress, then leaves a review listing the failed run, and the Task goes `status:queued`. builder fixes it on the same PR.
 
 ### 8. stuck and back
 
@@ -110,14 +110,14 @@ In the practice repository, in Claude Code:
 
 ### 9. Conflict
 
-- When a Task reaches `status:review`, stop coworker and push a commit to `main` that changes the same lines its PR changes.
-- Start coworker. Once GitHub marks the PR as conflicting, resolver merges `main` into the branch, resolves it, and pushes. The Task stays `status:review`, and reviewer reviews it again. reviewer never picks the Task while its PR is conflicting.
+- When a Task reaches `status:review`, stop exomecha and push a commit to `main` that changes the same lines its PR changes.
+- Start exomecha. Once GitHub marks the PR as conflicting, resolver merges `main` into the branch, resolves it, and pushes. The Task stays `status:review`, and reviewer reviews it again. reviewer never picks the Task while its PR is conflicting.
 - Repeat with a commit on `main` that contradicts the PR (for example, it explicitly refuses the feature the PR adds). resolver sends the Task to `status:stuck` and asks which side wins. Answer in a comment and relabel it `status:review`. resolver merges again and settles the conflict the way you answered. builder is not involved.
 
 ### 10. Restart
 
-- While a Task is `status:working`, stop coworker with Ctrl-C. The Task stays `status:working`, and `sbx ls` still shows its sandbox. Start coworker again. Once claude finishes, coworker collects the run and the PR opens.
-- Repeat, but kill coworker hard (`kill -9 <pid>`) instead. Same result.
+- While a Task is `status:working`, stop exomecha with Ctrl-C. The Task stays `status:working`, and `sbx ls` still shows its sandbox. Start exomecha again. Once claude finishes, exomecha collects the run and the PR opens.
+- Repeat, but kill exomecha hard (`kill -9 <pid>`) instead. Same result.
 
 ### 11. PR closed by hand
 
@@ -126,7 +126,7 @@ In the practice repository, in Claude Code:
 
 ### 12. Commit checks
 
-- Add a commit message check to the practice repository that only accepts first lines like `feat: add Shout`, as a `commit-msg` hook in `.githooks`. Turn it on in each Task's sandbox by adding this line to `.coworker/setup.sh`, and commit both to `main`:
+- Add a commit message check to the practice repository that only accepts first lines like `feat: add Shout`, as a `commit-msg` hook in `.githooks`. Turn it on in each Task's sandbox by adding this line to `.exomecha/setup.sh`, and commit both to `main`:
   ```
   git config core.hooksPath .githooks
   ```
@@ -136,26 +136,26 @@ In the practice repository, in Claude Code:
 
 ### 13. Claude usage limit
 
-- Start coworker with `COWORKER_FIVE_HOUR_LIMIT=1` and file a Task. The log says once that usage is over the limit, and the Task does not move.
-- Restart coworker without it. Within a minute the Task moves on.
+- Start exomecha with `EXOMECHA_FIVE_HOUR_LIMIT=1` and file a Task. The log says once that usage is over the limit, and the Task does not move.
+- Restart exomecha without it. Within a minute the Task moves on.
 
 ### 14. Setup script
 
-- With `.coworker/setup.sh` on `main` (scenario 2), file a Task. The log says the setup script ran in the Task's sandbox before its PR opens. The PR holds none of the files the script created.
+- With `.exomecha/setup.sh` on `main` (scenario 2), file a Task. The log says the setup script ran in the Task's sandbox before its PR opens. The PR holds none of the files the script created.
 - A script that starts a service as a Docker container still passes, and the tests that need the service pass in the sandbox.
-- Stop coworker. Push a commit to `main` that adds `echo boom >&2; exit 1` as the first line of the script, then file another Task.
-- Start coworker. The Task goes `status:stuck`. The comment says the setup script failed, and `boom` is in the log, not in the comment.
+- Stop exomecha. Push a commit to `main` that adds `echo boom >&2; exit 1` as the first line of the script, then file another Task.
+- Start exomecha. The Task goes `status:stuck`. The comment says the setup script failed, and `boom` is in the log, not in the comment.
 - Push a commit to `main` that removes the line, and relabel the Task `status:pending`. It goes through sequencer and builder again, and the PR opens.
 
 ### 15. A Task's sandbox
 
-- File a Task. `sbx ls` shows `<sandbox>`. While claude works, `stream.jsonl` in the sandbox's folder under `~/.coworker/<owner>/<repo>/sandboxes/` grows.
+- File a Task. `sbx ls` shows `<sandbox>`. While claude works, `stream.jsonl` in the sandbox's folder under `~/.exomecha/<owner>/<repo>/sandboxes/` grows.
 - After the PR opens, the sandbox is gone from `sbx ls`, and its folder is gone too.
 - The PR's commits have the token owner as author, with the address `<id>+<login>@users.noreply.github.com`.
 
 ### 16. Inside a Task's sandbox
 
-With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `status:working`:
+With `.exomecha/allowed-hosts` on `main` listing one host, while a Task is `status:working`:
 
 - `sbx policy ls` shows a rule for `<sandbox>` that allows that host.
 - `sbx exec <sandbox> env` shows no GitHub token other than sbx's placeholder.
@@ -167,7 +167,7 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 - While a Task is `status:working`, run `sbx stop <sandbox>`. Within a minute the Task goes back to `status:queued`, and builder starts it again a minute later.
 - Again, with `sbx rm --force <sandbox>`. Same result.
-- A third time in a row on the same Task. The Task goes `status:stuck`, and the comment says the run failed 3 times in a row. The last run's files are in `~/.coworker/<owner>/<repo>/sandboxes/failed/<sandbox>`.
+- A third time in a row on the same Task. The Task goes `status:stuck`, and the comment says the run failed 3 times in a row. The last run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/<sandbox>`.
 
 ### 18. Stalled run
 
@@ -180,27 +180,27 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 20. Sandbox limit
 
-- With `.coworker/Dockerfile` on `main`, stop coworker and remove the project's template (`sbx template rm --force`), so coworker starts with no template and builds it first. Line up three queued Tasks that do not block each other.
-- Start coworker with `COWORKER_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and no more than two Tasks are `status:working` at once, during the build too. The third Task starts once one of the first two is done.
+- With `.exomecha/Dockerfile` on `main`, stop exomecha and remove the project's template (`sbx template rm --force`), so exomecha starts with no template and builds it first. Line up three queued Tasks that do not block each other.
+- Start exomecha with `EXOMECHA_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and no more than two Tasks are `status:working` at once, during the build too. The third Task starts once one of the first two is done.
 
 ### 21. Blocked host
 
 - File a Task that needs a host the sandbox blocks. The AI sends it to `status:stuck`, and the comment names the host from "Approval required for <host>".
-- Add the host to `.coworker/allowed-hosts` on `main`, and relabel the Task `status:pending`. The PR opens.
+- Add the host to `.exomecha/allowed-hosts` on `main`, and relabel the Task `status:pending`. The PR opens.
 
 ### 22. Global github secret
 
-- Store a global github secret in sbx (`sbx secret set github`), then start coworker. It refuses to start and says to run `sbx secret rm github --force`.
-- Run it. coworker starts.
+- Store a global github secret in sbx (`sbx secret set github`), then start exomecha. It refuses to start and says to run `sbx secret rm github --force`.
+- Run it. exomecha starts.
 
 ### 23. Template build
 
-With `.coworker/Dockerfile` on `main` (scenario 2):
+With `.exomecha/Dockerfile` on `main` (scenario 2):
 
-- Stop coworker, line up two queued Tasks, and start coworker. The log has exactly one "building template" and one "built template". Afterwards `sbx ls` shows no `coworker-build-` sandbox.
-- Push a change to the Dockerfile to `main`, and file a Task. After "removed old template" in the log, `sbx template ls` shows only the new `coworker-<slug>` tag.
+- Stop exomecha, line up two queued Tasks, and start exomecha. The log has exactly one "building template" and one "built template". Afterwards `sbx ls` shows no `exomecha-build-` sandbox.
+- Push a change to the Dockerfile to `main`, and file a Task. After "removed old template" in the log, `sbx template ls` shows only the new `exomecha-<slug>` tag.
 
 ### 24. Template problems
 
-- Push a commit to `main` that adds `RUN echo coworker-secret && false` to the Dockerfile, and file a Task. The Task goes `status:stuck`, the comment names the Dockerfile, and `coworker-secret` is only in the log. Revert the commit and relabel the Task `status:pending`. The PR opens.
-- Put `**` in `.coworker/allowed-hosts` on `main`, and file a Task. The Task goes `status:stuck`, and the comment quotes that line. Revert it and relabel the Task. The PR opens.
+- Push a commit to `main` that adds `RUN echo exomecha-secret && false` to the Dockerfile, and file a Task. The Task goes `status:stuck`, the comment names the Dockerfile, and `exomecha-secret` is only in the log. Revert the commit and relabel the Task `status:pending`. The PR opens.
+- Put `**` in `.exomecha/allowed-hosts` on `main`, and file a Task. The Task goes `status:stuck`, and the comment quotes that line. Revert it and relabel the Task. The PR opens.

@@ -3,7 +3,7 @@ package worker
 import (
 	"testing"
 
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 func TestSplitterCreatesTasks(t *testing.T) {

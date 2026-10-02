@@ -1,11 +1,11 @@
 ---
 name: issue
-description: Record a problem and the facts you confirmed as a type:problem GitHub issue. Never write a solution. Use when a person invokes /coworker:issue.
+description: Record a problem and the facts you confirmed as a type:problem GitHub issue. Never write a solution. Use when a person invokes /exomecha:issue.
 ---
 
 # Record a problem
 
-Investigate the problem the person describes and file only the problem and the confirmed facts as a `type:problem` issue. The direction is decided in `/coworker:discuss` and the plan in `/coworker:prd`.
+Investigate the problem the person describes and file only the problem and the confirmed facts as a `type:problem` issue. The direction is decided in `/exomecha:discuss` and the plan in `/exomecha:prd`.
 
 ## Rules
 
@@ -22,7 +22,7 @@ Investigate the problem the person describes and file only the problem and the c
    ```
    gh issue create --title "<title>" --body-file <body file> --label type:problem
    ```
-   If the `type:problem` label does not exist, do not file. Tell the person that running coworker once creates the labels.
+   If the `type:problem` label does not exist, do not file. Tell the person that running exomecha once creates the labels.
 4. Share the issue URL.
 
 ## Body format

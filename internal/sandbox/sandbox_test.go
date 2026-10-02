@@ -75,14 +75,14 @@ func (f *fakeSBX) wantCalls(want ...[]string) {
 func TestCreate(t *testing.T) {
 	f := newFakeSBX(t)
 	ctx := t.Context()
-	if err := (CLI{}).Create(ctx, "box", "docker.io/library/coworker-o-r:abc", "/ctl/box", []string{"ssh.github.com"}); err != nil {
+	if err := (CLI{}).Create(ctx, "box", "docker.io/library/exomecha-o-r:abc", "/ctl/box", []string{"ssh.github.com"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := (CLI{}).Create(ctx, "plain", "", "/ctl/plain", nil); err != nil {
 		t.Fatal(err)
 	}
 	f.wantCalls(
-		[]string{"run", "-d", "--name", "box", "--pull", "never", "-t", "docker.io/library/coworker-o-r:abc", "--deny-network", "ssh.github.com", "claude", "/ctl/box"},
+		[]string{"run", "-d", "--name", "box", "--pull", "never", "-t", "docker.io/library/exomecha-o-r:abc", "--deny-network", "ssh.github.com", "claude", "/ctl/box"},
 		[]string{"run", "-d", "--name", "plain", "claude", "/ctl/plain"},
 	)
 }
@@ -93,12 +93,12 @@ func TestList(t *testing.T) {
 	f.answer("ls", `{
   "sandboxes": [
     {
-      "name": "coworker-task-o-r-12-builder",
+      "name": "exomecha-task-o-r-12-builder",
       "id": "e6a2a78c-c537-45ef-b69d-54ad11643c2b",
       "agent": "claude",
       "status": "running",
       "last_used_at": "2026-10-01T09:19:41.677554Z",
-      "workspaces": ["/Users/me/.coworker/o/r/sandboxes/coworker-task-o-r-12-builder/box"],
+      "workspaces": ["/Users/me/.exomecha/o/r/sandboxes/exomecha-task-o-r-12-builder/box"],
       "created_at": "2026-10-01T09:19:37Z"
     },
     {"name": "other", "status": "stopped"}
@@ -108,7 +108,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Box{{Name: "coworker-task-o-r-12-builder", Status: "running"}, {Name: "other", Status: "stopped"}}
+	want := []Box{{Name: "exomecha-task-o-r-12-builder", Status: "running"}, {Name: "other", Status: "stopped"}}
 	if !slices.Equal(boxes, want) {
 		t.Errorf("List = %+v, want %+v", boxes, want)
 	}
@@ -121,11 +121,11 @@ func TestList(t *testing.T) {
 func TestExec(t *testing.T) {
 	f := newFakeSBX(t)
 	f.answer("exec", "out\n")
-	out, err := (CLI{}).Exec(t.Context(), "box", "/home/agent/repo", []string{"COWORKER_TASK=3"}, "git", "status")
+	out, err := (CLI{}).Exec(t.Context(), "box", "/home/agent/repo", []string{"EXOMECHA_TASK=3"}, "git", "status")
 	if err != nil || string(out) != "out\n" {
 		t.Errorf("Exec = %q, %v", out, err)
 	}
-	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "COWORKER_TASK=3", "box", "git", "status"})
+	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "EXOMECHA_TASK=3", "box", "git", "status"})
 }
 
 func TestExecFailure(t *testing.T) {
@@ -199,23 +199,23 @@ func TestGitURL(t *testing.T) {
 }
 
 func TestParseTask(t *testing.T) {
-	const prefix = "coworker-task-o-r-"
+	const prefix = "exomecha-task-o-r-"
 	for _, c := range []struct {
 		name string
 		task int
 		role string
 		ok   bool
 	}{
-		{"coworker-task-o-r-12-builder", 12, "builder", true},
-		{"coworker-task-o-r-7-resolver", 7, "resolver", true},
+		{"exomecha-task-o-r-12-builder", 12, "builder", true},
+		{"exomecha-task-o-r-7-resolver", 7, "resolver", true},
 		{Name(prefix, 9999999, "resolver"), 9999999, "resolver", true},
-		{"coworker-task-o-r-012-builder", 0, "", false},
-		{"coworker-task-o-r-0-builder", 0, "", false},
-		{"coworker-task-o-r-12-reviewer", 0, "", false},
-		{"coworker-task-o-r-12-builder-x", 0, "", false},
-		{"coworker-task-o-r-x-12-builder", 0, "", false},
-		{"coworker-task-o-r2-12-builder", 0, "", false},
-		{"coworker-build-o-r", 0, "", false},
+		{"exomecha-task-o-r-012-builder", 0, "", false},
+		{"exomecha-task-o-r-0-builder", 0, "", false},
+		{"exomecha-task-o-r-12-reviewer", 0, "", false},
+		{"exomecha-task-o-r-12-builder-x", 0, "", false},
+		{"exomecha-task-o-r-x-12-builder", 0, "", false},
+		{"exomecha-task-o-r2-12-builder", 0, "", false},
+		{"exomecha-build-o-r", 0, "", false},
 		{"impl-run-12-builder", 0, "", false},
 	} {
 		task, role, ok := ParseTask(prefix, c.name)

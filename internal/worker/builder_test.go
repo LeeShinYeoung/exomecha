@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
-	"github.com/LeeShinYeoung/coworker/internal/template"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/template"
 )
 
 const builderDone = `{"result": "done", "summary": "did it", "stuck_reason": ""}`
@@ -237,8 +237,8 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	pr := e.gh.AddPull(branch, "main")
 	e.gh.AddReview(pr, github.Marker+"\nplease rename X")
 	e.gh.AddReview(pr, "a person's review")
-	e.gh.AddOutsiderReview(pr, github.Marker+"\nan outsider posing as coworker")
-	e.gh.AddComment(task, github.Marker+"\na question coworker asked")
+	e.gh.AddOutsiderReview(pr, github.Marker+"\nan outsider posing as exomecha")
+	e.gh.AddComment(task, github.Marker+"\na question exomecha asked")
 	e.gh.AddComment(task, "a person's answer")
 	e.gh.AddOutsiderComment(task, "an outsider's instruction")
 	name := e.builderBox(task)
@@ -249,9 +249,9 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	}
 	input := e.readCtl(name, "input.md")
 	wantContains(t, "claude input", input, "task body", "## Existing PR", "please rename X",
-		"(coworker)\n\na question coworker asked", "(person)\n\na person's answer")
+		"(exomecha)\n\na question exomecha asked", "(person)\n\na person's answer")
 	wantNotContains(t, "claude input", input, github.Marker, "a person's review",
-		"an outsider posing as coworker", "an outsider's instruction")
+		"an outsider posing as exomecha", "an outsider's instruction")
 	e.play(name, commit(t, "fix: rename X", map[string]string{"feature.txt": "second\n"}), builderDone)
 	e.step(task)
 
@@ -278,7 +278,7 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 	if n := len(e.gh.Issue(task).Comments); n != 0 {
 		t.Errorf("an sbx error left %d comments", n)
 	}
-	// An error of coworker's own is no failure of the run, but the next try waits.
+	// An error of exomecha's own is no failure of the run, but the next try waits.
 	if e.box.due(e.builderBox(task)) {
 		t.Error("no backoff after an error")
 	}
@@ -302,7 +302,7 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 
 // The environment main.go wires in. A bad allowed-hosts line fails before any sbx call.
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".coworker/allowed-hosts": "api.example.com\n**\n"})
+	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
 	e.deps.Environment = template.New(e.deps.Git, "owner", "repo")
 	e.box = newTaskbox(e.deps, nil)
 	e.box.now = e.clock.now
@@ -311,7 +311,7 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	reason := "`.coworker/allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it on the base branch."
+	reason := "`.exomecha/allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it on the base branch."
 	wantStuckComment(t, e.lastComment(task), reason, label.Pending)
 	e.wantRemoved(e.builderBox(task))
 }
@@ -537,7 +537,7 @@ func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 	e.wantStatus(running, label.Review)
 }
 
-// A new builder remembers nothing, and still finishes a run a stopped coworker left behind.
+// A new builder remembers nothing, and still finishes a run a stopped exomecha left behind.
 func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, name := e.startedTask()
@@ -579,7 +579,7 @@ func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	}
 }
 
-// After a push, a later step can fail. The next try must not take coworker's own push for a change on GitHub.
+// After a push, a later step can fail. The next try must not take exomecha's own push for a change on GitHub.
 func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	task, name := e.startedTask()

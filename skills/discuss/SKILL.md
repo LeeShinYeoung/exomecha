@@ -1,11 +1,11 @@
 ---
 name: discuss
-description: Re-check a type:problem issue against the latest base branch, settle on a direction with the person by talking through options, then leave the decision as one comment on the problem issue. Does not change code. Use when a person invokes /coworker:discuss.
+description: Re-check a type:problem issue against the latest base branch, settle on a direction with the person by talking through options, then leave the decision as one comment on the problem issue. Does not change code. Use when a person invokes /exomecha:discuss.
 ---
 
 # Decide a direction
 
-Re-check a problem recorded with `/coworker:issue` against the current code, and settle on a direction with the person. The decision goes on the problem issue as a comment, so `/coworker:prd` can pick it up from any session.
+Re-check a problem recorded with `/exomecha:issue` against the current code, and settle on a direction with the person. The decision goes on the problem issue as a comment, so `/exomecha:prd` can pick it up from any session.
 
 ## Rules
 
@@ -16,7 +16,7 @@ Re-check a problem recorded with `/coworker:issue` against the current code, and
 ## Steps
 
 1. Read the issue: `gh issue view <number> --comments`. If no number was given, ask.
-2. Find the base branch: the branch coworker merges PRs into. If you don't know it, ask the person.
+2. Find the base branch: the branch exomecha merges PRs into. If you don't know it, ask the person.
 3. Re-check against the latest base branch. Run `git fetch origin <base>`, then read `origin/<base>` with `git log`, `git show`, and `git grep`.
    - Has the related code changed since the issue was recorded?
    - Is it already fixed?
@@ -27,7 +27,7 @@ Re-check a problem recorded with `/coworker:issue` against the current code, and
    ```
    gh issue comment <number> --body-file <comment file>
    ```
-7. Tell the person to write the plan with `/coworker:prd <issue number>`.
+7. Tell the person to write the plan with `/exomecha:prd <issue number>`.
 
 ## Comment format
 

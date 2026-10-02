@@ -10,7 +10,7 @@ import (
 )
 
 // The functions here work in the shared clone itself. The AI never works in it, so its config
-// and hooks are coworker's own.
+// and hooks are exomecha's own.
 
 func (g *Git) Sync(ctx context.Context) error {
 	g.mu.Lock()
@@ -88,9 +88,9 @@ func (g *Git) SendTo(ctx context.Context, url, baseCommit, branch, commit string
 	return err
 }
 
-// FetchFrom fetches the HEAD of the repository at url into refs/coworker/<name> and returns that commit.
+// FetchFrom fetches the HEAD of the repository at url into refs/exomecha/<name> and returns that commit.
 func (g *Git) FetchFrom(ctx context.Context, url, name string) (string, error) {
-	ref := "refs/coworker/" + name
+	ref := "refs/exomecha/" + name
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	fetchCtx, cancel := context.WithTimeout(ctx, sandboxTransferTimeout)
@@ -107,7 +107,7 @@ func (g *Git) FetchFrom(ctx context.Context, url, name string) (string, error) {
 
 // DropRef deletes what FetchFrom kept for name.
 func (g *Git) DropRef(ctx context.Context, name string) error {
-	_, err := g.run(ctx, g.repoDir(), "update-ref", "-d", "refs/coworker/"+name)
+	_, err := g.run(ctx, g.repoDir(), "update-ref", "-d", "refs/exomecha/"+name)
 	return err
 }
 

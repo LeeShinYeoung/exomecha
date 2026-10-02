@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/git"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
-	"github.com/LeeShinYeoung/coworker/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/git"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 type Worker interface {
@@ -68,7 +68,7 @@ type Sandboxes interface {
 // An error whose chain holds a value with a Why() string method is one only a person can fix,
 // and Why() is what to tell them.
 type Environment interface {
-	// ok is false when the project has no Dockerfile for coworker, and sbx's own template is used.
+	// ok is false when the project has no Dockerfile for exomecha, and sbx's own template is used.
 	Template(ctx context.Context) (ref string, ok bool, err error)
 	AllowedHosts(ctx context.Context) ([]string, error)
 }
@@ -131,7 +131,7 @@ func round(ctx context.Context, w Worker, sem chan struct{}, l *locks, wg *sync.
 		}
 		return
 	}
-	// Checking only when there is work keeps an idle coworker from spending any Claude usage.
+	// Checking only when there is work keeps an idle exomecha from spending any Claude usage.
 	if len(numbers) == 0 {
 		return
 	}
@@ -226,7 +226,7 @@ func reload(ctx context.Context, gh *github.Client, n int, labels ...string) (is
 	return issue, true, nil
 }
 
-// coworker's own comments go in marked as its questions, because a person's answer often makes
+// exomecha's own comments go in marked as its questions, because a person's answer often makes
 // sense only next to the question. Comments from people who cannot write to the repository are
 // left out so outsiders cannot steer the AI.
 func issueComments(ctx context.Context, gh *github.Client, n int) (string, error) {
@@ -240,8 +240,8 @@ func issueComments(ctx context.Context, gh *github.Client, n int) (string, error
 			continue
 		}
 		from := "person"
-		if c.Coworker {
-			from = "coworker"
+		if c.Exomecha {
+			from = "exomecha"
 		}
 		fmt.Fprintf(&b, "### %s (%s)\n\n%s\n\n", c.CreatedAt.Local().Format(time.DateTime), from, strings.TrimSpace(c.Body))
 	}
@@ -249,7 +249,7 @@ func issueComments(ctx context.Context, gh *github.Client, n int) (string, error
 		return "", nil
 	}
 	return "## Comments\n\nOldest first. A person's comments add to or correct the body. If one conflicts with the body, follow the latest comment from a person. " +
-		"coworker's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + b.String(), nil
+		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + b.String(), nil
 }
 
 func parentPRD(ctx context.Context, gh *github.Client, n int) (string, error) {
@@ -265,7 +265,7 @@ func taskText(t github.Issue) string {
 }
 
 func branchName(n int) string {
-	return fmt.Sprintf("coworker/task-%d", n)
+	return fmt.Sprintf("exomecha/task-%d", n)
 }
 
 // prConflicted reports whether the Task's open PR is one GitHub marks as conflicting.

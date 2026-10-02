@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 )
 
 func (e *env) rev(ref string) string {
@@ -66,7 +66,7 @@ func (e *env) readCtl(name, file string) string {
 
 func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.envr.ref, e.envr.ok = "docker.io/library/coworker-owner-repo:0123456789ab", true
+	e.envr.ref, e.envr.ok = "docker.io/library/exomecha-owner-repo:0123456789ab", true
 	e.envr.hosts = []string{"registry.npmjs.org", "*.pypi.org"}
 	l := e.testLaunch()
 
@@ -172,7 +172,7 @@ func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
 }
 
 func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
-	e := newEnv(t, setupRepo(`echo "task $COWORKER_TASK" > `+setupMarker+"\n"))
+	e := newEnv(t, setupRepo(`echo "task $EXOMECHA_TASK" > `+setupMarker+"\n"))
 	l := e.testLaunch()
 
 	if problem := e.open(l); problem != "" {
@@ -205,7 +205,7 @@ func TestSetupFailure(t *testing.T) {
 	log := captureLog(t)
 	// exit 0 is never reached: the script stops at the first failing command.
 	e := newEnv(t, setupRepo("echo 'a secret in the output' >&2\nfalse\nexit 0\n"))
-	problem := e.wantOpenProblem(e.testLaunch(), "`"+setupScript+"` did not end cleanly (exit status 1)", "coworker's log")
+	problem := e.wantOpenProblem(e.testLaunch(), "`"+setupScript+"` did not end cleanly (exit status 1)", "exomecha's log")
 	wantNotContains(t, "setup problem", problem, "a secret in the output", "merge the base branch")
 	wantContains(t, "log", log.String(), "a secret in the output")
 }
@@ -242,7 +242,7 @@ func TestSetupGetsNoGitAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantContains(t, "script environment", string(b), "COWORKER_TASK=1")
+	wantContains(t, "script environment", string(b), "EXOMECHA_TASK=1")
 	// What the git runner adds to carry the token.
 	wantNotContains(t, "script environment", string(b), "GIT_CONFIG_COUNT", "GIT_CONFIG_VALUE", "AUTHORIZATION")
 }

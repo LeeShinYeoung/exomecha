@@ -13,37 +13,37 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/git"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/sandbox"
-	"github.com/LeeShinYeoung/coworker/internal/template"
-	"github.com/LeeShinYeoung/coworker/internal/worker"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/git"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/template"
+	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("coworker stopped", "err", err)
+		slog.Error("exomecha stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	repo := os.Getenv("COWORKER_REPO")
-	base := os.Getenv("COWORKER_BASE_BRANCH")
-	token := os.Getenv("COWORKER_GITHUB_TOKEN")
+	repo := os.Getenv("EXOMECHA_REPO")
+	base := os.Getenv("EXOMECHA_BASE_BRANCH")
+	token := os.Getenv("EXOMECHA_GITHUB_TOKEN")
 	if repo == "" || base == "" || token == "" {
-		return errors.New("COWORKER_REPO, COWORKER_BASE_BRANCH and COWORKER_GITHUB_TOKEN must all be set")
+		return errors.New("EXOMECHA_REPO, EXOMECHA_BASE_BRANCH and EXOMECHA_GITHUB_TOKEN must all be set")
 	}
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return fmt.Errorf("COWORKER_REPO must be owner/name: %q", repo)
+		return fmt.Errorf("EXOMECHA_REPO must be owner/name: %q", repo)
 	}
-	fiveHour, err := usageLimit("COWORKER_FIVE_HOUR_LIMIT", 90)
+	fiveHour, err := usageLimit("EXOMECHA_FIVE_HOUR_LIMIT", 90)
 	if err != nil {
 		return err
 	}
-	weekly, err := usageLimit("COWORKER_WEEKLY_LIMIT", 80)
+	weekly, err := usageLimit("EXOMECHA_WEEKLY_LIMIT", 80)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func run() error {
 		return err
 	}
 	// Drop the token from the environment so child processes such as claude don't inherit it.
-	if err := os.Unsetenv("COWORKER_GITHUB_TOKEN"); err != nil {
+	if err := os.Unsetenv("EXOMECHA_GITHUB_TOKEN"); err != nil {
 		return err
 	}
 
@@ -69,7 +69,7 @@ func run() error {
 	if has, err := sbx.GlobalGitHubSecret(ctx); err != nil {
 		return fmt.Errorf("check sbx secrets: %w", err)
 	} else if has {
-		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past coworker's checks.
+		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.
 		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
 	}
 
@@ -85,7 +85,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	root := filepath.Join(home, ".coworker", owner, name)
+	root := filepath.Join(home, ".exomecha", owner, name)
 	g := git.New(root, owner, name, base, token)
 	deps := worker.Deps{
 		GitHub:      gh,
@@ -96,7 +96,7 @@ func run() error {
 		SandboxDir:  filepath.Join(root, "sandboxes"),
 		// 32 leaves room for "9999999-resolver" in sbx's 63-character names, and is the max the
 		// template package uses, so the build sandbox and templates carry the same slug.
-		SandboxPrefix: "coworker-task-" + template.Slug(owner, name, 32) + "-",
+		SandboxPrefix: "exomecha-task-" + template.Slug(owner, name, 32) + "-",
 		SandboxLimit:  sandboxes,
 		GitName:       author,
 		GitEmail:      email,
@@ -110,14 +110,14 @@ func run() error {
 		slog.Info("created label", "label", l)
 	}
 
-	slog.Info("coworker started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly, "sandbox_limit", sandboxes)
+	slog.Info("exomecha started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly, "sandbox_limit", sandboxes)
 	gate := &worker.Gate{Check: agent.Claude{}.Usage, FiveHour: fiveHour, Weekly: weekly}
 	worker.Run(ctx, deps, gate)
-	slog.Info("coworker stopped")
+	slog.Info("exomecha stopped")
 	return nil
 }
 
-// usageLimit reads a percentage of a Claude plan limit, at which coworker stops starting new work.
+// usageLimit reads a percentage of a Claude plan limit, at which exomecha stops starting new work.
 func usageLimit(name string, fallback int) (float64, error) {
 	v := os.Getenv(name)
 	if v == "" {
@@ -132,13 +132,13 @@ func usageLimit(name string, fallback int) (float64, error) {
 
 // sandboxLimit reads how many task sandboxes may exist at once.
 func sandboxLimit() (int, error) {
-	v := os.Getenv("COWORKER_SANDBOX_LIMIT")
+	v := os.Getenv("EXOMECHA_SANDBOX_LIMIT")
 	if v == "" {
 		return 2, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 {
-		return 0, fmt.Errorf("COWORKER_SANDBOX_LIMIT must be a whole number of at least 1: %q", v)
+		return 0, fmt.Errorf("EXOMECHA_SANDBOX_LIMIT must be a whole number of at least 1: %q", v)
 	}
 	return n, nil
 }

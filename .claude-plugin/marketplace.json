@@ -1,13 +1,13 @@
 {
-  "name": "coworker",
+  "name": "exomecha",
   "owner": {
     "name": "LeeShinYeoung"
   },
   "plugins": [
     {
-      "name": "coworker",
+      "name": "exomecha",
       "source": "./",
-      "description": "Skills that hand work to coworker: record a problem (issue), decide a direction (discuss), file a PRD (prd), and set up a project's sandboxes (setup)"
+      "description": "Skills that hand work to exomecha: record a problem (issue), decide a direction (discuss), file a PRD (prd), and set up a project's sandboxes (setup)"
     }
   ]
 }

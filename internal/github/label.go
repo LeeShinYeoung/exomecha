@@ -7,7 +7,7 @@ import (
 
 	gh "github.com/google/go-github/v92/github"
 
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 func (c *Client) EnsureLabels(ctx context.Context) ([]string, error) {

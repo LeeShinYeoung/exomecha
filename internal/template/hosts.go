@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-const hostsPath = ".coworker/allowed-hosts"
+const hostsPath = ".exomecha/allowed-hosts"
 
 func (e *Env) AllowedHosts(ctx context.Context) ([]string, error) {
 	content, ok, err := e.files.BaseFile(ctx, hostsPath)

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Server is an in-memory GitHub API that covers only the endpoints coworker uses.
+// Server is an in-memory GitHub API that covers only the endpoints exomecha uses.
 // Issue IDs are kept apart from issue numbers, so sending a number where GitHub wants an ID fails.
 // Any request it does not know fails the test.
 type Server struct {
@@ -61,7 +61,7 @@ type Comment struct {
 	Association string
 }
 
-// coworker writes with the repository owner's token, so what it creates comes back as OWNER.
+// exomecha writes with the repository owner's token, so what it creates comes back as OWNER.
 const (
 	associationOwner = "OWNER"
 	associationNone  = "NONE"

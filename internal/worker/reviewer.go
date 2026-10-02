@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 const reviewerSchema = `{
@@ -115,7 +115,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		return err
 	}
 	if !ok {
-		// Retrying never brings a closed PR back, and coworker never closes one itself, so a person
+		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a person
 		// closed it. Only they know whether the work is still wanted.
 		return toStuck(ctx, r.GitHub, n, label.Review, label.Pending,
 			fmt.Sprintf("The PR on branch %s was closed without being merged.", branch))

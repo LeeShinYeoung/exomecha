@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 func TestSequencerBlocksOnLowerOpenTasksOnly(t *testing.T) {

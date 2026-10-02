@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Opening a FIFO for reading waits for a writer. The AI must not be able to freeze coworker that way.
+// Opening a FIFO for reading waits for a writer. The AI must not be able to freeze exomecha that way.
 func TestOutcomeDoesNotOpenAFIFO(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.box.name(7, "builder")

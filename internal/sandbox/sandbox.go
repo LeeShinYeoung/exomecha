@@ -38,7 +38,7 @@ func (CLI) List(ctx context.Context) ([]Box, error) {
 
 // Create starts a sandbox with `sbx run -d`. A sandbox made by `sbx create` stops 30 seconds after
 // its last exec session ends, and only `run -d` makes one that keeps running with none open.
-// run -d starts no agent session, so nothing in the sandbox runs claude until coworker does.
+// run -d starts no agent session, so nothing in the sandbox runs claude until exomecha does.
 // An empty template is sbx's own claude template. Hosts in deny are blocked from the first moment.
 func (CLI) Create(ctx context.Context, name, template, workspace string, deny []string) error {
 	args := []string{"run", "-d", "--name", name}
@@ -95,13 +95,13 @@ func (CLI) Remove(ctx context.Context, name string) error {
 // GitURL is a git URL for the repository at dir inside the sandbox. git reaches it by running git
 // there through sbx exec, so nothing listens on a port and the sandbox needs no credentials.
 func (CLI) GitURL(name, dir string) string {
-	// In an ext URL a space separates arguments and %s is the git service to run. coworker's
+	// In an ext URL a space separates arguments and %s is the git service to run. exomecha's
 	// names and paths hold neither.
 	return "ext::sbx exec -i " + name + " git %s " + dir
 }
 
 // GlobalGitHubSecret reports whether sbx has a GitHub secret for every sandbox. Its proxy would
-// hand it to the AI's requests, which could then push past coworker's checks.
+// hand it to the AI's requests, which could then push past exomecha's checks.
 func (CLI) GlobalGitHubSecret(ctx context.Context) (bool, error) {
 	out, err := run(ctx, "secret", "ls", "--global", "--service", "github", "--json")
 	if err != nil {

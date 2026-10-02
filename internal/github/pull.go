@@ -80,7 +80,7 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 			return "", err
 		}
 		// Anyone can post a review that starts with the marker, so check who wrote it too.
-		if body := r.GetBody(); byCoworker(body) && trusted(r.GetAuthorAssociation()) {
+		if body := r.GetBody(); byExomecha(body) && trusted(r.GetAuthorAssociation()) {
 			latest = withoutMarker(body)
 		}
 	}

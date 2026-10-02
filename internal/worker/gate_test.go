@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 )
 
 // fakeUsage is a Gate whose clock the test moves and whose readings the test sets.

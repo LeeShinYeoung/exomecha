@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/LeeShinYeoung/coworker/internal/agent"
-	"github.com/LeeShinYeoung/coworker/internal/github"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 const resolverSchema = `{
@@ -61,7 +61,7 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	return slices.Compact(out), nil
 }
 
-// Handle returns an error only for a failed step of coworker's own (sbx, git, GitHub). The state
+// Handle returns an error only for a failed step of exomecha's own (sbx, git, GitHub). The state
 // stays as it is and the next try waits longer each time.
 func (r *resolver) Handle(ctx context.Context, n int) error {
 	name := r.box.name(n, resolverRole)
@@ -225,7 +225,7 @@ func (r *resolver) merge(ctx context.Context, name string) (conflicts []string, 
 		// setup's, the output stays in the log.
 		slog.Warn("merge failed without a conflict", "sandbox", name, "exit", code, "output", output)
 		return nil, fmt.Sprintf("Merging `%s` into this Task's branch in the sandbox failed without a conflict, so the AI did not start. "+
-			"git's output is in coworker's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
+			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
 	}
 	return conflicts, "", nil
 }
@@ -269,7 +269,7 @@ func (r *resolver) harvest(ctx context.Context, name string, s started, n int) e
 	if err := r.Git.Sync(ctx); err != nil {
 		return err
 	}
-	// head is there when coworker already pushed this run and a later step failed.
+	// head is there when exomecha already pushed this run and a later step failed.
 	if remote, _, err := r.Git.Rev(ctx, "origin/"+branch); err != nil {
 		return err
 	} else if remote != s.Remote && remote != head {

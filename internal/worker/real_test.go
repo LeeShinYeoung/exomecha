@@ -12,18 +12,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
-	"github.com/LeeShinYeoung/coworker/internal/label"
-	"github.com/LeeShinYeoung/coworker/internal/sandbox"
-	"github.com/LeeShinYeoung/coworker/internal/template"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/template"
 )
 
 // TestRealBuilderRun takes a small Task through builder with the real sbx and the real claude,
 // against a fake GitHub and a local origin. It spends Claude usage and takes a few minutes, so it
-// runs only with COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1.
+// runs only with EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1.
 func TestRealBuilderRun(t *testing.T) {
-	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
-		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" || os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1 to run claude in a real sandbox")
 	}
 	e := newEnv(t, map[string]string{"README.md": "A practice project.\n"})
 	runRealBuilder(t, e, fmt.Sprintf("impl-run-w%d-", time.Now().UnixNano()%100_000))
@@ -32,22 +32,22 @@ func TestRealBuilderRun(t *testing.T) {
 // TestRealBuilderRunFromTemplate is TestRealBuilderRun with the environment main.go wires in, so
 // the project's Dockerfile is built into a template and the Task's sandbox starts from it.
 func TestRealBuilderRunFromTemplate(t *testing.T) {
-	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
-		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" || os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1 to run claude in a real sandbox")
 	}
-	dockerfile := "FROM docker/sandbox-templates:claude-code-docker\nUSER root\nRUN echo from-template > /etc/coworker-test-marker\nUSER agent\n"
+	dockerfile := "FROM docker/sandbox-templates:claude-code-docker\nUSER root\nRUN echo from-template > /etc/exomecha-test-marker\nUSER agent\n"
 	e := newEnv(t, map[string]string{
 		"README.md":               "A practice project.\n",
-		".coworker/Dockerfile":    dockerfile,
-		".coworker/allowed-hosts": "example.com\n",
+		".exomecha/Dockerfile":    dockerfile,
+		".exomecha/allowed-hosts": "example.com\n",
 		// Fails, which sends the Task to stuck, unless the sandbox came from the template.
-		setupScript: "grep -qx from-template /etc/coworker-test-marker\n",
+		setupScript: "grep -qx from-template /etc/exomecha-test-marker\n",
 	})
 	owner, repo := "impl-int", fmt.Sprintf("t%d", time.Now().UnixNano()%100_000)
 	e.deps.Environment = template.New(e.deps.Git, owner, repo)
 	t.Cleanup(func() {
 		sum := sha256.Sum256([]byte(dockerfile))
-		ref := "docker.io/library/coworker-" + template.Slug(owner, repo, 32) + ":" + hex.EncodeToString(sum[:])[:12]
+		ref := "docker.io/library/exomecha-" + template.Slug(owner, repo, 32) + ":" + hex.EncodeToString(sum[:])[:12]
 		if out, err := exec.Command("sbx", "template", "rm", "--force", ref).CombinedOutput(); err != nil {
 			t.Errorf("remove template %s: %v %s", ref, err, out)
 		}
@@ -110,8 +110,8 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 
 // TestRealResolverRun is TestRealBuilderRun for resolver: a PR that conflicts with main on one line.
 func TestRealResolverRun(t *testing.T) {
-	if os.Getenv("COWORKER_TEST_SBX") != "1" || os.Getenv("COWORKER_TEST_CLAUDE") != "1" {
-		t.Skip("set COWORKER_TEST_SBX=1 and COWORKER_TEST_CLAUDE=1 to run claude in a real sandbox")
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" || os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1 to run claude in a real sandbox")
 	}
 	e := newEnv(t, map[string]string{"greeting.txt": "hello\n"})
 	sbx := sandbox.CLI{}

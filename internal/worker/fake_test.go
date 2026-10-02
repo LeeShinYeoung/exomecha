@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 // fakeSandboxes keeps each sandbox's disk in a directory of its own. Exec runs the command on
@@ -214,7 +214,7 @@ func (f *fakeSandboxes) stop(name string) {
 	f.boxes[name].stopped = true
 }
 
-// drop deletes the sandbox behind coworker's back, the way sbx rm does.
+// drop deletes the sandbox behind exomecha's back, the way sbx rm does.
 func (f *fakeSandboxes) drop(name string) {
 	f.t.Helper()
 	if err := f.Remove(context.Background(), name); err != nil {
@@ -222,7 +222,7 @@ func (f *fakeSandboxes) drop(name string) {
 	}
 }
 
-// add makes a sandbox that coworker did not create, as a leftover from another run would be.
+// add makes a sandbox that exomecha did not create, as a leftover from another run would be.
 func (f *fakeSandboxes) add(name string) {
 	f.t.Helper()
 	if err := f.Create(context.Background(), name, "", "", nil); err != nil {

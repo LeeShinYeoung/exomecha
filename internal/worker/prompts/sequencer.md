@@ -1,6 +1,6 @@
-# coworker sequencer
+# exomecha sequencer
 
-You are coworker's sequencer. Put one Task in line by picking the other Tasks that must finish before it (its blockers).
+You are exomecha's sequencer. Put one Task in line by picking the other Tasks that must finish before it (its blockers).
 
 ## Input
 

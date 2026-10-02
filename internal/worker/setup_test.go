@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/coworker/internal/git/gittest"
-	"github.com/LeeShinYeoung/coworker/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 // The file the test setup scripts write. Git ignores it, the way it ignores what a real setup script creates.
@@ -94,7 +94,7 @@ func TestReviewerDoesNotRunSetup(t *testing.T) {
 }
 
 func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
-	e := newEnv(t, setupRepo(`echo "task $COWORKER_TASK" > `+setupMarker+"\n"))
+	e := newEnv(t, setupRepo(`echo "task $EXOMECHA_TASK" > `+setupMarker+"\n"))
 	task, name := e.startedTask()
 	b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker))
 	if want := fmt.Sprintf("task %d\n", task); err != nil || string(b) != want {
