@@ -107,7 +107,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	if got := e.readCtl(name, "run.sh"); got != runScript {
 		t.Errorf("run.sh = %q", got)
 	}
-	r, err := e.runs.read(t.Context(), name)
+	r, err := e.runs.read(t.Context(), builderRole, 1)
 	if err != nil || r.state != running || r.in.Head != s.head {
 		t.Errorf("after open: %+v, %v", r, err)
 	}

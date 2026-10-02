@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -52,7 +51,7 @@ type reviewer struct {
 	runs *runs
 }
 
-func (*reviewer) Name() string { return "reviewer" }
+func (*reviewer) Name() string { return reviewerRole.name }
 
 // Sweep covers Tasks closed by a merge and Tasks a person closed by hand.
 func (r *reviewer) Sweep(ctx context.Context) error {
@@ -114,11 +113,7 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	found, err := r.runs.found(ctx, reviewerRole)
-	if err != nil {
-		return nil, err
-	}
-	out := found
+	var picked []int
 	for _, t := range tasks {
 		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same Task
 		// at the same moment every minute, which starved resolver.
@@ -127,11 +122,10 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 			return nil, err
 		}
 		if !ok || pr.Mergeable == nil || *pr.Mergeable {
-			out = append(out, t.Number)
+			picked = append(picked, t.Number)
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return r.runs.pick(ctx, reviewerRole, picked)
 }
 
 func (r *reviewer) Handle(ctx context.Context, n int) error {

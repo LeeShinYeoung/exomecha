@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -30,6 +29,7 @@ var resolverRole = role{
 	back:    label.Review,
 }
 
+// begin does nothing when the Task branch is missing or already has the base branch.
 var resolverTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:  {idle, drop, drop, drop, drop, drop, drop},
@@ -43,7 +43,7 @@ type resolver struct {
 	runs *runs
 }
 
-func (*resolver) Name() string { return "resolver" }
+func (*resolver) Name() string { return resolverRole.name }
 
 // Pick returns the Tasks in review whose PR conflicts, and every Task that has a resolver sandbox.
 func (r *resolver) Pick(ctx context.Context) ([]int, error) {
@@ -51,22 +51,17 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	found, err := r.runs.found(ctx, resolverRole)
-	if err != nil {
-		return nil, err
-	}
-	out := found
+	var picked []int
 	for _, t := range tasks {
 		p, err := r.place(ctx, t)
 		if err != nil {
 			return nil, err
 		}
 		if p == ready {
-			out = append(out, t.Number)
+			picked = append(picked, t.Number)
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return r.runs.pick(ctx, resolverRole, picked)
 }
 
 func (r *resolver) Handle(ctx context.Context, n int) error {

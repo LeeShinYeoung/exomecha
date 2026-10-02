@@ -13,7 +13,9 @@ import (
 
 func (e *env) state(name string) state {
 	e.t.Helper()
-	r, err := e.runs.read(e.t.Context(), name)
+	n, got, _ := sandbox.Parse(e.deps.SandboxPrefix, name)
+	ro := roles[slices.IndexFunc(roles, func(ro role) bool { return ro.name == got })]
+	r, err := e.runs.read(e.t.Context(), ro, n)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -166,7 +168,7 @@ func TestTailKeepsABoundedValidEnd(t *testing.T) {
 	}
 }
 
-func TestFound(t *testing.T) {
+func TestPick(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	for _, dir := range []string{prefix + "3-builder", prefix + "4-resolver", "failed"} {
@@ -178,12 +180,11 @@ func TestFound(t *testing.T) {
 		e.sbx.add(name)
 	}
 
-	found, err := e.runs.found(t.Context(), builderRole)
+	picked, err := e.runs.pick(t.Context(), builderRole, []int{4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	slices.Sort(found)
-	wantInts(t, "found builder", found, []int{3, 5})
+	wantInts(t, "builder", picked, []int{3, 4, 5})
 }
 
 func (e *env) wantReserve(ro role, n int, want bool) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
@@ -26,14 +25,13 @@ var builderRole = role{
 	name:    "builder",
 	schema:  builderSchema,
 	project: true,
-	queued:  label.Queued,
-	working: label.Working,
 	from:    label.Working,
 	back:    label.Pending,
+	queued:  label.Queued,
 }
 
-// A run of a ready Task was left when a person sent the Task back to the queue, and it holds a
-// slot for nothing.
+// begin waits while a blocker is open. A run of a ready Task was left when a person sent the Task
+// back to the queue, and it holds a slot for nothing.
 var builderTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:    {idle, drop, drop, drop, drop, drop, drop},
@@ -48,7 +46,7 @@ type builder struct {
 	runs *runs
 }
 
-func (*builder) Name() string { return "builder" }
+func (*builder) Name() string { return builderRole.name }
 
 // Pick returns the queued Tasks that are ready, every working Task, and every Task that has a
 // builder sandbox, whatever its label.
@@ -61,25 +59,20 @@ func (b *builder) Pick(ctx context.Context) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	found, err := b.runs.found(ctx, builderRole)
-	if err != nil {
-		return nil, err
-	}
-	out := found
+	var picked []int
 	for _, t := range queued {
-		ready, err := b.unblocked(ctx, t.Number)
+		unblocked, err := b.unblocked(ctx, t.Number)
 		if err != nil {
 			return nil, err
 		}
-		if ready {
-			out = append(out, t.Number)
+		if unblocked {
+			picked = append(picked, t.Number)
 		}
 	}
 	for _, t := range working {
-		out = append(out, t.Number)
+		picked = append(picked, t.Number)
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return b.runs.pick(ctx, builderRole, picked)
 }
 
 func (b *builder) unblocked(ctx context.Context, n int) (bool, error) {

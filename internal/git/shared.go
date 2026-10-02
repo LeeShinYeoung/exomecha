@@ -17,10 +17,6 @@ import (
 func (g *Git) Sync(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.sync(ctx)
-}
-
-func (g *Git) sync(ctx context.Context) error {
 	dir := g.repoDir()
 	_, err := os.Stat(dir)
 	if errors.Is(err, fs.ErrNotExist) {

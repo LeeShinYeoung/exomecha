@@ -27,6 +27,7 @@ var sequencerRole = role{
 	back:   label.Pending,
 }
 
+// begin queues a Task with no lower open Task without a run.
 var sequencerTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:  {idle, drop, drop, drop, drop, drop, drop},
@@ -39,24 +40,18 @@ type sequencer struct {
 	runs *runs
 }
 
-func (*sequencer) Name() string { return "sequencer" }
+func (*sequencer) Name() string { return sequencerRole.name }
 
-// Pick returns the pending Tasks, and every Task that has a sequencer run.
 func (s *sequencer) Pick(ctx context.Context) ([]int, error) {
 	tasks, err := s.GitHub.ListOpen(ctx, label.Task, string(label.Pending))
 	if err != nil {
 		return nil, err
 	}
-	found, err := s.runs.found(ctx, sequencerRole)
-	if err != nil {
-		return nil, err
-	}
-	out := found
+	var picked []int
 	for _, t := range tasks {
-		out = append(out, t.Number)
+		picked = append(picked, t.Number)
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return s.runs.pick(ctx, sequencerRole, picked)
 }
 
 func (s *sequencer) Handle(ctx context.Context, n int) error {

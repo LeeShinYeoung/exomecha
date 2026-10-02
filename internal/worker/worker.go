@@ -83,8 +83,6 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	// runs checks the gate only when a run starts, so runs already in sandboxes are still watched
-	// and finished, and steps without claude go on, while usage is over the limit.
 	runs := newRuns(d, gate)
 	workers := []Worker{
 		&splitter{d, runs},
@@ -277,7 +275,6 @@ func branchName(n int) string {
 	return fmt.Sprintf("exomecha/task-%d", n)
 }
 
-// baseCommit fetches, then returns the base branch's commit.
 func baseCommit(ctx context.Context, g *git.Git) (string, error) {
 	if err := g.Sync(ctx); err != nil {
 		return "", err
@@ -289,7 +286,6 @@ func baseCommit(ctx context.Context, g *git.Git) (string, error) {
 	return base, err
 }
 
-// taskPR returns the Task's open PR, with ok false when it has none.
 func taskPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool, err error) {
 	number, ok, err := gh.OpenPR(ctx, branchName(n))
 	if err != nil || !ok {

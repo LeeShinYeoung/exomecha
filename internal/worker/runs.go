@@ -109,12 +109,12 @@ type role struct {
 	// A project run gets the project's template, allowed hosts, setup script and a commit identity.
 	// Any other run is a reader's, which gets only the code in sbx's own template.
 	project bool
-	// The labels builder moves a Task between when a run starts and when it starts over. Other
-	// workers leave the label alone.
-	queued, working label.Status
-	// from is the issue's label while the run is going. A run that needs a person moves the issue
+	// from is the issue's status while the run goes. A run that needs a person moves the issue
 	// from it to stuck, and the comment asks the person to relabel it back.
 	from, back label.Status
+	// queued is builder's alone: a start moves the Task from queued to from, and a start that is
+	// undone or starts over moves it back.
+	queued label.Status
 }
 
 type run struct {
@@ -183,7 +183,8 @@ func (r *runs) dir(name string) string { return filepath.Join(r.SandboxDir, name
 // write anything there.
 func (r *runs) ctl(name string) string { return filepath.Join(r.dir(name), "ctl") }
 
-func (r *runs) read(ctx context.Context, name string) (run, error) {
+func (r *runs) read(ctx context.Context, ro role, n int) (run, error) {
+	name := r.name(ro, n)
 	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return run{}, err
@@ -216,10 +217,9 @@ func (r *runs) read(ctx context.Context, name string) (run, error) {
 	} else if err != nil {
 		return out, err
 	}
-	project, _ := r.kind(name)
 	switch {
 	// A reader's result is all in its directory, so its sandbox may already be gone.
-	case exited && (out.box || !project):
+	case exited && (out.box || !ro.project):
 		out.state = finished
 		return out, nil
 	case !out.box:
@@ -262,22 +262,8 @@ func (r *runs) quiet(name string) (bool, error) {
 	return now.Sub(p.at) >= stallAfter, nil
 }
 
-// roles holds every role, so that a run's name tells its kind.
-var roles = []role{builderRole, resolverRole, reviewerRole, splitterRole, sequencerRole}
-
-// kind reads whether the run named name is a project run from the role its name ends with. ok is
-// false when name is no run of this repository.
-func (r *runs) kind(name string) (project, ok bool) {
-	_, got, ok := sandbox.Parse(r.SandboxPrefix, name)
-	if !ok {
-		return false, false
-	}
-	i := slices.IndexFunc(roles, func(ro role) bool { return ro.name == got })
-	return i >= 0 && roles[i].project, true
-}
-
-// found returns the issues that have a sandbox or a directory for ro.
-func (r *runs) found(ctx context.Context, ro role) ([]int, error) {
+// pick returns picked and every issue that has a sandbox or a directory for ro, in ascending order.
+func (r *runs) pick(ctx context.Context, ro role, picked []int) ([]int, error) {
 	boxes, err := r.Sandboxes.List(ctx)
 	if err != nil {
 		return nil, err
@@ -293,13 +279,14 @@ func (r *runs) found(ctx context.Context, ro role) ([]int, error) {
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	var out []int
+	out := picked
 	for _, name := range names {
-		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == ro.name && !slices.Contains(out, n) {
+		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == ro.name {
 			out = append(out, n)
 		}
 	}
-	return out, nil
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // reserve reports whether a new run of ro may start: the usage gate is open and a sandbox slot of
@@ -326,6 +313,9 @@ func (r *runs) release(name string) {
 	delete(r.starting, name)
 }
 
+// roles holds every role, so that a sandbox's name tells its kind.
+var roles = []role{builderRole, resolverRole, reviewerRole, splitterRole, sequencerRole}
+
 // slotFree counts every sandbox of this repository of ro's kind, stopped ones too, so the count
 // stays right across restarts, and every start of that kind that holds a slot. self is the start
 // asking. The caller holds slots.
@@ -346,7 +336,10 @@ func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error)
 	count := 0
 	for name := range used {
 		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
-		if project, ok := r.kind(name); ok && project == ro.project {
+		_, got, ok := sandbox.Parse(r.SandboxPrefix, name)
+		i := slices.IndexFunc(roles, func(o role) bool { return o.name == got })
+		// A role not in roles counts as a reader's.
+		if ok && (i >= 0 && roles[i].project) == ro.project {
 			count++
 		}
 	}
@@ -362,7 +355,7 @@ func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error)
 func (r *runs) step(ctx context.Context, ro role, n int, row row,
 	start func(context.Context) error, collect func(context.Context, run) error) error {
 	name := r.name(ro, n)
-	run, err := r.read(ctx, name)
+	run, err := r.read(ctx, ro, n)
 	if err != nil {
 		return err
 	}
@@ -426,8 +419,8 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 		return err
 	}
 	defer r.release(name)
-	if ro.working != label.None {
-		if err := r.GitHub.SetStatus(ctx, n, ro.queued, ro.working); err != nil {
+	if ro.queued != label.None {
+		if err := r.GitHub.SetStatus(ctx, n, ro.queued, ro.from); err != nil {
 			return err
 		}
 	}
@@ -447,8 +440,8 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	if problem != "" {
 		return toStuck(cleanup, r.GitHub, n, ro.from, ro.back, problem)
 	}
-	if ro.working != label.None {
-		if rerr := r.GitHub.SetStatus(cleanup, n, ro.working, ro.queued); rerr != nil {
+	if ro.queued != label.None {
+		if rerr := r.GitHub.SetStatus(cleanup, n, ro.from, ro.queued); rerr != nil {
 			return errors.Join(err, rerr)
 		}
 	}
@@ -600,7 +593,6 @@ func (r *runs) git(ctx context.Context, name, dir string, args ...string) (strin
 	return string(out), err
 }
 
-// sh runs script with sh in the run's repository, with args as its positional parameters.
 func (r *runs) sh(ctx context.Context, ro role, n int, script string, args ...string) (string, error) {
 	out, err := r.Sandboxes.Exec(ctx, r.name(ro, n), repoDir, nil, append([]string{"sh", "-c", script, "sh"}, args...)...)
 	return string(out), err
@@ -817,10 +809,10 @@ func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
 	if err := r.remove(ctx, r.name(ro, n), false); err != nil {
 		return err
 	}
-	if ro.queued == label.None {
-		return nil
+	if ro.queued != label.None {
+		return r.GitHub.SetStatus(ctx, n, ro.from, ro.queued)
 	}
-	return r.GitHub.SetStatus(ctx, n, ro.working, ro.queued)
+	return nil
 }
 
 // drop removes a run its issue no longer needs, and leaves the labels to whoever moved them.
@@ -830,5 +822,5 @@ func (r *runs) drop(ctx context.Context, ro role, n int) error {
 }
 
 func failedReason(why string) string {
-	return fmt.Sprintf("The AI's run failed because %s. The details are in exomecha's log. To try again, relabel this issue as below. You don't need to answer.", why)
+	return fmt.Sprintf("The AI's run failed because %s. The details are in exomecha's log.", why)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -53,26 +52,20 @@ type splitter struct {
 	runs *runs
 }
 
-func (*splitter) Name() string { return "splitter" }
+func (*splitter) Name() string { return splitterRole.name }
 
-// Pick returns the PRDs ready to split, and every PRD that has a splitter run.
 func (s *splitter) Pick(ctx context.Context) ([]int, error) {
 	prds, err := s.GitHub.ListOpen(ctx, label.PRD)
 	if err != nil {
 		return nil, err
 	}
-	found, err := s.runs.found(ctx, splitterRole)
-	if err != nil {
-		return nil, err
-	}
-	out := found
+	var picked []int
 	for _, p := range prds {
 		if s.place(p) == ready {
-			out = append(out, p.Number)
+			picked = append(picked, p.Number)
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return s.runs.pick(ctx, splitterRole, picked)
 }
 
 func (s *splitter) Handle(ctx context.Context, n int) error {
