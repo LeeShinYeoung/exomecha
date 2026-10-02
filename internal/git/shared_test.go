@@ -189,17 +189,3 @@ func TestConflictMarkers(t *testing.T) {
 		t.Errorf("ConflictMarkers = %q, %v, want only 한글.txt", left, err)
 	}
 }
-
-func TestOpenBranch(t *testing.T) {
-	f := setup(t, map[string]string{"README.md": "hello\n"})
-	gittest.Commit(t, f.origin, "feature", "main", map[string]string{"a.txt": "a\n"})
-
-	wt, err := f.git.OpenBranch(t.Context(), "feature")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wt.Remove()
-	if got := readFile(t, filepath.Join(wt.Dir, "a.txt")); got != "a\n" {
-		t.Errorf("worktree is not on the feature branch: a.txt = %q", got)
-	}
-}

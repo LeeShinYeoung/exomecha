@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -16,6 +18,23 @@ func (g *Git) Sync(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.sync(ctx)
+}
+
+func (g *Git) sync(ctx context.Context) error {
+	dir := g.repoDir()
+	_, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(g.root, 0o755); err != nil {
+			return err
+		}
+		_, err := g.runGitHub(ctx, g.root, "clone", "--no-checkout", g.url, dir)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	_, err = g.runGitHub(ctx, dir, "fetch", "--prune", "origin")
+	return err
 }
 
 // Rev returns the commit ref points at, with ok false when there is no such ref.
