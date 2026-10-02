@@ -131,9 +131,10 @@ func (r *resolver) start(ctx context.Context, task github.Issue, name string) er
 	if upToDate, err := r.Git.IsAncestor(ctx, base, head); err != nil || upToDate {
 		return err
 	}
-	if ready, err := r.box.ready(ctx); err != nil || !ready {
+	if ready, err := r.box.ready(ctx, name); err != nil || !ready {
 		return err
 	}
+	defer r.box.release(name)
 	comments, err := issueComments(ctx, r.GitHub, n)
 	if err != nil {
 		return err

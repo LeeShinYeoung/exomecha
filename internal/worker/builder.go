@@ -153,9 +153,10 @@ func (b *builder) start(ctx context.Context, task github.Issue, name string) err
 	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
 		return err
 	}
-	if ready, err := b.box.ready(ctx); err != nil || !ready {
+	if ready, err := b.box.ready(ctx, name); err != nil || !ready {
 		return err
 	}
+	defer b.box.release(name)
 	if err := b.GitHub.SetStatus(ctx, n, label.Queued, label.Working); err != nil {
 		return err
 	}

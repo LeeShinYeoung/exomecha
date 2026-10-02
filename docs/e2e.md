@@ -180,7 +180,8 @@ With `.coworker/allowed-hosts` on `main` listing one host, while a Task is `stat
 
 ### 20. Sandbox limit
 
-- Stop coworker and line up three queued Tasks that do not block each other. Start coworker with `COWORKER_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and the third Task starts once one of the first two is done.
+- With `.coworker/Dockerfile` on `main`, stop coworker and remove the project's template (`sbx template rm --force`), so coworker starts with no template and builds it first. Line up three queued Tasks that do not block each other.
+- Start coworker with `COWORKER_SANDBOX_LIMIT=2`. `sbx ls` never shows more than two Task sandboxes, and no more than two Tasks are `status:working` at once, during the build too. The third Task starts once one of the first two is done.
 
 ### 21. Blocked host
 

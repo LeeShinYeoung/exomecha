@@ -474,6 +474,41 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	}
 }
 
+// A template build takes minutes before the sandbox exists. The start must hold its slot all along.
+func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.box.SandboxLimit = 1
+	e.envr.wait = make(chan chan struct{})
+	first := e.gh.AddIssue("First", "", label.Task, string(label.Queued))
+	second := e.gh.AddIssue("Second", "", label.Task, string(label.Queued))
+	done := make(chan error, 1)
+	go func() { done <- e.builder().Handle(t.Context(), first) }()
+	var built chan struct{}
+	select {
+	case built = <-e.envr.wait:
+	case err := <-done:
+		t.Fatalf("the first start ended before its template build: %v", err)
+	}
+
+	// A second start that got past the check would wait on the build too.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := e.builder().Handle(ctx, second); err != nil {
+		t.Errorf("the second start: %v", err)
+	}
+
+	e.wantStatus(second, label.Queued)
+	if e.sbx.exists(e.builderBox(second)) {
+		t.Error("started a sandbox over the limit")
+	}
+	close(built)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	e.wantStatus(first, label.Working)
+	e.wantState(e.builderBox(first), running)
+}
+
 // Over the usage limit, nothing new starts, and a run already going is still finished.
 func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})

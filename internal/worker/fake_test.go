@@ -236,9 +236,28 @@ type fakeEnvironment struct {
 	ok    bool
 	hosts []string
 	err   error
+	// With wait set, Template is a build: it hands wait a channel when it starts, and returns once
+	// that channel is closed.
+	wait chan chan struct{}
 }
 
-func (f *fakeEnvironment) Template(context.Context) (string, bool, error) {
+func (f *fakeEnvironment) Template(ctx context.Context) (string, bool, error) {
+	f.mu.Lock()
+	wait := f.wait
+	f.mu.Unlock()
+	if wait != nil {
+		built := make(chan struct{})
+		select {
+		case wait <- built:
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		}
+		select {
+		case <-built:
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.ref, f.ok, f.err
