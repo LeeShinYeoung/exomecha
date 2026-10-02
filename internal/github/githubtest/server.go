@@ -39,6 +39,15 @@ type Server struct {
 	labels []string
 	runs   map[string][]Run
 	times  map[string]time.Time
+
+	routes   map[string]bool
+	fails    map[string]int // route to the status it answers with
+	refusals map[int]refusal
+}
+
+type refusal struct {
+	message   string
+	mergeable *bool
 }
 
 type Issue struct {
@@ -110,6 +119,10 @@ func New(t *testing.T) *Server {
 		pulls:  map[int]*Pull{},
 		runs:   map[string][]Run{},
 		times:  map[string]time.Time{},
+
+		routes:   map[string]bool{},
+		fails:    map[string]int{},
+		refusals: map[int]refusal{},
 	}
 	mux := http.NewServeMux()
 	const repo = "/repos/{owner}/{repo}"
@@ -151,6 +164,7 @@ func New(t *testing.T) *Server {
 type handler func(r *http.Request) (int, any)
 
 func (s *Server) route(mux *http.ServeMux, pattern string, h handler) {
+	s.routes[pattern] = true
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(pattern, "{owner}") && (r.PathValue("owner") != s.Owner || r.PathValue("repo") != s.Repo) {
 			s.t.Errorf("githubtest: request for another repository: %s", r.URL.Path)
@@ -158,7 +172,10 @@ func (s *Server) route(mux *http.ServeMux, pattern string, h handler) {
 			return
 		}
 		s.mu.Lock()
-		status, body := h(r)
+		status, body := s.fails[pattern], message("githubtest: failed on purpose")
+		if status == 0 {
+			status, body = h(r)
+		}
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -608,6 +625,11 @@ func (s *Server) merge(r *http.Request) (int, any) {
 	if !p.Open {
 		return http.StatusMethodNotAllowed, message("Pull Request is not mergeable")
 	}
+	if rf, ok := s.refusals[p.Number]; ok {
+		delete(s.refusals, p.Number)
+		p.Mergeable = rf.mergeable
+		return http.StatusMethodNotAllowed, message(rf.message)
+	}
 	if req.SHA != "" && req.SHA != s.head(p) {
 		return http.StatusConflict, message("Head branch was modified. Review and try the merge again.")
 	}
@@ -638,6 +660,30 @@ func (s *Server) getCommit(r *http.Request) (int, any) {
 		at = time.Now().Add(-time.Hour)
 	}
 	return http.StatusOK, map[string]any{"sha": sha, "committer": map[string]string{"date": at.Format(time.RFC3339)}}
+}
+
+// Fail makes every request to route answer status, until Fail(route, 0). route is a pattern as New
+// registers it, such as "PUT /repos/{owner}/{repo}/pulls/{n}/merge".
+func (s *Server) Fail(route string, status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.routes[route] {
+		s.t.Fatalf("githubtest: no route %q", route)
+	}
+	if status == 0 {
+		delete(s.fails, route)
+		return
+	}
+	s.fails[route] = status
+}
+
+// RefuseMerge makes GitHub refuse the next merge of PR n with 405 and message, the way it refuses
+// a PR that conflicts or that a rule of the base branch blocks. From then on, the PR's mergeable
+// is mergeable, as GitHub has worked it out again.
+func (s *Server) RefuseMerge(n int, message string, mergeable *bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refusals[n] = refusal{message: message, mergeable: mergeable}
 }
 
 func (s *Server) AddIssue(title, body string, labels ...string) int {

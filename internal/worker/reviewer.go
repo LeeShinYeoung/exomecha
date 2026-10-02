@@ -2,8 +2,10 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -246,7 +248,15 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		slog.Info("requeued with review comments", "task", n, "pr", pr.Number)
 	case "approve":
 		// With the head the run reviewed, GitHub refuses the merge if anything was pushed since.
-		if err := r.GitHub.Merge(ctx, pr.Number, in.Head); err != nil {
+		err := r.GitHub.Merge(ctx, pr.Number, in.Head)
+		var refused *github.MergeRefused
+		switch {
+		case errors.As(err, &refused) && refused.Status == http.StatusConflict:
+			return r.runs.restart(ctx, reviewerRole, n, "the PR branch changed before the merge")
+		case errors.As(err, &refused):
+			return r.refused(ctx, n, pr.Number, refused.Message)
+		case err != nil:
+			// The result stays, so the next try merges without another review.
 			return err
 		}
 		if err := r.GitHub.ClearStatus(ctx, n); err != nil {
@@ -260,6 +270,26 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		return r.runs.failed(ctx, reviewerRole, n, badResult, fmt.Sprintf("verdict %q", out.Verdict))
 	}
 	return r.runs.done(ctx, reviewerRole, n)
+}
+
+// refused handles a merge GitHub refused for what the PR is. GitHub says the same for a conflict
+// and for a rule of the base branch, so the PR tells them apart.
+func (r *reviewer) refused(ctx context.Context, n, number int, message string) error {
+	pr, err := r.GitHub.PR(ctx, number)
+	if err != nil {
+		return err
+	}
+	switch {
+	case pr.Mergeable == nil:
+		// The result stays until GitHub knows which it is.
+		return fmt.Errorf("GitHub refused to merge PR #%d before it knew whether the PR conflicts: %s", number, message)
+	case !*pr.Mergeable:
+		// The next round finds the PR conflicted and drops the run, and resolver takes the Task.
+		return nil
+	}
+	return r.runs.stuck(ctx, reviewerRole, n, fmt.Sprintf("The AI approved PR #%d, but GitHub refused to merge it: %s\n\n"+
+		"A rule of the base branch may need something exomecha cannot give, such as an approving review from someone else. "+
+		"Merge the PR yourself, or change the rule and relabel this issue as below.", number, message))
 }
 
 // requeue leaves a review on the PR and sends the Task back to builder.

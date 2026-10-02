@@ -2,7 +2,9 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	gh "github.com/google/go-github/v92/github"
@@ -87,12 +89,31 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 	return latest, nil
 }
 
+// MergeRefused is GitHub refusing a merge for what the PR is. Status 409 means the head is no longer
+// the sha asked for. Status 405 means the PR cannot be merged as it is, for a conflict or for a rule
+// of the base branch alike.
+type MergeRefused struct {
+	Status  int
+	Message string
+}
+
+func (e *MergeRefused) Error() string {
+	return fmt.Sprintf("GitHub refused the merge (%d): %s", e.Status, e.Message)
+}
+
 // Passing the reviewed head SHA makes GitHub refuse the merge if anything was pushed since the review.
 func (c *Client) Merge(ctx context.Context, number int, sha string) error {
 	res, _, err := c.api.PullRequests.Merge(ctx, c.owner, c.repo, number, "", &gh.PullRequestOptions{
 		MergeMethod: "merge",
 		SHA:         sha,
 	})
+	var e *gh.ErrorResponse
+	if errors.As(err, &e) && e.Response != nil {
+		switch status := e.Response.StatusCode; status {
+		case http.StatusMethodNotAllowed, http.StatusConflict:
+			return &MergeRefused{Status: status, Message: e.Message}
+		}
+	}
 	if err != nil {
 		return err
 	}

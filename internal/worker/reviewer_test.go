@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,125 @@ func TestReviewerUnknownVerdictFails(t *testing.T) {
 	if e.gh.Pull(pr).Merged {
 		t.Error("PR merged on an unknown verdict")
 	}
+}
+
+const mergeRoute = "PUT /repos/{owner}/{repo}/pulls/{n}/merge"
+
+// approved is a Task whose review approved its PR, with the run finished and not yet collected.
+func (e *env) approved() (task, pr int, name string) {
+	e.t.Helper()
+	task, pr, _, name = e.reviewing()
+	e.play(name, nil, approve)
+	return task, pr, name
+}
+
+// wantResultKept checks that the finished review is still there to collect, with no new run started.
+func (e *env) wantResultKept(task, pr int, name string) {
+	e.t.Helper()
+	e.wantState(name, finished)
+	if e.sbx.exists(name) {
+		e.t.Error("the finished review still holds its sandbox")
+	}
+	e.wantStatus(task, label.Review)
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		e.t.Errorf("%d comments, want none", n)
+	}
+	if e.gh.Pull(pr).Merged {
+		e.t.Error("PR merged")
+	}
+}
+
+func TestReviewerMergeRefusedByARuleGoesStuck(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.RefuseMerge(pr, "At least 1 approving review is required by reviewers with write access.", new(true))
+
+	e.review(task)
+
+	e.wantStatus(task, label.Stuck)
+	wantStuckComment(t, e.lastComment(task), "At least 1 approving review is required by reviewers with write access.", label.Review)
+	e.wantRemoved(name)
+	if e.gh.Pull(pr).Merged {
+		t.Error("PR merged")
+	}
+}
+
+// GitHub refuses a PR that turned out to conflict the same way. That is resolver's to fix.
+func TestReviewerMergeRefusedOnAConflictLeavesTheTaskToResolver(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.RefuseMerge(pr, "Pull Request is not mergeable", new(false))
+
+	e.review(task)
+	e.wantResultKept(task, pr, name)
+	picked, err := e.resolver().Pick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInts(t, "resolver Pick", picked, []int{task})
+
+	e.review(task)
+	e.wantRemoved(name)
+	e.wantStatus(task, label.Review)
+}
+
+func TestReviewerMergeRefusedWhileGitHubChecksKeepsTheResult(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.RefuseMerge(pr, "Pull Request is not mergeable", nil)
+
+	if err := e.reviewer().Handle(t.Context(), task); err == nil {
+		t.Fatal("Handle returned nil while GitHub was still checking the PR")
+	}
+	e.wantResultKept(task, pr, name)
+
+	e.gh.SetMergeable(pr, new(true))
+	e.review(task)
+	if !e.gh.Pull(pr).Merged {
+		t.Error("PR not merged from the kept result")
+	}
+}
+
+// Something was pushed between the check and the merge. The next round reviews the new head.
+func TestReviewerMergeOfAMovedHeadStartsOver(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.Fail(mergeRoute, http.StatusConflict)
+
+	e.review(task)
+
+	e.wantRemoved(name)
+	e.wantStatus(task, label.Review)
+	if n := len(e.gh.Issue(task).Comments); n != 0 {
+		t.Errorf("%d comments, want none", n)
+	}
+	e.gh.Fail(mergeRoute, 0)
+	e.review(task)
+	e.wantState(name, running)
+	if e.gh.Pull(pr).Merged {
+		t.Error("PR merged without a new review")
+	}
+}
+
+func TestReviewerMergeErrorRetriesWithoutANewReview(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	task, pr, name := e.approved()
+	e.gh.Fail(mergeRoute, http.StatusBadGateway)
+
+	if err := e.reviewer().Handle(t.Context(), task); err == nil {
+		t.Fatal("Handle returned nil for a failed merge")
+	}
+	e.wantResultKept(task, pr, name)
+
+	e.gh.Fail(mergeRoute, 0)
+	e.review(task)
+	if !e.gh.Pull(pr).Merged {
+		t.Error("PR not merged from the kept result")
+	}
+	if e.sbx.exists(name) {
+		t.Error("a new review started")
+	}
+	e.wantRemoved(name)
 }
 
 // A finished review gives its slot back at once, and a new exomecha still collects it from the
