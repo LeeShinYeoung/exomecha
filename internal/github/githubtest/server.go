@@ -35,6 +35,8 @@ type Server struct {
 	number int
 	id     int64
 	issues map[int]*Issue
+	// listed, once HoldList sets it, is what the issue list answers with instead of issues.
+	listed map[int]*Issue
 	pulls  map[int]*Pull
 	labels []string
 	runs   map[string][]Run
@@ -289,8 +291,12 @@ func (s *Server) listIssues(r *http.Request) (int, any) {
 	if l := q.Get("labels"); l != "" {
 		want = strings.Split(l, ",")
 	}
+	issues := s.issues
+	if s.listed != nil {
+		issues = s.listed
+	}
 	var numbers []int
-	for n, i := range s.issues {
+	for n, i := range issues {
 		if state == "open" && !i.Open || state == "closed" && i.Open {
 			continue
 		}
@@ -301,7 +307,11 @@ func (s *Server) listIssues(r *http.Request) (int, any) {
 	}
 	// GitHub lists newest first.
 	slices.SortFunc(numbers, func(a, b int) int { return cmp.Compare(b, a) })
-	return http.StatusOK, s.issuesJSON(numbers)
+	out := []any{}
+	for _, n := range numbers {
+		out = append(out, issueJSON(issues[n]))
+	}
+	return http.StatusOK, out
 }
 
 func containsAll(have, want []string) bool {
@@ -660,6 +670,19 @@ func (s *Server) Relabel(n int, from, to string) {
 	i.Labels = slices.DeleteFunc(i.Labels, func(l string) bool { return l == from })
 	if to != "" && !slices.Contains(i.Labels, to) {
 		i.Labels = append(i.Labels, to)
+	}
+}
+
+// HoldList makes the issue list keep answering with the issues as they are now. GitHub's list
+// can lag behind an issue's own page for up to a minute.
+func (s *Server) HoldList() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listed = map[int]*Issue{}
+	for n, i := range s.issues {
+		c := *i
+		c.Labels = slices.Clone(i.Labels)
+		s.listed[n] = &c
 	}
 }
 

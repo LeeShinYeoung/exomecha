@@ -68,6 +68,14 @@ func (r *reviewer) Sweep(ctx context.Context) error {
 		if !done {
 			continue
 		}
+		// The list can be a minute behind, and closing again would overwrite how a person closed it.
+		p, err := r.GitHub.Issue(ctx, p.Number)
+		if err != nil {
+			return err
+		}
+		if !p.Open {
+			continue
+		}
 		if err := r.GitHub.Close(ctx, p.Number, github.Completed); err != nil {
 			return err
 		}

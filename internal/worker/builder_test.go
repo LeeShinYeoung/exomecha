@@ -126,6 +126,21 @@ func TestBuilderSweepQueuesNewPRDs(t *testing.T) {
 	}
 }
 
+func TestBuilderSweepRereadsALaggingList(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	closed := e.gh.AddIssue("closed after the list", "", label.PRD)
+	started := e.gh.AddIssue("started after the list", "", label.PRD)
+	e.gh.HoldList()
+	e.gh.CloseIssue(closed)
+	e.gh.Relabel(started, "", string(label.Working))
+
+	if err := e.builder().Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.wantStatus(closed, label.None)
+	e.wantStatus(started, label.Working)
+}
+
 func TestBuilderIgnoresOutsiderPRD(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.gh.AddOutsiderIssue("PRD from an outsider", "", label.PRD, string(label.Queued))

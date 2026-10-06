@@ -60,6 +60,15 @@ func (b *builder) Sweep(ctx context.Context) error {
 		if p.Status() != label.None {
 			continue
 		}
+		// The list can be a minute behind. The PRD may have closed since, or been queued and
+		// started, and queueing it again would drop its run.
+		p, err := b.GitHub.Issue(ctx, p.Number)
+		if err != nil {
+			return err
+		}
+		if !p.Open || p.Status() != label.None {
+			continue
+		}
 		if err := b.GitHub.SetStatus(ctx, p.Number, label.None, label.Queued); err != nil {
 			return err
 		}

@@ -531,6 +531,25 @@ func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
 	}
 }
 
+func TestReviewerSweepRereadsALaggingList(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	problem := e.gh.AddIssue("problem", "", label.Problem)
+	prd := e.gh.AddIssue("PRD", "", label.PRD)
+	e.gh.AddSubIssue(problem, prd)
+	e.gh.CloseIssue(prd)
+	e.gh.HoldList()
+	if err := e.deps.GitHub.Close(t.Context(), problem, "not_planned"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := e.reviewer().Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.gh.Issue(problem).StateReason; got != "not_planned" {
+		t.Errorf("problem closed as %q, want it left as the person closed it", got)
+	}
+}
+
 func TestReviewerSweepClosesFinishedProblems(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	problem := e.gh.AddIssue("problem", "", label.Problem)
