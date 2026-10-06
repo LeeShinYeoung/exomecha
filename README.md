@@ -3,14 +3,14 @@
 exomecha watches the labels on a repository's GitHub issues. Three workers build each PRD, review and merge its PR, and resolve merge conflicts. Every worker runs claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person only makes the decisions up front (three skills) and answers when a PRD is blocked.
 
 ```
-[person] /exomecha:issue   → type:problem issue (the problem only)
-[person] /exomecha:discuss → settle a direction by talking, then leave it as a comment on the problem
-[person] /exomecha:prd     → type:prd issues of one PR each (all decisions, a decision ledger, acceptance criteria, test scenarios, a tier label), sub-issues of the problem, each Blocked by any earlier one it needs
+[person] /exomecha:draft-prd          → a draft: an issue labeled prd and status:draft (the problem, what is known, ideas not yet decided), which no worker takes
+[person] /exomecha:summary-all-drafts → each open draft's title and a summary of up to three lines, to pick what to settle next
+[person] /exomecha:complete-prd       → PRDs of one PR each (all decisions, a decision ledger, acceptance criteria, test scenarios, a tier label), from the conversation or from drafts, each Blocked by any earlier one it needs → status:ready
 
-[builder]   PRD with no status → status:queued. queued, all blockers closed → working → code in a sandbox and PR → status:review
-[reviewer]  review → check CI → AI review → queued if something needs fixing, otherwise merge → PRD closed, and the problem once all its PRDs are
+[builder]   ready, all blockers closed → working → code in a sandbox and PR → status:review. A PRD with no status or status:draft is left alone
+[reviewer]  review → check CI → AI review → ready if something needs fixing, otherwise merge → PRD closed
 [resolver]  review with a conflicting PR → merge the base branch and resolve in a sandbox → stays in review (stuck if it can't)
-Any worker blocked by the PRD itself → status:stuck + a comment with the reason → a person closes it, or answers and sets queued
+Any worker blocked by the PRD itself → status:stuck + a comment with the reason → a person closes it, or answers and sets ready
 ```
 
 ## Setup
@@ -62,7 +62,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 
 - Only the usage check and the tier models' check at start use the claude login on this machine. Every worker runs claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
 - reviewer only reads the code. Its sandboxes start from sbx's default claude template and get only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed at exomecha's next check, within about a minute after claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
-- /exomecha:prd gives each PRD a tier label, `tier:light`, `tier:normal` or `tier:heavy`, by how much building it asks. builder runs on that tier's model, also when it applies a review or fixes CI. A PRD with no tier label runs on normal, and one with several on the heaviest. Change the label to change the model. A run already going keeps its model, and the change applies from builder's next start.
+- /exomecha:complete-prd gives each PRD a tier label, `tier:light`, `tier:normal` or `tier:heavy`, by how much building it asks. builder runs on that tier's model, also when it applies a review or fixes CI. A PRD with no tier label runs on normal, and one with several on the heaviest. Change the label to change the model. A run already going keeps its model, and the change applies from builder's next start.
 - When there is work to start, exomecha first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
 - exomecha sends a PRD's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. exomecha's sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
 - A run keeps going in its sandbox while exomecha is stopped. Ctrl-C leaves working PRDs as they are, and exomecha picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.exomecha/<owner>/<repo>/sandboxes/`.
@@ -85,7 +85,7 @@ The worker's comment says why it is blocked and what needs deciding.
 
 - If there is nothing left to do, close the issue.
 - Otherwise, answer in a comment and relabel it the way the comment says. That sends it back to the worker that owns the problem:
-  - `status:queued` when builder got stuck. builder continues on the existing PR branch.
+  - `status:ready` when builder got stuck. builder continues on the existing PR branch.
   - `status:review` when resolver got stuck on a conflict. resolver merges the base branch again and settles the conflict the way you answered.
   - `status:review` when reviewer's run failed. reviewer reviews the PR again.
 - When the AI says the sandbox blocked a host, add that host to `.exomecha/allowed-hosts` on the base branch if the PRD really needs it. Then relabel the PRD the way the comment says.
@@ -105,6 +105,12 @@ Stop exomecha, then remove what it keeps on this machine for the project:
 - `~/.exomecha/<owner>/<repo>`
 
 `<slug>` is `owner-repo` in lowercase, with every run of characters other than letters and digits turned into one `-`. A slug longer than 32 characters is cut and ends with a short hash of the repository's name. `sbx ls` and `sbx template ls` show the exact names.
+
+## Upgrading from a version with the issue, discuss and prd skills
+
+- Relabel each open PRD. `type:prd` becomes `prd`, and `status:queued` becomes `status:ready`. A PRD that had `type:prd` and no status needs `status:ready` too, since builder no longer queues it.
+- exomecha no longer closes a `type:problem` issue when its PRDs close. Close the open ones by hand, or relabel one `prd` and `status:draft` to keep it as a draft.
+- The `type:problem`, `type:prd` and `status:queued` labels stay in the repository. You can remove them by hand.
 
 ## Upgrading from a version with splitter and sequencer
 
