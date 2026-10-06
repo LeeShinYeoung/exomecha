@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,9 +30,55 @@ type Window struct {
 // Usage makes the cheapest claude call it can, because claude reports the plan's limits only
 // alongside a real answer and has no command that reads them on their own.
 func (Claude) Usage(ctx context.Context) (Usage, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p",
-		"--model", "haiku",
-		"--effort", "low",
+	stdout, stderr, runErr := probe(ctx, "--model", "haiku", "--effort", "low")
+
+	// claude still reports the limits when it refuses the call because one is used up.
+	u, err := parseUsage(bytes.NewReader(stdout))
+	if err != nil || u.Known {
+		return u, err
+	}
+	if runErr != nil {
+		return Usage{}, fmt.Errorf("run claude: %w: %s", runErr, stderr)
+	}
+	return u, nil
+}
+
+// Check makes a short claude call on m in auto permission mode, as every worker's run is, so a
+// model no run can use is found before the first run fails on it.
+func (Claude) Check(ctx context.Context, m Model) error {
+	stdout, stderr, runErr := probe(ctx, "--model", m.Name, "--effort", m.Effort, "--permission-mode", "auto")
+	err := checkStream(bytes.NewReader(stdout), m)
+	if errors.Is(err, errNotStarted) && runErr != nil {
+		return fmt.Errorf("run claude: %w: %s", runErr, stderr)
+	}
+	return err
+}
+
+var errNotStarted = errors.New("claude did not start")
+
+func checkStream(r io.Reader, m Model) error {
+	s, err := ReadStream(r)
+	if err != nil {
+		return err
+	}
+	switch {
+	case s.PermissionMode == "":
+		return errNotStarted
+	case s.PermissionMode != "auto":
+		return fmt.Errorf("claude does not run %s in auto permission mode", m.Name)
+	// A used up limit is a normal state that exomecha waits out, so it must not stop the start.
+	case s.Rejected:
+		return nil
+	case !s.ended:
+		return errors.New("claude ended without a result")
+	case s.isError:
+		return fmt.Errorf("claude returned an error: %s", s.text)
+	}
+	return nil
+}
+
+func probe(ctx context.Context, args ...string) (stdout []byte, stderr string, err error) {
+	cmd := exec.CommandContext(ctx, "claude", append([]string{"-p",
 		"--system-prompt", "Reply with ok.",
 		"--tools", "",
 		"--setting-sources", "",
@@ -40,23 +87,14 @@ func (Claude) Usage(ctx context.Context) (Usage, error) {
 		"--no-session-persistence",
 		"--output-format", "stream-json",
 		"--verbose",
-	)
+	}, args...)...)
 	cmd.Dir = os.TempDir()
 	cmd.Stdin = strings.NewReader("ok?")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-
-	// claude still reports the limits when it refuses the call because one is used up.
-	u, err := parseUsage(&stdout)
-	if err != nil || u.Known {
-		return u, err
-	}
-	if runErr != nil {
-		return Usage{}, fmt.Errorf("run claude: %w: %s", runErr, strings.TrimSpace(stderr.String()))
-	}
-	return u, nil
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err = cmd.Run()
+	return out.Bytes(), strings.TrimSpace(errOut.String()), err
 }
 
 func parseUsage(r io.Reader) (Usage, error) {

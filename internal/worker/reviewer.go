@@ -31,6 +31,7 @@ var reviewerRole = role{
 	schema: reviewerSchema,
 	from:   label.Review,
 	back:   label.Review,
+	tier:   label.Heavy,
 }
 
 // merged, closed and failing drop the run, which was about a PR that no longer stands, and Handle

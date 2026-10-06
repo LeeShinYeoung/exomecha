@@ -16,6 +16,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 	"github.com/LeeShinYeoung/exomecha/internal/template"
 	"github.com/LeeShinYeoung/exomecha/internal/worker"
@@ -55,6 +56,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	light, err := tierModel("EXOMECHA_TIER_LIGHT", agent.Model{Name: "opus", Effort: "low"})
+	if err != nil {
+		return err
+	}
+	normal, err := tierModel("EXOMECHA_TIER_NORMAL", agent.Model{Name: "opus", Effort: "high"})
+	if err != nil {
+		return err
+	}
+	heavy, err := tierModel("EXOMECHA_TIER_HEAVY", agent.Model{Name: "opus", Effort: "xhigh"})
+	if err != nil {
+		return err
+	}
 	// Drop the token from the environment so child processes such as claude don't inherit it.
 	if err := os.Unsetenv("EXOMECHA_GITHUB_TOKEN"); err != nil {
 		return err
@@ -75,6 +88,20 @@ func run() error {
 	} else if has {
 		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.
 		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
+	}
+	// Once per model: the check finds a model's problems, and claude reports nothing about the effort.
+	checked := map[string]bool{}
+	for _, t := range []struct {
+		env   string
+		model agent.Model
+	}{{"EXOMECHA_TIER_LIGHT", light}, {"EXOMECHA_TIER_NORMAL", normal}, {"EXOMECHA_TIER_HEAVY", heavy}} {
+		if checked[t.model.Name] {
+			continue
+		}
+		checked[t.model.Name] = true
+		if err := (agent.Claude{}).Check(ctx, t.model); err != nil {
+			return fmt.Errorf("%s: %w", t.env, err)
+		}
 	}
 
 	gh, err := github.New(owner, name, token)
@@ -102,6 +129,7 @@ func run() error {
 		ReadLimit:     readLimit,
 		GitName:       author,
 		GitEmail:      email,
+		Models:        map[label.Tier]agent.Model{label.Light: light, label.Normal: normal, label.Heavy: heavy},
 	}
 
 	created, err := gh.EnsureLabels(ctx)
@@ -113,7 +141,8 @@ func run() error {
 	}
 
 	slog.Info("exomecha started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly,
-		"sandbox_limit", projectLimit, "read_sandbox_limit", readLimit)
+		"sandbox_limit", projectLimit, "read_sandbox_limit", readLimit,
+		"tier_light", light, "tier_normal", normal, "tier_heavy", heavy)
 	gate := &worker.Gate{Check: agent.Claude{}.Usage, FiveHour: fiveHour, Weekly: weekly}
 	worker.Run(ctx, deps, gate)
 	slog.Info("exomecha stopped")
@@ -131,6 +160,19 @@ func usageLimit(name string, fallback int) (float64, error) {
 		return 0, fmt.Errorf("%s must be a whole number from 1 to 100: %q", name, v)
 	}
 	return float64(n) / 100, nil
+}
+
+// tierModel reads the model and effort of one tier.
+func tierModel(name string, fallback agent.Model) (agent.Model, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return fallback, nil
+	}
+	m, err := agent.ParseModel(v)
+	if err != nil {
+		return agent.Model{}, fmt.Errorf("%s must be model:effort, such as sonnet:low: %w: %q", name, err, v)
+	}
+	return m, nil
 }
 
 // limit reads how many sandboxes of one kind may exist at once.

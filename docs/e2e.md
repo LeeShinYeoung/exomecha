@@ -41,8 +41,8 @@ reviewer's, splitter's and sequencer's runs on a small practice project often en
 
 ### 1. Labels
 
-- Start exomecha. `gh label list -R $R` shows the nine labels.
-- Stop and start it again. Still nine, and no error in the log.
+- Start exomecha. `gh label list -R $R` shows the twelve labels.
+- Stop and start it again. Still twelve, and no error in the log.
 
 ### 2. Skills
 
@@ -57,6 +57,7 @@ In the practice repository, in Claude Code:
 
 - Within a minute of the PRD appearing, Tasks appear as its sub-issues. Each body has To do, Files, Acceptance criteria, Test scenarios, Cautions, Out of scope, Context.
 - Order inside the PRD shows as Blocked by. The PRD gets `tasked` last.
+- Each Task has one tier label: `tier:light`, `tier:normal` or `tier:heavy`.
 - Each Task goes `status:pending` then `status:queued`.
 - While the PRD is split, `sbx ls` shows `exomecha-run-<slug>-<prd>-splitter`. While a Task is put in line, it shows `exomecha-run-<slug>-<task>-sequencer`. Each is gone from `sbx ls` within a minute after its claude ends, and its folder under `~/.exomecha/<owner>/<repo>/sandboxes/` goes when the Tasks appear or the label changes.
 - A Task with no open Task numbered lower goes to `status:queued` without a sequencer sandbox.
@@ -248,3 +249,12 @@ With `.exomecha/Dockerfile`, `.exomecha/setup.sh` and `.exomecha/allowed-hosts` 
 - Add a branch protection rule for `main` that requires one approving review, and check "Do not allow bypassing the above settings". Otherwise the token owner, an admin of the repository, can merge past it.
 - Let a Task reach `status:review` with a PR the AI approves. GitHub refuses the merge, and the Task goes `status:stuck`. The comment quotes GitHub's message, such as `At least 1 approving review is required by reviewers with write access.`, and says to merge the PR yourself or change the rule. `sbx ls` shows no reviewer sandbox for the Task, and its folder is gone.
 - Remove the rule and relabel the Task `status:review`. reviewer reviews the PR again in a new sandbox and merges it, and the Task closes as completed.
+
+### 29. Model tiers
+
+- Start exomecha with `EXOMECHA_TIER_LIGHT=sonnet:low`. The "exomecha started" line in the log shows the three tiers.
+- When sequencer puts a Task in line, its "started claude in a sandbox" line shows tier `tier:light`, model `sonnet` and effort `low`. The init line in the run's `stream.jsonl` names a sonnet model.
+- While builder works on a Task, `sbx exec <sandbox> ps -eo args` shows claude with the `--model` and `--effort` of the Task's tier.
+- Give a queued Task both `tier:light` and `tier:heavy`. Its builder's "started claude in a sandbox" line shows `tier:heavy`.
+- Start exomecha with `EXOMECHA_TIER_HEAVY=opus`. It refuses to start and names `EXOMECHA_TIER_HEAVY`.
+- Start exomecha with `EXOMECHA_TIER_LIGHT=haiku:low`. It refuses to start and says `EXOMECHA_TIER_LIGHT` and that claude does not run haiku in auto permission mode. With `EXOMECHA_TIER_LIGHT=opsu:low` it refuses too, with claude's message about the model.

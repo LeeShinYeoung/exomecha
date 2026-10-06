@@ -27,6 +27,7 @@ var resolverRole = role{
 	project: true,
 	from:    label.Review,
 	back:    label.Review,
+	tier:    label.Light,
 }
 
 // begin does nothing when the Task branch is missing or already has the base branch.

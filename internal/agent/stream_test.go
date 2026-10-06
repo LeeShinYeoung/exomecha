@@ -20,8 +20,8 @@ func TestReadStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.PermissionMode != "auto" || !s.ended || s.Rejected {
-		t.Errorf("stream = %+v, want an ended auto run", s)
+	if s.PermissionMode != "auto" || s.Model != "claude-sonnet-5" || !s.ended || s.Rejected {
+		t.Errorf("stream = %+v, want an ended auto run on claude-sonnet-5", s)
 	}
 	res, err := s.Result()
 	if err != nil || string(res) != `{"result":"done"}` {
@@ -91,9 +91,9 @@ func TestReadStreamSkipsLinesOfOtherShapes(t *testing.T) {
 }
 
 func TestArgs(t *testing.T) {
-	args := Args("be brief", `{"type":"object"}`)
+	args := Args("be brief", `{"type":"object"}`, Model{Name: "sonnet", Effort: "low"})
 	for _, want := range [][]string{
-		{"--permission-mode", "auto"}, {"--append-system-prompt", "be brief"}, {"--json-schema", `{"type":"object"}`}, {"--output-format", "stream-json"},
+		{"--permission-mode", "auto"}, {"--model", "sonnet"}, {"--effort", "low"}, {"--append-system-prompt", "be brief"}, {"--json-schema", `{"type":"object"}`}, {"--output-format", "stream-json"},
 	} {
 		i := slices.Index(args, want[0])
 		if i < 0 || i+1 >= len(args) || args[i+1] != want[1] {
@@ -103,6 +103,23 @@ func TestArgs(t *testing.T) {
 	for _, a := range args {
 		if strings.Contains(a, "dangerously") || strings.Contains(a, "bypass") {
 			t.Errorf("args contain %q: %q", a, args)
+		}
+	}
+}
+
+func TestParseModel(t *testing.T) {
+	for in, want := range map[string]Model{
+		"sonnet:low": {"sonnet", "low"},
+		"opus:max":   {"opus", "max"},
+		"arn:aws:bedrock:us-east-1:1:model/claude:high": {"arn:aws:bedrock:us-east-1:1:model/claude", "high"},
+	} {
+		if got, err := ParseModel(in); err != nil || got != want {
+			t.Errorf("ParseModel(%q) = %+v, %v, want %+v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "sonnet", ":low", "sonnet:", "sonnet:extreme", "sonnet:LOW"} {
+		if got, err := ParseModel(in); err == nil {
+			t.Errorf("ParseModel(%q) = %+v, want an error", in, got)
 		}
 	}
 }

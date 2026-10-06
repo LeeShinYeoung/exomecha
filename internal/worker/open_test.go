@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
 func (e *env) rev(ref string) string {
@@ -39,6 +41,23 @@ func (e *env) open(s spec) string {
 		e.t.Fatal(err)
 	}
 	return problem
+}
+
+// startedModel returns the model and effort of the sandbox's first claude start.
+func (e *env) startedModel(name string) agent.Model {
+	e.t.Helper()
+	starts := e.sbx.box(name).starts
+	if len(starts) == 0 {
+		e.t.Fatalf("%s started no claude", name)
+	}
+	arg := func(flag string) string {
+		i := slices.Index(starts[0], flag)
+		if i < 0 || i+1 >= len(starts[0]) {
+			return ""
+		}
+		return starts[0][i+1]
+	}
+	return agent.Model{Name: arg("--model"), Effort: arg("--effort")}
 }
 
 func (e *env) readCtl(name, file string) string {
@@ -91,7 +110,8 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	if !slices.Equal(start[:5], []string{repoDir, "sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}) {
 		t.Errorf("start = %q", start)
 	}
-	for flag, want := range map[string]string{"--permission-mode": "auto", "--append-system-prompt": prompt("builder"), "--json-schema": builderSchema} {
+	for flag, want := range map[string]string{"--permission-mode": "auto", "--append-system-prompt": prompt("builder"), "--json-schema": builderSchema,
+		"--model": "normal-model", "--effort": "medium"} {
 		if i := slices.Index(start, flag); i < 0 || start[i+1] != want {
 			t.Errorf("claude does not get %s %.40q: %.200q", flag, want, start)
 		}
@@ -180,6 +200,52 @@ func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 		t.Error("a sandbox was created")
 	}
 	wantContains(t, "log", log.String(), "a secret in the build output")
+}
+
+func TestOpenRunsTheRolesTier(t *testing.T) {
+	for _, c := range []struct {
+		ro   role
+		tier label.Tier // the spec's
+		want label.Tier
+	}{
+		{splitterRole, "", label.Heavy},
+		{sequencerRole, "", label.Light},
+		{reviewerRole, "", label.Heavy},
+		{resolverRole, "", label.Light},
+		{builderRole, "", label.Normal},
+		{builderRole, label.Light, label.Light},
+	} {
+		name := c.ro.name
+		if c.tier != "" {
+			name += " with " + string(c.tier)
+		}
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+			s, _ := e.testSpec()
+			if !c.ro.project {
+				s.branch = ""
+			}
+			s.tier = c.tier
+			if problem, err := e.runs.open(t.Context(), c.ro, 1, s); problem != "" || err != nil {
+				t.Fatalf("open = %q, %v", problem, err)
+			}
+			if got := e.startedModel(e.runs.name(c.ro, 1)); got != testModels[c.want] {
+				t.Errorf("claude got %v, want %s's %v", got, c.want, testModels[c.want])
+			}
+		})
+	}
+}
+
+func TestOpenWithoutAModelCreatesNoSandbox(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	delete(e.runs.Models, label.Normal)
+	s, name := e.testSpec()
+	if problem, err := e.runs.open(t.Context(), builderRole, 1, s); problem != "" || err == nil {
+		t.Errorf("open = %q, %v, want an error", problem, err)
+	}
+	if e.sbx.exists(name) {
+		t.Error("a sandbox was created")
+	}
 }
 
 func TestOpenEnvironmentError(t *testing.T) {

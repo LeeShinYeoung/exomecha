@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -43,8 +45,8 @@ func TestSplitterCreatesTasks(t *testing.T) {
 	e.wantState(name, running)
 	wantContains(t, "claude input", e.readCtl(name, "input.md"), "the plan", "a person's note")
 	e.play(name, nil, `{"tasks": [
-		{"title": "A", "body": "a", "blocked_by": []},
-		{"title": "B", "body": "b", "blocked_by": [1, 2, 0, 9]},
+		{"title": "A", "body": "a", "blocked_by": [], "tier": "light"},
+		{"title": "B", "body": "b", "blocked_by": [1, 2, 0, 9], "tier": "heavy"},
 		{"title": "C", "body": "c", "blocked_by": [1, 2, 3]}
 	]}`)
 	e.split(prd)
@@ -59,6 +61,13 @@ func TestSplitterCreatesTasks(t *testing.T) {
 			t.Errorf("task #%d has no %s label", n, label.Task)
 		}
 		e.wantStatus(n, label.Pending)
+	}
+	// C's answer has no tier, as from a run that started before tiers existed.
+	for n, want := range map[int][]string{a: {string(label.Light)}, b: {string(label.Heavy)}, c: nil} {
+		tiers := slices.DeleteFunc(e.gh.Issue(n).Labels, func(l string) bool { return !strings.HasPrefix(l, "tier:") })
+		if !slices.Equal(tiers, want) {
+			t.Errorf("task #%d tier labels = %q, want %q", n, tiers, want)
+		}
 	}
 	wantInts(t, "A blocked by", e.gh.Issue(a).BlockedBy, nil)
 	wantInts(t, "B blocked by", e.gh.Issue(b).BlockedBy, []int{a})
@@ -109,7 +118,7 @@ func TestSplitterRecoversUnfinishedSplit(t *testing.T) {
 	prd, name := e.splitting()
 	old := e.gh.AddIssue("left over", "", label.Task, string(label.Pending))
 	e.gh.AddSubIssue(prd, old)
-	e.play(name, nil, `{"tasks": [{"title": "fresh", "body": "f", "blocked_by": []}]}`)
+	e.play(name, nil, `{"tasks": [{"title": "fresh", "body": "f", "blocked_by": [], "tier": "normal"}]}`)
 
 	e.split(prd)
 

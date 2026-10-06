@@ -28,6 +28,8 @@ var builderRole = role{
 	from:    label.Working,
 	back:    label.Pending,
 	queued:  label.Queued,
+	// For a Task with no tier label. A tier label takes its place.
+	tier: label.Normal,
 }
 
 // begin waits while a blocker is open. A run of a ready Task was left when a person sent the Task
@@ -131,7 +133,8 @@ func (b *builder) start(ctx context.Context, task github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		s := spec{branch: branch, base: base, head: base, remote: remote, input: taskText(task) + comments}
+		s := spec{branch: branch, base: base, head: base, remote: remote, input: taskText(task) + comments,
+			tier: label.TierOf(task.Labels)}
 		if !hasPR {
 			return s, nil
 		}

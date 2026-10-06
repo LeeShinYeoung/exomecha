@@ -9,11 +9,13 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
@@ -57,12 +59,43 @@ func TestRealBuilderRunFromTemplate(t *testing.T) {
 	runRealBuilder(t, e, fmt.Sprintf("impl-int-w%d-", time.Now().UnixNano()%100_000))
 }
 
+// useOpus runs every tier on opus. The sandbox's own default is sonnet, so a run on opus shows that
+// --model reached claude. Not haiku: claude does not run haiku in auto permission mode.
+func (e *env) useOpus() {
+	for t := range e.deps.Models {
+		e.deps.Models[t] = agent.Model{Name: "opus", Effort: "low"}
+	}
+}
+
+// runModel returns the model in claude's init line, or "" before claude wrote one. It must be read
+// before the Handle that collects the run, which removes the run's folder.
+func (e *env) runModel(name string) string {
+	f, err := os.Open(filepath.Join(e.runs.ctl(name), "stream.jsonl"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	s, err := agent.ReadStream(f)
+	if err != nil {
+		return ""
+	}
+	return s.Model
+}
+
+func wantOpus(t *testing.T, model string) {
+	t.Helper()
+	if !strings.Contains(model, "opus") {
+		t.Errorf("claude ran on %q, want opus", model)
+	}
+}
+
 // runRealBuilder takes a Task that asks for hello.txt through builder until its PR opens.
 func runRealBuilder(t *testing.T, e *env, prefix string) {
 	t.Helper()
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
 	e.deps.SandboxPrefix = prefix
+	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
 	task := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`. Commit it with the message `feat: add hello`.\n",
@@ -76,7 +109,11 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	var model string
 	for {
+		if m := e.runModel(name); m != "" {
+			model = m
+		}
 		if err := e.builder().Handle(ctx, task); err != nil {
 			t.Fatal(err)
 		}
@@ -94,6 +131,7 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 	if got := e.statuses(task); len(got) != 1 || got[0] != string(label.Review) {
 		t.Fatalf("status = %q, last comment %q", got, e.gh.Issue(task).Comments)
 	}
+	wantOpus(t, model)
 	if got := gittest.ReadFile(t, e.origin, branchName(task), "hello.txt"); got != "hello" {
 		t.Errorf("hello.txt = %q", got)
 	}
@@ -119,6 +157,7 @@ func TestRealResolverRun(t *testing.T) {
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-r%d-", time.Now().UnixNano()%100_000)
+	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
 	task, _, head := e.conflictTask(map[string]string{"greeting.txt": "hello\nfrom the feature\n"}, map[string]string{"greeting.txt": "hello\nfrom main\n"})
 	e.gh.AddComment(task, "If greeting.txt conflicts, keep both added lines, main's line first.")
@@ -131,7 +170,11 @@ func TestRealResolverRun(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	var model string
 	for {
+		if m := e.runModel(name); m != "" {
+			model = m
+		}
 		if err := e.resolver().Handle(ctx, task); err != nil {
 			t.Fatal(err)
 		}
@@ -148,6 +191,7 @@ func TestRealResolverRun(t *testing.T) {
 	if comments := e.gh.Issue(task).Comments; len(comments) > 1 {
 		t.Fatalf("resolver commented: %q", comments[len(comments)-1].Body)
 	}
+	wantOpus(t, model)
 	if n := len(gittest.Parents(t, e.origin, branchName(task))); n != 2 {
 		t.Errorf("branch head has %d parents, want a merge commit", n)
 	}
@@ -175,6 +219,7 @@ func TestRealReviewerRun(t *testing.T) {
 	sbx := sandbox.CLI{}
 	e.deps.Sandboxes = sbx
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-v%d-", time.Now().UnixNano()%100_000)
+	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
 	prd := e.gh.AddIssue("Greet visitors", "People who open the repository should find a greeting file at its root.\n", label.PRD, label.Tasked)
 	task := e.gh.AddIssue("Add hello.txt",
@@ -194,7 +239,11 @@ func TestRealReviewerRun(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
+	var model string
 	for {
+		if m := e.runModel(name); m != "" {
+			model = m
+		}
 		if err := e.reviewer().Handle(ctx, task); err != nil {
 			t.Fatal(err)
 		}
@@ -217,6 +266,7 @@ func TestRealReviewerRun(t *testing.T) {
 		}
 		t.Fatalf("PR not merged: status %q, reviews %q, comments %q", e.statuses(task), reviews, e.gh.Issue(task).Comments)
 	}
+	wantOpus(t, model)
 	if p.MergedSHA != head {
 		t.Errorf("merged %s, want the reviewed head %s", p.MergedSHA, head)
 	}

@@ -20,9 +20,10 @@ const splitterSchema = `{
         "properties": {
           "title": {"type": "string"},
           "body": {"type": "string"},
-          "blocked_by": {"type": "array", "items": {"type": "integer"}}
+          "blocked_by": {"type": "array", "items": {"type": "integer"}},
+          "tier": {"type": "string", "enum": ["light", "normal", "heavy"]}
         },
-        "required": ["title", "body", "blocked_by"],
+        "required": ["title", "body", "blocked_by", "tier"],
         "additionalProperties": false
       }
     }
@@ -38,6 +39,7 @@ var splitterRole = role{
 	schema: splitterSchema,
 	from:   label.None,
 	back:   label.None,
+	tier:   label.Heavy,
 }
 
 var splitterTable = table{
@@ -108,6 +110,7 @@ func (s *splitter) collect(ctx context.Context, n int) error {
 			Title     string `json:"title"`
 			Body      string `json:"body"`
 			BlockedBy []int  `json:"blocked_by"`
+			Tier      string `json:"tier"`
 		} `json:"tasks"`
 	}
 	if ok, err := s.runs.result(ctx, splitterRole, n, &out); err != nil || !ok {
@@ -139,7 +142,12 @@ func (s *splitter) collect(ctx context.Context, n int) error {
 	// worker picks up a half-built set. Each Task is attached right away so the cleanup above can find it.
 	tasks := make([]github.Issue, len(out.Tasks))
 	for i, t := range out.Tasks {
-		tasks[i], err = s.GitHub.CreateIssue(ctx, t.Title, t.Body, []string{label.Task})
+		labels := []string{label.Task}
+		// A run started before tiers existed answers with none, and builder takes such a Task as normal.
+		if tier, ok := label.TierNamed(t.Tier); ok {
+			labels = append(labels, string(tier))
+		}
+		tasks[i], err = s.GitHub.CreateIssue(ctx, t.Title, t.Body, labels)
 		if err != nil {
 			return err
 		}

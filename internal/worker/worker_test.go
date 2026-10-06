@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
@@ -30,6 +32,13 @@ type env struct {
 	clock  *clock
 	deps   Deps
 	runs   *runs
+}
+
+// Each tier has a model and an effort no other tier has, so a start's args show which tier it got.
+var testModels = map[label.Tier]agent.Model{
+	label.Light:  {Name: "light-model", Effort: "low"},
+	label.Normal: {Name: "normal-model", Effort: "medium"},
+	label.Heavy:  {Name: "heavy-model", Effort: "high"},
 }
 
 func newEnv(t *testing.T, files map[string]string) *env {
@@ -61,6 +70,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		ReadLimit:     2,
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
+		Models:        maps.Clone(testModels),
 	}
 	e.runs = newRuns(e.deps, nil)
 	e.runs.now = e.clock.now

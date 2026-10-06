@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -49,6 +50,8 @@ type Deps struct {
 	// The commit identity for project runs, the token owner's. A sandbox has none of its own.
 	GitName  string
 	GitEmail string
+	// Models has a model for every tier.
+	Models map[label.Tier]agent.Model
 }
 
 type Sandboxes interface {

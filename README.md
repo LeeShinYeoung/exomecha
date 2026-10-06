@@ -53,16 +53,18 @@ Any worker blocked by the Task itself → status:stuck + a comment with the reas
    - Optional: `EXOMECHA_FIVE_HOUR_LIMIT` (default 90) and `EXOMECHA_WEEKLY_LIMIT` (default 80), in percent of the Claude plan's 5-hour and weekly limits. exomecha starts no new work at or above them.
    - Optional: `EXOMECHA_SANDBOX_LIMIT` (default 2), how many Task sandboxes builder and resolver may have at once, together.
    - Optional: `EXOMECHA_READ_SANDBOX_LIMIT` (default 2), how many sandboxes that only read the code may exist at once, together. `EXOMECHA_SANDBOX_LIMIT` does not count them.
+   - Optional: `EXOMECHA_TIER_LIGHT` (default `opus:low`), `EXOMECHA_TIER_NORMAL` (default `opus:high`) and `EXOMECHA_TIER_HEAVY` (default `opus:xhigh`), the claude model and effort of each tier, as `model:effort`. Effort is one of low, medium, high, xhigh and max. The model must support that effort and claude's auto permission mode, which haiku does not. At start exomecha makes a short claude call on each tier's model, on this machine, and does not start when claude does not run the model in auto permission mode or does not know it. splitter and reviewer run on heavy, sequencer and resolver on light, and builder on its Task's tier.
    - Run:
      ```
      set -a; source <project>.env; set +a; exomecha
      ```
-   - exomecha creates any of the nine labels that are missing when it starts.
+   - exomecha creates any of the twelve labels that are missing when it starts.
 
 ## Notes
 
-- Only the usage check uses the claude login on this machine. Every worker runs claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
+- Only the usage check and the tier models' check at start use the claude login on this machine. Every worker runs claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
 - reviewer, splitter and sequencer only read the code. Their sandboxes start from sbx's default claude template and get only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed at exomecha's next check, within about a minute after claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
+- splitter gives each Task a tier label, `tier:light`, `tier:normal` or `tier:heavy`, by how much building it asks. builder runs on that tier's model, also when it applies a review or fixes CI. A Task with no tier label runs on normal, and one with several on the heaviest. Change the label to change the model. A run already going keeps its model, and the change applies from builder's next start.
 - When there is work to start, exomecha first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
 - exomecha sends a Task's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. exomecha's sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
 - A run keeps going in its sandbox while exomecha is stopped. Ctrl-C leaves working Tasks as they are, and exomecha picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.exomecha/<owner>/<repo>/sandboxes/`.

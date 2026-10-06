@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -115,6 +116,8 @@ type role struct {
 	// queued is builder's alone: a start moves the Task from queued to from, and a start that is
 	// undone or starts over moves it back.
 	queued label.Status
+	// tier picks the model of the role's runs, unless the spec names one.
+	tier label.Tier
 }
 
 type run struct {
@@ -407,7 +410,8 @@ type spec struct {
 	remote string // the Task branch on GitHub, "" when there is none
 	// merge merges the base branch after setup and lists the conflicts in the input.
 	merge bool
-	input string // claude's input. open adds what setup and the merge did.
+	input string     // claude's input. open adds what setup and the merge did.
+	tier  label.Tier // "" for the role's tier
 }
 
 // start starts a run of ro for issue n, when the usage gate is open and a slot is free. build
@@ -454,6 +458,11 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 // open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
 func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
+	tier := cmp.Or(s.tier, ro.tier)
+	model, ok := r.Models[tier]
+	if !ok {
+		return "", fmt.Errorf("no model for %s", tier)
+	}
 	ref, problem, err := r.create(ctx, ro, n)
 	if problem != "" || err != nil {
 		return problem, err
@@ -477,10 +486,11 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 		}
 		input += note
 	}
-	if err := r.launch(ctx, ro, n, input, in); err != nil {
+	if err := r.launch(ctx, ro, n, model, input, in); err != nil {
 		return "", err
 	}
-	slog.Info("started claude in a sandbox", "issue", n, "sandbox", r.name(ro, n), "template", ref)
+	slog.Info("started claude in a sandbox", "issue", n, "sandbox", r.name(ro, n), "template", ref,
+		"tier", tier, "model", model.Name, "effort", model.Effort)
 	return "", nil
 }
 
@@ -549,7 +559,7 @@ func (r *runs) send(ctx context.Context, ro role, n int, s spec) error {
 }
 
 // launch starts claude on input and records in once it runs.
-func (r *runs) launch(ctx context.Context, ro role, n int, input string, in inputs) error {
+func (r *runs) launch(ctx context.Context, ro role, n int, model agent.Model, input string, in inputs) error {
 	name := r.name(ro, n)
 	ctl := r.ctl(name)
 	for file, content := range map[string]string{"run.sh": runScript, "input.md": input} {
@@ -557,7 +567,7 @@ func (r *runs) launch(ctx context.Context, ro role, n int, input string, in inpu
 			return err
 		}
 	}
-	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.Args(prompt(ro.name), ro.schema)...)
+	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.Args(prompt(ro.name), ro.schema, model)...)
 	if err := r.Sandboxes.Start(ctx, name, repoDir, args...); err != nil {
 		return err
 	}

@@ -69,4 +69,8 @@ A starting point, not a limit.
   - `title`: Task title
   - `body`: Task body in the format above
   - `blocked_by`: sequence numbers (starting at 1) of Tasks that must finish first. **Only Tasks listed before this one.** Empty list if none.
+  - `tier`: how much the Task asks of whoever builds it. It picks the model that builds the Task.
+    - `light`: a mechanical change whose body spells out every step, such as a rename, a config value, or a small fix in one file.
+    - `normal`: a usual feature or fix that needs reading the code across a few files. Pick this when unsure.
+    - `heavy`: a change that needs design judgment, spans many modules, or touches concurrency, data migration, security, or a public interface.
 - Write titles and bodies in the same language as the PRD.
