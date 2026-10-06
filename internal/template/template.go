@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +26,18 @@ type Files interface {
 	BaseFile(ctx context.Context, path string) (content string, ok bool, err error)
 }
 
+type Sandboxes interface {
+	Templates(ctx context.Context) ([]sandbox.Template, error)
+	RemoveTemplate(ctx context.Context, ref string) error
+	CreateHelper(ctx context.Context, name string) error
+	Allow(ctx context.Context, name string, hosts []string) error
+	// output is the end of what the build printed, and err never holds it.
+	BuildImage(ctx context.Context, name, ref, dockerfile string) (output string, err error)
+	LoadTemplate(ctx context.Context, name, ref string) error
+	// Remove of a sandbox that does not exist is not an error.
+	Remove(ctx context.Context, name string) error
+}
+
 // Problem is a failure only a person can fix on the base branch. Its Reason goes into the
 // Task's stuck comment.
 type Problem struct {
@@ -40,9 +50,10 @@ func (p *Problem) Error() string { return p.Reason }
 func (p *Problem) Why() string { return p.Reason }
 
 type Env struct {
-	files Files
-	slug  string
-	run   runner
+	files  Files
+	sbx    Sandboxes
+	slug   string
+	helper string // the sandbox a build runs in
 
 	mu       sync.Mutex
 	building *build
@@ -56,13 +67,11 @@ type build struct {
 	abandoned bool
 }
 
-func New(files Files, owner, repo string) *Env {
-	return &Env{files: files, slug: sandbox.Slug(owner, repo), run: runSbx}
+func New(files Files, sbx Sandboxes, owner, repo string) *Env {
+	return &Env{files: files, sbx: sbx, slug: sandbox.Slug(owner, repo), helper: sandbox.BuildName(owner, repo)}
 }
 
 func (e *Env) repository() string { return "docker.io/library/exomecha-" + e.slug }
-
-func (e *Env) helper() string { return "exomecha-build-" + e.slug }
 
 func (e *Env) ref(dockerfile string) string {
 	sum := sha256.Sum256([]byte(dockerfile))
@@ -120,7 +129,7 @@ func (e *Env) runBuild(ctx context.Context, b *build, dockerfile string) {
 }
 
 func (e *Env) ensure(ctx context.Context, ref, dockerfile string) error {
-	images, err := e.templates(ctx)
+	images, err := e.sbx.Templates(ctx)
 	if err != nil {
 		return err
 	}
@@ -134,14 +143,14 @@ func (e *Env) ensure(ctx context.Context, ref, dockerfile string) error {
 
 	slog.Info("building template", "ref", ref)
 	start := time.Now()
-	if err := e.removeSandbox(ctx, e.helper()); err != nil {
+	if err := e.sbx.Remove(ctx, e.helper); err != nil {
 		return fmt.Errorf("remove leftover build sandbox: %w", err)
 	}
 	err = e.build(ctx, ref, dockerfile, hosts)
 	removeCtx, cancel := context.WithTimeout(context.Background(), removeTimeout)
 	defer cancel()
-	if err := e.removeSandbox(removeCtx, e.helper()); err != nil {
-		slog.Warn("remove build sandbox failed, the next build removes it", "sandbox", e.helper(), "err", err)
+	if err := e.sbx.Remove(removeCtx, e.helper); err != nil {
+		slog.Warn("remove build sandbox failed, the next build removes it", "sandbox", e.helper, "err", err)
 	}
 	if p, ok := errors.AsType[*Problem](err); ok && p.Output != "" {
 		slog.Warn("template build failed", "ref", ref, "why", p.Reason, "output", p.Output)
@@ -156,25 +165,20 @@ func (e *Env) ensure(ctx context.Context, ref, dockerfile string) error {
 }
 
 func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string) error {
-	helper := e.helper()
-	if err := e.sbx(ctx, "create", "--name", helper, "claude"); err != nil {
+	if err := e.sbx.CreateHelper(ctx, e.helper); err != nil {
 		return err
 	}
 	// Downloads in the Dockerfile meet the same network policy as the Task sandboxes.
-	if len(hosts) > 0 {
-		args := []string{"policy", "allow", "network", "--sandbox", helper, strings.Join(hosts, ",")}
-		if output, err := e.run(ctx, nil, nil, args...); err != nil {
-			if line, ok := rejectedPattern(output); ok {
-				return &Problem{Reason: fmt.Sprintf("sbx rejected `%s`: %s Fix it on the base branch.", hostsPath, line)}
-			}
-			return sbxError(args, err, output)
+	if err := e.sbx.Allow(ctx, e.helper, hosts); err != nil {
+		if p, ok := errors.AsType[*sandbox.PatternError](err); ok {
+			return &Problem{Reason: fmt.Sprintf("sbx rejected `%s`: %s. Fix it on the base branch.", hostsPath, p.Detail)}
 		}
+		return err
 	}
 
 	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
 	defer cancel()
-	// No build context: the Dockerfile arrives on stdin.
-	output, err := e.run(buildCtx, strings.NewReader(dockerfile), nil, "exec", "-i", helper, "docker", "build", "-t", ref, "-")
+	output, err := e.sbx.BuildImage(buildCtx, e.helper, ref, dockerfile)
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
@@ -191,10 +195,10 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 		}
 	}
 
-	if err := e.load(ctx, ref); err != nil {
+	if err := e.sbx.LoadTemplate(ctx, e.helper, ref); err != nil {
 		return err
 	}
-	images, err := e.templates(ctx)
+	images, err := e.sbx.Templates(ctx)
 	if err != nil {
 		return err
 	}
@@ -204,35 +208,9 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 	return nil
 }
 
-// The image goes from the helper's Docker straight into sbx, with no tar file on the host.
-func (e *Env) load(ctx context.Context, ref string) error {
-	r, w := io.Pipe()
-	saved := make(chan error, 1)
-	go func() {
-		args := []string{"exec", e.helper(), "docker", "save", ref}
-		output, err := e.run(ctx, nil, w, args...)
-		if err != nil {
-			err = sbxError(args, err, output)
-		}
-		w.CloseWithError(err)
-		saved <- err
-	}()
-	args := []string{"template", "load", "/dev/stdin"}
-	output, err := e.run(ctx, r, nil, args...)
-	// Unblocks the save if load stopped reading early.
-	r.CloseWithError(errors.New("template load ended"))
-	if saveErr := <-saved; saveErr != nil {
-		return saveErr
-	}
-	if err != nil {
-		return sbxError(args, err, output)
-	}
-	return nil
-}
-
 // A sandbox made from a removed template still starts, so Tasks running on an old tag are safe.
 func (e *Env) removeOld(ctx context.Context, ref string) {
-	images, err := e.templates(ctx)
+	images, err := e.sbx.Templates(ctx)
 	if err != nil {
 		slog.Warn("list templates to remove old ones failed", "err", err)
 		return
@@ -247,8 +225,7 @@ func (e *Env) removeOld(ctx context.Context, ref string) {
 			continue
 		}
 		old := img.Repository + ":" + img.Tag
-		// Without --force, sbx asks for confirmation and fails when stdin is not a terminal.
-		if err := e.sbx(ctx, "template", "rm", "--force", old); err != nil {
+		if err := e.sbx.RemoveTemplate(ctx, old); err != nil {
 			slog.Warn("remove old template failed", "ref", old, "err", err)
 			continue
 		}
@@ -256,21 +233,11 @@ func (e *Env) removeOld(ctx context.Context, ref string) {
 	}
 }
 
-func find(images []image, ref string) (image, bool) {
+func find(images []sandbox.Template, ref string) (sandbox.Template, bool) {
 	for _, img := range images {
 		if img.Repository+":"+img.Tag == ref {
 			return img, true
 		}
 	}
-	return image{}, false
-}
-
-// sbx prints `error: invalid network pattern "x": <why>` for a pattern it does not accept.
-func rejectedPattern(output string) (string, bool) {
-	for line := range strings.Lines(output) {
-		if _, rest, ok := strings.Cut(line, "invalid network pattern"); ok {
-			return "invalid network pattern" + strings.TrimRight(rest, "\n") + ".", true
-		}
-	}
-	return "", false
+	return sandbox.Template{}, false
 }

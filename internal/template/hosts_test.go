@@ -69,12 +69,12 @@ func TestParseHostsRejects(t *testing.T) {
 }
 
 func TestAllowedHosts(t *testing.T) {
-	e := New(fakeFiles{hostsPath: "api.expo.dev # mobile lint\n"}, "owner", "repo")
+	e := New(fakeFiles{hostsPath: "api.expo.dev # mobile lint\n"}, nil, "owner", "repo")
 	if got, err := e.AllowedHosts(t.Context()); err != nil || !slices.Equal(got, []string{"api.expo.dev"}) {
 		t.Errorf("AllowedHosts = %q, %v", got, err)
 	}
 
-	e = New(fakeFiles{}, "owner", "repo")
+	e = New(fakeFiles{}, nil, "owner", "repo")
 	if got, err := e.AllowedHosts(t.Context()); err != nil || got != nil {
 		t.Errorf("AllowedHosts without the file = %q, %v, want nil", got, err)
 	}

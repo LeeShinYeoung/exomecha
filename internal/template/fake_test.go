@@ -4,33 +4,32 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
-// fakeSbx keeps the sandboxes and templates sbx would have, and records every call.
+// fakeSbx keeps the sandboxes, images and templates sbx would have, and records every call.
 type fakeSbx struct {
-	mu        sync.Mutex
-	calls     []string
-	stdin     map[string]string
-	images    []image
-	sandboxes map[string]bool
+	mu          sync.Mutex
+	calls       []string
+	dockerfiles map[string]string // by ref, what each build got
+	built       map[string]bool   // images in a helper's Docker, by "<sandbox> <ref>"
+	images      []sandbox.Template
+	sandboxes   map[string]bool
 
 	onBuild   func(ctx context.Context) (string, error)
-	policyOut string
-	policyErr error
+	allowErr  error
 	createErr error
-	// What sbx ls prints for no sandboxes, in place of JSON.
-	emptyList string
 }
 
 var errExit = errors.New("exit status 1")
 
 func newFake() *fakeSbx {
-	return &fakeSbx{stdin: map[string]string{}, sandboxes: map[string]bool{}}
+	return &fakeSbx{dockerfiles: map[string]string{}, built: map[string]bool{}, sandboxes: map[string]bool{}}
 }
 
 func fakeID(ref string) string {
@@ -38,88 +37,113 @@ func fakeID(ref string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-func (f *fakeSbx) run(ctx context.Context, in io.Reader, out io.Writer, args ...string) (string, error) {
+func (f *fakeSbx) record(ctx context.Context, call ...string) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, strings.Join(call, " "))
+	return nil
+}
+
+func (f *fakeSbx) Templates(ctx context.Context) ([]sandbox.Template, error) {
+	if err := f.record(ctx, "Templates"); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]sandbox.Template(nil), f.images...), nil
+}
+
+func (f *fakeSbx) RemoveTemplate(ctx context.Context, ref string) error {
+	if err := f.record(ctx, "RemoveTemplate", ref); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, img := range f.images {
+		if img.Repository+":"+img.Tag == ref {
+			f.images = append(f.images[:i], f.images[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("sbx template: %w: no such template", errExit)
+}
+
+func (f *fakeSbx) CreateHelper(ctx context.Context, name string) error {
+	if err := f.record(ctx, "CreateHelper", name); err != nil {
+		return err
+	}
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sandboxes[name] {
+		return fmt.Errorf("sbx create: %w: sandbox %s already exists", errExit, name)
+	}
+	f.sandboxes[name] = true
+	return nil
+}
+
+func (f *fakeSbx) Allow(ctx context.Context, name string, hosts []string) error {
+	if err := f.record(ctx, "Allow", name, strings.Join(hosts, ",")); err != nil {
+		return err
+	}
+	return f.allowErr
+}
+
+func (f *fakeSbx) BuildImage(ctx context.Context, name, ref, dockerfile string) (string, error) {
+	if err := f.record(ctx, "BuildImage", name, ref); err != nil {
 		return "", err
 	}
-	cmd := strings.Join(args, " ")
 	f.mu.Lock()
-	f.calls = append(f.calls, cmd)
+	f.dockerfiles[ref] = dockerfile
+	onBuild := f.onBuild
+	exists := f.sandboxes[name]
 	f.mu.Unlock()
-	if in != nil {
-		b, err := io.ReadAll(in)
-		if err != nil {
-			return "", err
-		}
-		f.mu.Lock()
-		f.stdin[cmd] = string(b)
-		f.mu.Unlock()
+	if !exists {
+		return "", fmt.Errorf("sbx exec: %w: sandbox %s not found", errExit, name)
 	}
-
-	switch {
-	case cmd == "template ls --json":
-		f.mu.Lock()
-		b, _ := json.Marshal(map[string]any{"images": f.images})
-		f.mu.Unlock()
-		out.Write(b)
-	case cmd == "ls --json":
-		var list []map[string]string
-		f.mu.Lock()
-		for name := range f.sandboxes {
-			list = append(list, map[string]string{"name": name})
+	if onBuild != nil {
+		if output, err := onBuild(ctx); err != nil {
+			return output, err
 		}
-		empty := f.emptyList
-		f.mu.Unlock()
-		if len(list) == 0 && empty != "" {
-			io.WriteString(out, empty)
-			break
-		}
-		b, _ := json.Marshal(map[string]any{"sandboxes": list})
-		out.Write(b)
-	case args[0] == "create":
-		if f.createErr != nil {
-			return "error: create failed", f.createErr
-		}
-		f.mu.Lock()
-		f.sandboxes[args[2]] = true
-		f.mu.Unlock()
-	case args[0] == "rm":
-		name := args[len(args)-1]
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		if !f.sandboxes[name] {
-			return "error: sandbox not found", errExit
-		}
-		delete(f.sandboxes, name)
-	case args[0] == "policy":
-		return f.policyOut, f.policyErr
-	case strings.Contains(cmd, " docker build "):
-		f.mu.Lock()
-		onBuild := f.onBuild
-		f.mu.Unlock()
-		if onBuild != nil {
-			return onBuild(ctx)
-		}
-	case strings.Contains(cmd, " docker save "):
-		io.WriteString(out, "saved "+args[len(args)-1])
-	case cmd == "template load /dev/stdin":
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		ref := strings.TrimPrefix(f.stdin[cmd], "saved ")
-		repo, tag, _ := strings.Cut(ref, ":")
-		f.images = append(f.images, image{ID: fakeID(ref), Repository: repo, Tag: tag})
-	case args[0] == "template" && args[1] == "rm":
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		for i, img := range f.images {
-			if img.Repository+":"+img.Tag == args[len(args)-1] {
-				f.images = append(f.images[:i], f.images[i+1:]...)
-				return "", nil
-			}
-		}
-		return "error: no such template", errExit
 	}
+	f.mu.Lock()
+	f.built[name+" "+ref] = true
+	f.mu.Unlock()
 	return "", nil
+}
+
+func (f *fakeSbx) LoadTemplate(ctx context.Context, name, ref string) error {
+	if err := f.record(ctx, "LoadTemplate", name, ref); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.built[name+" "+ref] {
+		return fmt.Errorf("sbx exec %s docker save %s: %w: no such image", name, ref, errExit)
+	}
+	repo, tag, _ := strings.Cut(ref, ":")
+	f.images = append(f.images, sandbox.Template{ID: fakeID(ref), Repository: repo, Tag: tag})
+	return nil
+}
+
+func (f *fakeSbx) Remove(ctx context.Context, name string) error {
+	if err := f.record(ctx, "Remove", name); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.sandboxes, name)
+	for key := range f.built {
+		if strings.HasPrefix(key, name+" ") {
+			delete(f.built, key)
+		}
+	}
+	return nil
 }
 
 func (f *fakeSbx) count(prefix string) int {

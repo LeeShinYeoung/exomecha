@@ -95,7 +95,7 @@ func run() error {
 		GitHub:        gh,
 		Git:           g,
 		Sandboxes:     sbx,
-		Environment:   template.New(g, owner, name),
+		Environment:   template.New(g, sbx, owner, name),
 		SandboxDir:    filepath.Join(root, "sandboxes"),
 		SandboxPrefix: sandbox.Prefix(owner, name),
 		ProjectLimit:  projectLimit,

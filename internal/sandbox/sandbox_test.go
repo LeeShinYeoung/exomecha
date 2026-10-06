@@ -3,6 +3,7 @@ package sandbox
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,8 +11,8 @@ import (
 	"testing"
 )
 
-// fakeSBX puts an sbx on PATH that records its arguments and answers from files the test writes:
-// out.<verb> on stdout, err.<verb> on stderr and exit 1.
+// fakeSBX puts an sbx on PATH that records its arguments and stdin, and answers from files the
+// test writes: out.<verb> on stdout, err.<verb> on stderr and exit 1.
 type fakeSBX struct {
 	t   *testing.T
 	dir string
@@ -22,8 +23,10 @@ func newFakeSBX(t *testing.T) *fakeSBX {
 	dir := t.TempDir()
 	script := `#!/bin/sh
 dir=$(dirname "$0")
-printf '%s\037' "$@" >> "$dir/calls"
-printf '\n' >> "$dir/calls"
+# One write per call, since LoadTemplate runs two at once.
+line=$(printf '%s\037' "$@")
+printf '%s\n' "$line" >> "$dir/calls"
+cat > "$dir/in.$1"
 [ -f "$dir/out.$1" ] && cat "$dir/out.$1"
 if [ -f "$dir/err.$1" ]; then cat "$dir/err.$1" >&2; exit 1; fi
 exit 0
@@ -47,6 +50,15 @@ func (f *fakeSBX) fail(verb, stderr string) {
 	if err := os.WriteFile(filepath.Join(f.dir, "err."+verb), []byte(stderr), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
+}
+
+func (f *fakeSBX) stdin(verb string) string {
+	f.t.Helper()
+	b, err := os.ReadFile(filepath.Join(f.dir, "in."+verb))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return string(b)
 }
 
 func (f *fakeSBX) calls() [][]string {
@@ -158,6 +170,112 @@ func TestAllow(t *testing.T) {
 	f.wantCalls([]string{"policy", "allow", "network", "--sandbox", "box", "registry.npmjs.org,*.pypi.org"})
 }
 
+func TestAllowRejectedPattern(t *testing.T) {
+	newFakeSBX(t).fail("policy", "error: invalid network pattern \"a.example.com:x\": port must be 1-65535 or \"*\"\n  try: sbx policy allow network --help\n")
+	err := (CLI{}).Allow(t.Context(), "box", []string{"a.example.com:x"})
+	p, ok := errors.AsType[*PatternError](err)
+	if want := `invalid network pattern "a.example.com:x": port must be 1-65535 or "*"`; !ok || p.Detail != want {
+		t.Errorf("Allow = %v, want a PatternError with %q", err, want)
+	}
+}
+
+func TestAllowFailure(t *testing.T) {
+	newFakeSBX(t).fail("policy", "error: daemon not running\n")
+	err := (CLI{}).Allow(t.Context(), "box", []string{"a.example.com"})
+	if _, ok := errors.AsType[*PatternError](err); err == nil || ok {
+		t.Errorf("Allow = %v, want a plain error", err)
+	}
+}
+
+func TestCreateHelper(t *testing.T) {
+	f := newFakeSBX(t)
+	if err := (CLI{}).CreateHelper(t.Context(), "exomecha-build-o-r"); err != nil {
+		t.Fatal(err)
+	}
+	f.wantCalls([]string{"create", "--name", "exomecha-build-o-r", "claude"})
+}
+
+func TestTemplates(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.46.0.
+	f.answer("template", `{
+  "images": [
+    {
+      "id": "549730947ed8",
+      "repository": "docker.io/docker/sandbox-templates",
+      "tag": "claude-code-docker",
+      "flavor": "claude-code-docker",
+      "created_at": "2026-09-23T18:15:37Z",
+      "size": 920132475
+    }
+  ]
+}`)
+	got, err := (CLI{}).Templates(t.Context())
+	want := []Template{{ID: "549730947ed8", Repository: "docker.io/docker/sandbox-templates", Tag: "claude-code-docker"}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("Templates = %+v, %v, want %+v", got, err, want)
+	}
+	f.wantCalls([]string{"template", "ls", "--json"})
+}
+
+func TestRemoveTemplate(t *testing.T) {
+	f := newFakeSBX(t)
+	if err := (CLI{}).RemoveTemplate(t.Context(), "docker.io/library/exomecha-o-r:abc"); err != nil {
+		t.Fatal(err)
+	}
+	f.wantCalls([]string{"template", "rm", "--force", "docker.io/library/exomecha-o-r:abc"})
+}
+
+func TestBuildImage(t *testing.T) {
+	f := newFakeSBX(t)
+	output, err := (CLI{}).BuildImage(t.Context(), "box", "repo:tag", "FROM x\n")
+	if err != nil || output != "" {
+		t.Errorf("BuildImage = %q, %v", output, err)
+	}
+	f.wantCalls([]string{"exec", "-i", "box", "docker", "build", "-t", "repo:tag", "-"})
+	if got := f.stdin("exec"); got != "FROM x\n" {
+		t.Errorf("build stdin = %q, want the Dockerfile", got)
+	}
+}
+
+func TestBuildImageFailure(t *testing.T) {
+	f := newFakeSBX(t)
+	f.answer("exec", "#5 [2/2] RUN false\nTOKEN=s3cret\n")
+	f.fail("exec", "ERROR: failed to build\n")
+	output, err := (CLI{}).BuildImage(t.Context(), "box", "repo:tag", "FROM x\n")
+	if err == nil || strings.Contains(err.Error(), "s3cret") || strings.Contains(err.Error(), "failed to build") {
+		t.Errorf("BuildImage error = %v, want an error without the build output", err)
+	}
+	if !strings.Contains(output, "TOKEN=s3cret") || !strings.Contains(output, "ERROR: failed to build") {
+		t.Errorf("BuildImage output = %q, want stdout and stderr", output)
+	}
+}
+
+func TestLoadTemplate(t *testing.T) {
+	f := newFakeSBX(t)
+	f.answer("exec", "image bytes")
+	if err := (CLI{}).LoadTemplate(t.Context(), "box", "repo:tag"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.stdin("template"); got != "image bytes" {
+		t.Errorf("template load stdin = %q, want what docker save printed", got)
+	}
+	calls := f.calls()
+	slices.SortFunc(calls, slices.Compare)
+	want := [][]string{{"exec", "box", "docker", "save", "repo:tag"}, {"template", "load", "/dev/stdin"}}
+	if !slices.EqualFunc(calls, want, slices.Equal) {
+		t.Errorf("sbx calls = %q, want %q", calls, want)
+	}
+}
+
+func TestLoadTemplateSaveFailure(t *testing.T) {
+	newFakeSBX(t).fail("exec", "Error: No such image: repo:tag\n")
+	err := (CLI{}).LoadTemplate(t.Context(), "box", "repo:tag")
+	if err == nil || !strings.Contains(err.Error(), "No such image") {
+		t.Errorf("LoadTemplate = %v, want docker save's message", err)
+	}
+}
+
 func TestRemove(t *testing.T) {
 	f := newFakeSBX(t)
 	if err := (CLI{}).Remove(t.Context(), "box"); err != nil {
@@ -243,6 +361,12 @@ func TestSlugCutAtADash(t *testing.T) {
 func TestPrefix(t *testing.T) {
 	if got := Prefix("LeeShinYeoung", "jazzing"); got != "exomecha-run-leeshinyeoung-jazzing-" {
 		t.Errorf("Prefix = %q", got)
+	}
+}
+
+func TestBuildName(t *testing.T) {
+	if got := BuildName("LeeShinYeoung", "jazzing"); got != "exomecha-build-leeshinyeoung-jazzing" {
+		t.Errorf("BuildName = %q", got)
 	}
 }
 
