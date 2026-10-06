@@ -1,25 +1,25 @@
 ---
 name: setup
-description: Write the three files exomecha uses to prepare a Task's sandbox (.exomecha/Dockerfile, .exomecha/setup.sh, .exomecha/allowed-hosts) and prove them in a real sbx sandbox, the way exomecha runs them. Does not commit. Use when a person invokes /exomecha:setup.
+description: Write the three files exomecha uses to prepare a PRD's sandbox (.exomecha/Dockerfile, .exomecha/setup.sh, .exomecha/allowed-hosts) and prove them in a real sbx sandbox, the way exomecha runs them. Does not commit. Use when a person invokes /exomecha:setup.
 ---
 
 # Set up the project's sandboxes
 
-exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every Task gets a fresh sandbox that holds only what git tracks on the base branch: no installed dependencies, no ignored config files, no running services. Three files on the base branch prepare it. Write them for this project and prove they work in a real sandbox.
+exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every PRD gets a fresh sandbox that holds only what git tracks on the base branch: no installed dependencies, no ignored config files, no running services. Three files on the base branch prepare it. Write them for this project and prove they work in a real sandbox.
 
 ## What exomecha does with the files
 
-- `.exomecha/Dockerfile` becomes an sbx template. exomecha builds it the first time a Task needs a sandbox after the file changed on the base branch, and keeps it until the next change. The build runs inside a separate sandbox with the Dockerfile on stdin, so there is no build context. It must end within 30 minutes. If it fails, the Task goes to `status:stuck` and the build output stays in exomecha's log. Without this file, sandboxes start from sbx's default claude template.
-- `.exomecha/allowed-hosts` lists the extra hosts a sandbox may reach. sbx's network policy blocks every host it does not know. A blocked HTTPS request gets a 403 response with the body `Approval required for <host>:443.`, and nobody is there to approve it. exomecha allows the listed hosts in each Task sandbox and in the template build only. Other sandboxes on the machine are not affected.
-- `.exomecha/setup.sh` runs in each new Task sandbox before the AI starts:
+- `.exomecha/Dockerfile` becomes an sbx template. exomecha builds it the first time a PRD needs a sandbox after the file changed on the base branch, and keeps it until the next change. The build runs inside a separate sandbox with the Dockerfile on stdin, so there is no build context. It must end within 30 minutes. If it fails, the PRD goes to `status:stuck` and the build output stays in exomecha's log. Without this file, sandboxes start from sbx's default claude template.
+- `.exomecha/allowed-hosts` lists the extra hosts a sandbox may reach. sbx's network policy blocks every host it does not know. A blocked HTTPS request gets a 403 response with the body `Approval required for <host>:443.`, and nobody is there to approve it. exomecha allows the listed hosts in each PRD sandbox and in the template build only. Other sandboxes on the machine are not affected.
+- `.exomecha/setup.sh` runs in each new PRD sandbox before the AI starts:
   - as `bash -eo pipefail -c "<the script's text>"`, so it stops at the first command that fails and `$0` is not the script's path
   - at the root of the checkout, `/home/agent/repo`
-  - with the Task number in `EXOMECHA_TASK`, nothing on stdin, and no GitHub token
+  - with the PRD number in `EXOMECHA_PRD`, nothing on stdin, and no GitHub token
   - for at most 10 minutes
   - always the base branch's copy, even for a PR branch
-  - with nobody watching. If it fails, the Task goes to `status:stuck` and a person has to fix the script.
+  - with nobody watching. If it fails, the PRD goes to `status:stuck` and a person has to fix the script.
 
-The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and Docker are already there. Docker runs inside the sandbox, so containers the script starts belong to that sandbox only. A sandbox stops when it sits idle, and when it starts again only containers started with `--restart unless-stopped` come back. exomecha blocks `ssh.github.com` in Task sandboxes, and the script has no GitHub token, so it cannot fetch private repositories from GitHub.
+The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and Docker are already there. Docker runs inside the sandbox, so containers the script starts belong to that sandbox only. A sandbox stops when it sits idle, and when it starts again only containers started with `--restart unless-stopped` come back. exomecha blocks `ssh.github.com` in PRD sandboxes, and the script has no GitHub token, so it cannot fetch private repositories from GitHub.
 
 ## Rules
 
@@ -43,7 +43,7 @@ The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and 
 - Create the ignored config files with dummy values.
 - Start the services the tests need as Docker containers with `--restart unless-stopped` (in a compose file: `restart: unless-stopped`), and wait until they are ready. No other background processes.
 - Run what the tests need before they start, such as migrations or generated code.
-- Each Task has its own sandbox, so ports and database names do not need to depend on `EXOMECHA_TASK`.
+- Each PRD has its own sandbox, so ports and database names do not need to depend on `EXOMECHA_PRD`.
 - An install command that does nothing when the template already has the tool is fine. It guards against the template and the lockfile drifting apart.
 - Leave nothing git can see. Everything the script creates is ignored by git, and it does not edit tracked files.
 - Do not commit, check out, or otherwise change git history.
@@ -83,7 +83,7 @@ Run sbx on this machine, not inside a sandbox. Use these names, where `<slug>` i
 
 - `exomecha-setup-build`: the sandbox that builds the template
 - `exomecha-setup-<slug>:<hash>`: the proof template, with `<hash>` the first 12 characters of `shasum -a 256 .exomecha/Dockerfile`
-- `exomecha-setup-proof`: the sandbox that plays a Task
+- `exomecha-setup-proof`: the sandbox that plays a PRD
 
 Commands that may run over 2 minutes (the build, the script, the tests) need a Bash timeout of up to 10 minutes, or run in the background.
 
@@ -102,7 +102,7 @@ Skip the `policy allow` line while allowed-hosts has no hosts. If the build fail
 
 A download in the build can hang. If the build prints nothing for several minutes, stop it, remove the build sandbox and start the build over. Stopping `sbx exec` on this machine does not stop the build inside the sandbox, removing the sandbox does.
 
-### Play a Task
+### Play a PRD
 
 1. Create the sandbox from the template, the way exomecha does. Skip the `policy allow` line while allowed-hosts has no hosts.
    ```
@@ -122,7 +122,7 @@ A download in the build can hang. If the build prints nothing for several minute
    ```
 4. Run the script exactly as exomecha does, and time it:
    ```
-   time sbx exec -w /home/agent/repo -e EXOMECHA_TASK=1 exomecha-setup-proof bash -eo pipefail -c "$(cat .exomecha/setup.sh)"
+   time sbx exec -w /home/agent/repo -e EXOMECHA_PRD=1 exomecha-setup-proof bash -eo pipefail -c "$(cat .exomecha/setup.sh)"
    ```
 5. `sbx exec -w /home/agent/repo exomecha-setup-proof git status --porcelain` shows only the files you sent.
 6. Run every check CLAUDE.md and CI require for a change, each with `sbx exec -w /home/agent/repo exomecha-setup-proof sh -c '<command>'`, with the environment variables CI sets for that check. They must pass.
@@ -131,7 +131,7 @@ A download in the build can hang. If the build prints nothing for several minute
 
 After each step, read `sbx policy log exomecha-setup-proof --json`. A step's error message rarely names the host it could not reach, so the log is how a block is tied to a step. The log keeps its entries for a sandbox name even after that sandbox is removed, so compare `last_seen` with the time the step ran. Treat `<host>:443` and `<host>` as one host, and drop the `<host>.exomecha-setup-proof.docker.internal` duplicates.
 
-When a step fails, find out why. If a host was blocked during the step, allow just that host with `sbx policy allow network --sandbox exomecha-setup-proof <host>` and run the step again. Then fix the file and start over. A changed Dockerfile needs a new template. Any change needs a new proof sandbox: `sbx rm --force exomecha-setup-proof`, then go back to "Play a Task".
+When a step fails, find out why. If a host was blocked during the step, allow just that host with `sbx policy allow network --sandbox exomecha-setup-proof <host>` and run the step again. Then fix the file and start over. A changed Dockerfile needs a new template. Any change needs a new proof sandbox: `sbx rm --force exomecha-setup-proof`, then go back to "Play a PRD".
 
 ## Clean up
 
@@ -152,5 +152,5 @@ When a step fails, find out why. If a host was blocked during the step, allow ju
 Then tell the person what is left for them:
 
 - Commit the files to the base branch, together with `.gitignore` if you changed it.
-- exomecha builds the template the first time a Task needs it, which takes a few minutes, and again after each change to the Dockerfile.
+- exomecha builds the template the first time a PRD needs it, which takes a few minutes, and again after each change to the Dockerfile.
 - PRs that are already open are older than the files. exomecha still runs the base branch's script in them, and it can fail there when the branch lacks something the script relies on, such as a new `.gitignore` entry. Let those PRs merge first, or merge the base branch into them afterwards.
