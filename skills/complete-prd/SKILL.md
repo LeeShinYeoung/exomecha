@@ -28,9 +28,9 @@ exomecha builds each PRD as one PR, then reviews and merges it without a person.
 
    Briefly report what you found.
 3. Enter plan mode. Read the code the change touches, then build the decision ledger below and close its rows. Most rows of a well discussed change close with `code`, `decided` or `n/a`, so ask only about the rest.
-4. Check the other drafts for overlap. Read every open draft except the ones being completed.
+4. Check the other drafts for overlap. Read every open draft except the ones being completed. Filter the labels with `--jq`, not `--label`: GitHub's label filter can miss an issue labeled in the last few minutes.
    ```
-   gh issue list --label prd --label status:draft --state open --limit 200 --json number,title,body
+   gh issue list --state open --limit 1000 --json number,title,body,labels --jq '[.[] | select(any(.labels[]; .name == "prd") and any(.labels[]; .name == "status:draft"))]'
    ```
    For each draft that overlaps a PRD, ask the person which of these to do, and record the answer in the Filing row:
    - Merge it: the PRD covers the draft, and the draft is closed after filing.

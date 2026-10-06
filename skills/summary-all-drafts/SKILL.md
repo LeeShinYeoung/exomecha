@@ -14,9 +14,9 @@ List the open drafts filed with `/exomecha:draft-prd`, so the person can choose 
 
 ## Steps
 
-1. Read every open draft with its comments.
+1. Read every open draft with its comments. Filter the labels with `--jq`, not `--label`: GitHub's label filter can miss an issue labeled in the last few minutes.
    ```
-   gh issue list --label prd --label status:draft --state open --limit 200 --json number,title,body,comments
+   gh issue list --state open --limit 1000 --json number,title,body,labels,comments --jq '[.[] | select(any(.labels[]; .name == "prd") and any(.labels[]; .name == "status:draft"))]'
    ```
 2. Print each draft in number order, in the format below. If there is none, say so.
 3. Wait for the person. They may want to discuss one draft in depth, or decide several small ones quickly and then run `/exomecha:complete-prd` with their numbers.
