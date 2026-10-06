@@ -321,7 +321,7 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 // The environment main.go wires in. A bad allowed-hosts line fails before any sbx call.
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
-	e.deps.Environment = template.New(e.deps.Git, "owner", "repo")
+	e.deps.Environment = template.New(e.deps.Git, nil, "owner", "repo")
 	e.runs = newRuns(e.deps, nil)
 	e.runs.now = e.clock.now
 	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))

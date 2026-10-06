@@ -46,7 +46,7 @@ func TestRealBuilderRunFromTemplate(t *testing.T) {
 		setupScript: "grep -qx from-template /etc/exomecha-test-marker\n",
 	})
 	owner, repo := "impl-int", fmt.Sprintf("t%d", time.Now().UnixNano()%100_000)
-	e.deps.Environment = template.New(e.deps.Git, owner, repo)
+	e.deps.Environment = template.New(e.deps.Git, sandbox.CLI{}, owner, repo)
 	t.Cleanup(func() {
 		sum := sha256.Sum256([]byte(dockerfile))
 		ref := "docker.io/library/exomecha-" + sandbox.Slug(owner, repo) + ":" + hex.EncodeToString(sum[:])[:12]

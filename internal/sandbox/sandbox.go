@@ -7,11 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Box struct {
@@ -55,13 +58,40 @@ func (CLI) Create(ctx context.Context, name, template, workspace string, deny []
 	return err
 }
 
+// CreateHelper makes a sandbox with no workspace for exomecha's own commands. Unlike Create's, it
+// stops 30 seconds after its last exec session ends, so one a crash leaves behind stops by itself.
+func (CLI) CreateHelper(ctx context.Context, name string) error {
+	_, err := run(ctx, "create", "--name", name, "claude")
+	return err
+}
+
+// PatternError is sbx refusing a host pattern. Detail is sbx's own words about it.
+type PatternError struct{ Detail string }
+
+func (e *PatternError) Error() string { return "sbx policy: " + e.Detail }
+
 // Allow lets the sandbox reach hosts, in `sbx policy allow network` syntax. The rule goes away with the sandbox.
 func (CLI) Allow(ctx context.Context, name string, hosts []string) error {
 	if len(hosts) == 0 {
 		return nil
 	}
 	_, err := run(ctx, "policy", "allow", "network", "--sandbox", name, strings.Join(hosts, ","))
+	if err != nil {
+		if detail, ok := rejectedPattern(err.Error()); ok {
+			return &PatternError{Detail: detail}
+		}
+	}
 	return err
+}
+
+// sbx prints `error: invalid network pattern "x": <why>` for a pattern it does not accept.
+func rejectedPattern(output string) (string, bool) {
+	for line := range strings.Lines(output) {
+		if _, rest, ok := strings.Cut(line, "invalid network pattern"); ok {
+			return "invalid network pattern" + strings.TrimRight(rest, "\n"), true
+		}
+	}
+	return "", false
 }
 
 // Exec runs args in the sandbox with no stdin and returns what it printed on stdout. An exec on a
@@ -92,6 +122,65 @@ func (CLI) Remove(ctx context.Context, name string) error {
 		return nil
 	}
 	return err
+}
+
+type Template struct {
+	ID         string `json:"id"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+}
+
+func (CLI) Templates(ctx context.Context) ([]Template, error) {
+	out, err := run(ctx, "template", "ls", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Images []Template `json:"images"`
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, fmt.Errorf("read sbx template ls: %w", err)
+	}
+	return list.Images, nil
+}
+
+func (CLI) RemoveTemplate(ctx context.Context, ref string) error {
+	// Without --force, sbx asks for confirmation and fails when stdin is not a terminal.
+	_, err := run(ctx, "template", "rm", "--force", ref)
+	return err
+}
+
+// BuildImage builds dockerfile with the Docker in the sandbox and tags the image ref. There is no
+// build context: the Dockerfile arrives on stdin. output is the end of what the build printed, and
+// err never holds it, since build output can hold secrets.
+func (CLI) BuildImage(ctx context.Context, name, ref, dockerfile string) (output string, err error) {
+	return stream(ctx, strings.NewReader(dockerfile), nil, "exec", "-i", name, "docker", "build", "-t", ref, "-")
+}
+
+// LoadTemplate moves the image ref from the Docker in the sandbox into sbx's templates, with no
+// tar file on this machine.
+func (CLI) LoadTemplate(ctx context.Context, name, ref string) error {
+	r, w := io.Pipe()
+	saved := make(chan error, 1)
+	go func() {
+		args := []string{"exec", name, "docker", "save", ref}
+		output, err := stream(ctx, nil, w, args...)
+		if err != nil {
+			err = fmt.Errorf("sbx %s: %w: %s", strings.Join(args, " "), err, output)
+		}
+		w.CloseWithError(err)
+		saved <- err
+	}()
+	output, err := stream(ctx, r, nil, "template", "load", "/dev/stdin")
+	// Unblocks the save if load stopped reading early.
+	r.CloseWithError(errors.New("template load ended"))
+	if saveErr := <-saved; saveErr != nil {
+		return saveErr
+	}
+	if err != nil {
+		return fmt.Errorf("sbx template load: %w: %s", err, output)
+	}
+	return nil
 }
 
 // GitURL is a git URL for the repository at dir inside the sandbox. git reaches it by running git
@@ -146,6 +235,10 @@ func Prefix(owner, repo string) string {
 	return "exomecha-run-" + Slug(owner, repo) + "-"
 }
 
+func BuildName(owner, repo string) string {
+	return "exomecha-build-" + Slug(owner, repo)
+}
+
 func Name(prefix string, issue int, role string) string {
 	return prefix + strconv.Itoa(issue) + "-" + role
 }
@@ -179,4 +272,43 @@ func run(ctx context.Context, args ...string) ([]byte, error) {
 		return stdout.Bytes(), fmt.Errorf("sbx %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// stream runs sbx with in as its stdin and out as its stdout. With out nil, stdout joins stderr in
+// output, which keeps only the end of what sbx printed.
+func stream(ctx context.Context, in io.Reader, out io.Writer, args ...string) (output string, err error) {
+	cmd := exec.CommandContext(ctx, "sbx", args...)
+	var tail tailBuffer
+	cmd.Stdin = in
+	cmd.Stdout = &tail
+	if out != nil {
+		cmd.Stdout = out
+	}
+	cmd.Stderr = &tail
+	// Wait also waits for the copy from in, which can block on a reader that never ends.
+	cmd.WaitDelay = 10 * time.Second
+	err = cmd.Run()
+	return tail.String(), err
+}
+
+// A build can print without limit.
+type tailBuffer struct{ b []byte }
+
+const tailLimit = 8000
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	if len(t.b) > 2*tailLimit {
+		t.b = append(t.b[:0], t.b[len(t.b)-tailLimit:]...)
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	b := t.b
+	if len(b) > tailLimit {
+		b = b[len(b)-tailLimit:]
+	}
+	// The cut can land in the middle of a character.
+	return strings.TrimSpace(strings.ToValidUTF8(string(b), ""))
 }

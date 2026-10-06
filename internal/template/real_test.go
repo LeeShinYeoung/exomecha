@@ -5,8 +5,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 // Real sbx behavior, such as loading from /dev/stdin, cannot be faked. Takes a few minutes.
@@ -15,13 +18,13 @@ func TestRealBuild(t *testing.T) {
 		t.Skip("set EXOMECHA_TEST_SBX=1 to build templates with the real sbx")
 	}
 	const from = "FROM docker/sandbox-templates:claude-code-docker\n"
-	const sandbox = "impl-env-from-template"
+	const box = "impl-env-from-template"
 	files := fakeFiles{
 		dockerfilePath: from + "RUN true\n",
 		hostsPath:      "example.com # proves the helper takes allowed-hosts\n",
 	}
-	e := New(files, "impl-env", "realtest")
-	t.Cleanup(func() { cleanUp(t, e, sandbox) })
+	e := New(files, sandbox.CLI{}, "impl-env", "realtest")
+	t.Cleanup(func() { cleanUp(t, e, box) })
 	ctx := t.Context()
 
 	first, err := e.Template(ctx)
@@ -29,18 +32,18 @@ func TestRealBuild(t *testing.T) {
 		t.Fatalf("Template = %q, %v", first, err)
 	}
 	wantTags(t, e, first)
-	if exists, err := e.sandboxExists(ctx, e.helper()); err != nil || exists {
-		t.Errorf("helper left after a build: %v, %v", exists, err)
+	if listed(t, e.helper) {
+		t.Error("helper left after a build")
 	}
 	if again, err := e.Template(ctx); err != nil || again != first {
 		t.Errorf("Template again = %q, %v", again, err)
 	}
 
-	sbx(t, "create", "--name", sandbox, "--pull", "never", "-t", first, "claude")
-	if out := sbx(t, "exec", sandbox, "sh", "-c", "echo ok"); strings.TrimSpace(out) != "ok" {
+	sbx(t, "create", "--name", box, "--pull", "never", "-t", first, "claude")
+	if out := sbx(t, "exec", box, "sh", "-c", "echo ok"); strings.TrimSpace(out) != "ok" {
 		t.Errorf("exec in a sandbox from the template printed %q", out)
 	}
-	sbx(t, "rm", "--force", sandbox)
+	sbx(t, "rm", "--force", box)
 
 	files[dockerfilePath] = from + "RUN true # changed\n"
 	second, err := e.Template(ctx)
@@ -60,8 +63,8 @@ func TestRealBuild(t *testing.T) {
 	}
 	t.Logf("build failure: %s\noutput tail:\n%s", p.Why(), p.Output[max(0, len(p.Output)-600):])
 	wantTags(t, e, second)
-	if exists, err := e.sandboxExists(ctx, e.helper()); err != nil || exists {
-		t.Errorf("helper left after a failed build: %v, %v", exists, err)
+	if listed(t, e.helper) {
+		t.Error("helper left after a failed build")
 	}
 }
 
@@ -74,9 +77,18 @@ func sbx(t *testing.T, args ...string) string {
 	return string(out)
 }
 
+func listed(t *testing.T, name string) bool {
+	t.Helper()
+	boxes, err := sandbox.CLI{}.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return slices.ContainsFunc(boxes, func(b sandbox.Box) bool { return b.Name == name })
+}
+
 func wantTags(t *testing.T, e *Env, ref string) {
 	t.Helper()
-	images, err := e.templates(t.Context())
+	images, err := e.sbx.Templates(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,21 +103,21 @@ func wantTags(t *testing.T, e *Env, ref string) {
 	}
 }
 
-func cleanUp(t *testing.T, e *Env, sandbox string) {
+func cleanUp(t *testing.T, e *Env, box string) {
 	ctx := context.Background()
-	for _, name := range []string{sandbox, e.helper()} {
-		if err := e.removeSandbox(ctx, name); err != nil {
+	for _, name := range []string{box, e.helper} {
+		if err := e.sbx.Remove(ctx, name); err != nil {
 			t.Errorf("remove %s: %v", name, err)
 		}
 	}
-	images, err := e.templates(ctx)
+	images, err := e.sbx.Templates(ctx)
 	if err != nil {
 		t.Errorf("list templates: %v", err)
 		return
 	}
 	for _, img := range images {
 		if img.Repository == e.repository() {
-			if err := e.sbx(ctx, "template", "rm", "--force", img.Repository+":"+img.Tag); err != nil {
+			if err := e.sbx.RemoveTemplate(ctx, img.Repository+":"+img.Tag); err != nil {
 				t.Errorf("remove template: %v", err)
 			}
 		}
