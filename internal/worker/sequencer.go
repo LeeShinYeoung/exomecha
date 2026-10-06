@@ -25,6 +25,7 @@ var sequencerRole = role{
 	schema: sequencerSchema,
 	from:   label.Pending,
 	back:   label.Pending,
+	tier:   label.Light,
 }
 
 // begin queues a Task with no lower open Task without a run.

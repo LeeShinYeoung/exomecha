@@ -256,7 +256,7 @@ func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 
 func TestBuilderContinuesExistingPR(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Queued), string(label.Heavy))
 	branch := branchName(task)
 	prev := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	pr := e.gh.AddPull(branch, "main")
@@ -277,6 +277,9 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 		"(exomecha)\n\na question exomecha asked", "(person)\n\na person's answer")
 	wantNotContains(t, "claude input", input, github.Marker, "a person's review",
 		"an outsider posing as exomecha", "an outsider's instruction")
+	if got := e.startedModel(name); got != testModels[label.Heavy] {
+		t.Errorf("the run for the review got %v, want the Task's tier %v", got, testModels[label.Heavy])
+	}
 	e.play(name, commit(t, "fix: rename X", map[string]string{"feature.txt": "second\n"}), builderDone)
 	e.step(task)
 
@@ -286,6 +289,24 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	}
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want the existing one only", n)
+	}
+}
+
+func TestBuilderRunsTheTasksTier(t *testing.T) {
+	for _, c := range []struct {
+		labels []string
+		want   label.Tier
+	}{
+		{nil, label.Normal},
+		{[]string{string(label.Light)}, label.Light},
+		{[]string{string(label.Light), string(label.Heavy)}, label.Heavy},
+	} {
+		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+		task := e.gh.AddIssue("Task", "", append([]string{label.Task, string(label.Queued)}, c.labels...)...)
+		e.step(task)
+		if got := e.startedModel(e.builderBox(task)); got != testModels[c.want] {
+			t.Errorf("Task with %q got %v, want %v", c.labels, got, testModels[c.want])
+		}
 	}
 }
 

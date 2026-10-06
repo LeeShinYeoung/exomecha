@@ -9,6 +9,7 @@ import (
 
 type Stream struct {
 	PermissionMode string // as claude's init line reports it
+	Model          string // as claude's init line reports it
 	Rejected       bool   // claude reported a plan limit as used up
 
 	ended      bool // claude wrote its result line
@@ -39,6 +40,7 @@ func ReadStream(r io.Reader) (Stream, error) {
 			Type             string          `json:"type"`
 			Subtype          string          `json:"subtype"`
 			PermissionMode   string          `json:"permissionMode"`
+			Model            string          `json:"model"`
 			IsError          bool            `json:"is_error"`
 			Result           string          `json:"result"`
 			StructuredOutput json.RawMessage `json:"structured_output"`
@@ -54,6 +56,7 @@ func ReadStream(r io.Reader) (Stream, error) {
 		case "system":
 			if line.Subtype == "init" {
 				s.PermissionMode = line.PermissionMode
+				s.Model = line.Model
 			}
 		case "rate_limit_event":
 			if line.Info.Status == "rejected" {
