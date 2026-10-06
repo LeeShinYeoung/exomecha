@@ -89,6 +89,20 @@ func run() error {
 		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.
 		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
 	}
+	// Once per model: the check finds a model's problems, and claude reports nothing about the effort.
+	checked := map[string]bool{}
+	for _, t := range []struct {
+		env   string
+		model agent.Model
+	}{{"EXOMECHA_TIER_LIGHT", light}, {"EXOMECHA_TIER_NORMAL", normal}, {"EXOMECHA_TIER_HEAVY", heavy}} {
+		if checked[t.model.Name] {
+			continue
+		}
+		checked[t.model.Name] = true
+		if err := (agent.Claude{}).Check(ctx, t.model); err != nil {
+			return fmt.Errorf("%s: %w", t.env, err)
+		}
+	}
 
 	gh, err := github.New(owner, name, token)
 	if err != nil {

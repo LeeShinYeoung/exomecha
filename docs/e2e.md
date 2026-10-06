@@ -257,3 +257,4 @@ With `.exomecha/Dockerfile`, `.exomecha/setup.sh` and `.exomecha/allowed-hosts` 
 - While builder works on a Task, `sbx exec <sandbox> ps -eo args` shows claude with the `--model` and `--effort` of the Task's tier.
 - Give a queued Task both `tier:light` and `tier:heavy`. Its builder's "started claude in a sandbox" line shows `tier:heavy`.
 - Start exomecha with `EXOMECHA_TIER_HEAVY=opus`. It refuses to start and names `EXOMECHA_TIER_HEAVY`.
+- Start exomecha with `EXOMECHA_TIER_LIGHT=haiku:low`. It refuses to start and says `EXOMECHA_TIER_LIGHT` and that claude does not run haiku in auto permission mode. With `EXOMECHA_TIER_LIGHT=opsu:low` it refuses too, with claude's message about the model.

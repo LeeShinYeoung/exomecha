@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -43,5 +44,48 @@ func TestParseUsageWithoutEvent(t *testing.T) {
 	u, err := parseUsage(strings.NewReader(stream))
 	if err != nil || u.Known {
 		t.Errorf("parseUsage = %+v, %v, want an unknown usage", u, err)
+	}
+}
+
+func TestCheckStream(t *testing.T) {
+	const ok = `{"type":"result","subtype":"success","is_error":false,"result":"ok"}`
+	for name, c := range map[string]struct {
+		stream string
+		want   string // in the error, "" for none
+	}{
+		"auto": {`{"type":"system","subtype":"init","model":"claude-opus-5-5","permissionMode":"auto"}` + "\n" + ok, ""},
+		"not auto": {`{"type":"system","subtype":"init","model":"claude-haiku-4-5","permissionMode":"default"}` + "\n" + ok,
+			"claude does not run m in auto permission mode"},
+		"unknown model": {`{"type":"system","subtype":"init","model":"opsu","permissionMode":"auto"}` + "\n" +
+			`{"type":"result","subtype":"success","is_error":true,"result":"There's an issue with the selected model (opsu)."}`,
+			"There's an issue with the selected model (opsu)."},
+		"limit used up": {`{"type":"system","subtype":"init","permissionMode":"auto"}` + "\n" +
+			`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}` + "\n" +
+			`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit"}`, ""},
+		"no result": {`{"type":"system","subtype":"init","permissionMode":"auto"}`, "without a result"},
+		"no output": {"", "did not start"},
+	} {
+		err := checkStream(strings.NewReader(c.stream), Model{Name: "m", Effort: "low"})
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%s: checkStream = %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+// TestRealCheck calls the real claude on this machine. It spends a little Claude usage, so it runs
+// only with EXOMECHA_TEST_CLAUDE=1.
+func TestRealCheck(t *testing.T) {
+	if os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
+		t.Skip("set EXOMECHA_TEST_CLAUDE=1 to call the real claude")
+	}
+	if err := (Claude{}).Check(t.Context(), Model{Name: "opus", Effort: "low"}); err != nil {
+		t.Errorf("Check(opus) = %v, want nil", err)
+	}
+	for _, m := range []Model{{Name: "haiku", Effort: "low"}, {Name: "opsu", Effort: "low"}} {
+		err := (Claude{}).Check(t.Context(), m)
+		if err == nil {
+			t.Errorf("Check(%s) = nil, want an error", m.Name)
+		}
+		t.Logf("Check(%s): %v", m.Name, err)
 	}
 }
