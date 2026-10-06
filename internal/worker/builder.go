@@ -26,13 +26,13 @@ var builderRole = role{
 	schema:  builderSchema,
 	project: true,
 	from:    label.Working,
-	back:    label.Pending,
+	back:    label.Queued,
 	queued:  label.Queued,
-	// For a Task with no tier label. A tier label takes its place.
+	// For a PRD with no tier label. A tier label takes its place.
 	tier: label.Normal,
 }
 
-// begin waits while a blocker is open. A run of a ready Task was left when a person sent the Task
+// begin waits while a blocker is open. A run of a ready PRD was left when a person sent the PRD
 // back to the queue, and it holds a slot for nothing.
 var builderTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
@@ -41,7 +41,7 @@ var builderTable = table{
 	working: {restart, restart, idle, fail, fail, fail, harvest},
 }
 
-// builder runs claude in one sandbox per Task. Each round it looks at the Task's label and its
+// builder runs claude in one sandbox per PRD. Each round it looks at the PRD's label and its
 // sandbox and takes one step, so after a restart it picks up whatever is left the same way.
 type builder struct {
 	Deps
@@ -50,14 +50,41 @@ type builder struct {
 
 func (*builder) Name() string { return builderRole.name }
 
-// Pick returns the queued Tasks that are ready, every working Task, and every Task that has a
+// Sweep queues each new PRD, which has no status yet.
+func (b *builder) Sweep(ctx context.Context) error {
+	prds, err := b.GitHub.ListOpen(ctx, label.PRD)
+	if err != nil {
+		return err
+	}
+	for _, p := range prds {
+		if p.Status() != label.None {
+			continue
+		}
+		// The list can be a minute behind. The PRD may have closed since, or been queued and
+		// started, and queueing it again would drop its run.
+		p, err := b.GitHub.Issue(ctx, p.Number)
+		if err != nil {
+			return err
+		}
+		if !p.Open || p.Status() != label.None {
+			continue
+		}
+		if err := b.GitHub.SetStatus(ctx, p.Number, label.None, label.Queued); err != nil {
+			return err
+		}
+		slog.Info("queued PRD", "prd", p.Number)
+	}
+	return nil
+}
+
+// Pick returns the queued PRDs that are ready, every working PRD, and every PRD that has a
 // builder sandbox, whatever its label.
 func (b *builder) Pick(ctx context.Context) ([]int, error) {
-	queued, err := b.GitHub.ListOpen(ctx, label.Task, string(label.Queued))
+	queued, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Queued))
 	if err != nil {
 		return nil, err
 	}
-	working, err := b.GitHub.ListOpen(ctx, label.Task, string(label.Working))
+	working, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Working))
 	if err != nil {
 		return nil, err
 	}
@@ -91,27 +118,27 @@ func (b *builder) unblocked(ctx context.Context, n int) (bool, error) {
 }
 
 func (b *builder) Handle(ctx context.Context, n int) error {
-	task, err := b.GitHub.Issue(ctx, n)
+	prd, err := b.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
 	}
-	return b.runs.step(ctx, builderRole, n, builderTable[b.place(task)],
-		func(ctx context.Context) error { return b.start(ctx, task) },
-		func(ctx context.Context, run run) error { return b.collect(ctx, task, run.in) })
+	return b.runs.step(ctx, builderRole, n, builderTable[b.place(prd)],
+		func(ctx context.Context) error { return b.start(ctx, prd) },
+		func(ctx context.Context, run run) error { return b.collect(ctx, prd, run.in) })
 }
 
-func (b *builder) place(task github.Issue) place {
+func (b *builder) place(prd github.Issue) place {
 	switch {
-	case holds(task, label.Task, label.Queued):
+	case holds(prd, label.PRD, label.Queued):
 		return ready
-	case holds(task, label.Task, label.Working):
+	case holds(prd, label.PRD, label.Working):
 		return working
 	}
 	return away
 }
 
-func (b *builder) start(ctx context.Context, task github.Issue) error {
-	n := task.Number
+func (b *builder) start(ctx context.Context, prd github.Issue) error {
+	n := prd.Number
 	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
 		return err
 	}
@@ -133,8 +160,8 @@ func (b *builder) start(ctx context.Context, task github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		s := spec{branch: branch, base: base, head: base, remote: remote, input: taskText(task) + comments,
-			tier: label.TierOf(task.Labels)}
+		s := spec{branch: branch, base: base, head: base, remote: remote, input: prdText(prd) + comments,
+			tier: label.TierOf(prd.Labels)}
 		if !hasPR {
 			return s, nil
 		}
@@ -142,7 +169,7 @@ func (b *builder) start(ctx context.Context, task github.Issue) error {
 			return spec{}, fmt.Errorf("PR #%d has no branch %s", pr, branch)
 		}
 		s.head = remote
-		s.input += fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this Task. The current directory is its branch.\n\n", pr)
+		s.input += fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this PRD. The current directory is its branch.\n\n", pr)
 		review, err := b.GitHub.LatestReview(ctx, pr)
 		if err != nil {
 			return spec{}, err
@@ -154,8 +181,8 @@ func (b *builder) start(ctx context.Context, task github.Issue) error {
 	})
 }
 
-func (b *builder) collect(ctx context.Context, task github.Issue, in inputs) error {
-	n := task.Number
+func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) error {
+	n := prd.Number
 	branch := branchName(n)
 	var out struct {
 		Result      string `json:"result"`
@@ -197,8 +224,8 @@ func (b *builder) collect(ctx context.Context, task github.Issue, in inputs) err
 		return err
 	}
 	if !hasPR {
-		// "Closes" is what makes GitHub link the PR and the Task to each other.
-		pr, err = b.GitHub.CreatePR(ctx, branch, b.Git.Base(), task.Title, fmt.Sprintf("Closes #%d\n\n%s", n, out.Summary))
+		// "Closes" is what makes GitHub link the PR and the PRD to each other.
+		pr, err = b.GitHub.CreatePR(ctx, branch, b.Git.Base(), prd.Title, fmt.Sprintf("Closes #%d\n\n%s", n, out.Summary))
 		if err != nil {
 			return err
 		}
@@ -206,6 +233,6 @@ func (b *builder) collect(ctx context.Context, task github.Issue, in inputs) err
 	if err := b.GitHub.SetStatus(ctx, n, label.Working, label.Review); err != nil {
 		return err
 	}
-	slog.Info("pushed PR", "task", n, "pr", pr)
+	slog.Info("pushed PR", "prd", n, "pr", pr)
 	return b.runs.done(ctx, builderRole, n)
 }

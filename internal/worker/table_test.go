@@ -52,15 +52,15 @@ func builderCells(t *testing.T) tableWorker {
 			working: {restart, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
-			task, _ := e.startedTask()
-			return task
+			prd, _ := e.startedPRD()
+			return prd
 		},
 		put: func(e *env, n int, p place) {
 			if p == ready {
 				e.gh.Relabel(n, string(label.Working), string(label.Queued))
 			}
 		},
-		away: leave(label.Pending),
+		away: leave(label.Review),
 		place: func(e *env, n int) place {
 			return e.builder().place(e.issue(n))
 		},
@@ -93,15 +93,15 @@ func resolverCells(t *testing.T) tableWorker {
 			ready: {begin, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
-			task, _, _ := e.conflicted()
-			return task
+			prd, _, _ := e.conflicted()
+			return prd
 		},
 		put: func(e *env, n int, p place) {
 			if p == clean {
 				e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(true))
 			}
 		},
-		away: leave(label.Pending),
+		away: leave(label.Queued),
 		place: func(e *env, n int) place {
 			p, err := e.resolver().place(t.Context(), e.issue(n))
 			if err != nil {
@@ -138,8 +138,8 @@ func reviewerCells(t *testing.T) tableWorker {
 			ready:   {begin, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
-			task, _, _, _ := e.reviewing()
-			return task
+			prd, _, _, _ := e.reviewing()
+			return prd
 		},
 		put: func(e *env, n int, p place) {
 			pr := e.gh.Pulls()[0].Number
@@ -157,14 +157,14 @@ func reviewerCells(t *testing.T) tableWorker {
 			}
 		},
 		// A conflict is resolver's.
-		away: append(leave(label.Pending), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
+		away: append(leave(label.Queued), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
 		settled: map[place]func(e *env, n int){
 			merged: func(e *env, n int) {
 				e.wantFinished(n)
 			},
 			closed: func(e *env, n int) {
 				e.wantStatus(n, label.Stuck)
-				wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Pending)
+				wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Queued)
 			},
 			failing: func(e *env, n int) {
 				e.wantStatus(n, label.Queued)
@@ -192,84 +192,13 @@ func reviewerCells(t *testing.T) tableWorker {
 				t.Error("PR not merged")
 			}
 			if e.gh.Issue(n).Open {
-				t.Error("Task still open")
+				t.Error("PRD still open")
 			}
 		},
 	}
 }
 
-func splitterCells(t *testing.T) tableWorker {
-	return tableWorker{
-		role:  splitterRole,
-		table: splitterTable,
-		want: table{
-			away:  {idle, drop, drop, drop, drop, drop, drop},
-			ready: {begin, restart, idle, fail, fail, fail, harvest},
-		},
-		start: func(e *env) int {
-			prd, _ := e.splitting()
-			return prd
-		},
-		put: func(*env, int, place) {},
-		away: []func(e *env, n int){
-			func(e *env, n int) { e.gh.CloseIssue(n) },
-			func(e *env, n int) { e.gh.Relabel(n, "", label.Tasked) },
-			func(e *env, n int) { e.gh.Relabel(n, "", string(label.Stuck)) },
-		},
-		place: func(e *env, n int) place {
-			return e.splitter().place(e.issue(n))
-		},
-		handle: func(e *env, n int) error {
-			return e.splitter().Handle(t.Context(), n)
-		},
-		running: label.None,
-		finish: func(e *env, name string) {
-			e.play(name, nil, `{"tasks": [{"title": "A", "body": "a", "blocked_by": []}]}`)
-		},
-		harvested: func(e *env, n int) {
-			if !e.gh.Issue(n).HasLabel(label.Tasked) {
-				t.Errorf("PRD has no %s label", label.Tasked)
-			}
-			if subs := e.gh.Issue(n).SubIssues; len(subs) != 1 {
-				t.Errorf("PRD sub-issues = %v, want one Task", subs)
-			}
-		},
-	}
-}
-
-func sequencerCells(t *testing.T) tableWorker {
-	return tableWorker{
-		role:  sequencerRole,
-		table: sequencerTable,
-		want: table{
-			away:  {idle, drop, drop, drop, drop, drop, drop},
-			ready: {begin, restart, idle, fail, fail, fail, harvest},
-		},
-		start: func(e *env) int {
-			task, _, _ := e.sequencing()
-			return task
-		},
-		put:  func(*env, int, place) {},
-		away: leave(label.Queued),
-		place: func(e *env, n int) place {
-			return e.sequencer().place(e.issue(n))
-		},
-		handle: func(e *env, n int) error {
-			return e.sequencer().Handle(t.Context(), n)
-		},
-		running: label.Pending,
-		// The lower Task sequencing makes is issue 1.
-		finish: func(e *env, name string) {
-			e.play(name, nil, `{"blocked_by": [1]}`)
-		},
-		harvested: func(e *env, n int) {
-			e.wantStatus(n, label.Queued)
-			wantInts(t, "blocked by", e.gh.Issue(n).BlockedBy, []int{1})
-		},
-	}
-}
-
-// leave returns the ways a Task leaves a worker: closed, relabeled to, and given a second status
+// leave returns the ways a PRD leaves a worker: closed, relabeled to, and given a second status
 // by a person. to must be none of the worker's own statuses.
 func leave(to label.Status) []func(e *env, n int) {
 	return []func(e *env, n int){
@@ -293,7 +222,7 @@ func actionNames(r row) []string {
 }
 
 func TestTables(t *testing.T) {
-	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells, splitterCells, sequencerCells} {
+	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells} {
 		w := cells(t)
 		if len(w.table) != len(w.want) {
 			t.Errorf("%s table has %d rows, want %d", w.role.name, len(w.table), len(w.want))

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	// Where the Task's repository lives inside a sandbox. It is on the sandbox's own disk, not in
+	// Where the PRD's repository lives inside a sandbox. It is on the sandbox's own disk, not in
 	// the directory shared with this machine, so exomecha never runs git in a .git the AI controls.
 	repoDir = "/home/agent/repo"
 
@@ -86,7 +86,7 @@ const (
 	harvest        // the worker's collect
 	fail           // stuck at once, keeping the run's files
 	drop           // remove the run and leave the labels alone
-	restart        // remove the run without a failure, and builder's Task goes back to the queue
+	restart        // remove the run without a failure, and builder's PRD goes back to the queue
 )
 
 // place is where an issue is, as one worker sees it on GitHub.
@@ -95,12 +95,12 @@ type place int
 const (
 	away    place = iota // closed, another worker's, or given a second status by a person
 	ready                // the worker may start a run
-	working              // a Task builder is working on
-	clean                // a Task in review whose PR does not conflict, or that has no PR
-	waiting              // a Task in review whose PR GitHub or CI has not checked yet
-	merged               // a Task in review whose PR was merged
-	closed               // a Task in review whose PR was closed without a merge
-	failing              // a Task in review whose PR's CI failed
+	working              // a PRD builder is working on
+	clean                // a PRD in review whose PR does not conflict, or that has no PR
+	waiting              // a PRD in review whose PR GitHub or CI has not checked yet
+	merged               // a PRD in review whose PR was merged
+	closed               // a PRD in review whose PR was closed without a merge
+	failing              // a PRD in review whose PR's CI failed
 )
 
 // role is what runs needs to know about the worker a run belongs to.
@@ -113,7 +113,7 @@ type role struct {
 	// from is the issue's status while the run goes. A run that needs a person moves the issue
 	// from it to stuck, and the comment asks the person to relabel it back.
 	from, back label.Status
-	// queued is builder's alone: a start moves the Task from queued to from, and a start that is
+	// queued is builder's alone: a start moves the PRD from queued to from, and a start that is
 	// undone or starts over moves it back.
 	queued label.Status
 	// tier picks the model of the role's runs, unless the spec names one.
@@ -131,11 +131,11 @@ type run struct {
 type inputs struct {
 	Base      string   `json:"base"`   // the base branch commit the sandbox got
 	Head      string   `json:"head"`   // the commit claude started from
-	Remote    string   `json:"remote"` // the Task branch on GitHub at the start, "" when there was none
+	Remote    string   `json:"remote"` // the PRD branch on GitHub at the start, "" when there was none
 	Conflicts []string `json:"conflicts,omitempty"`
 }
 
-// moved reports whether the Task branch changed during the run: now, its head on GitHub, is neither
+// moved reports whether the PRD branch changed during the run: now, its head on GitHub, is neither
 // the one at the start nor pushed, the commit exomecha took from the run. pushed is already there
 // when exomecha pushed it and a later step failed.
 func (in inputs) moved(now, pushed string) bool {
@@ -317,7 +317,7 @@ func (r *runs) release(name string) {
 }
 
 // roles holds every role, so that a sandbox's name tells its kind.
-var roles = []role{builderRole, resolverRole, reviewerRole, splitterRole, sequencerRole}
+var roles = []role{builderRole, resolverRole, reviewerRole}
 
 // slotFree counts every sandbox of this repository of ro's kind, stopped ones too, so the count
 // stays right across restarts, and every start of that kind that holds a slot. self is the start
@@ -407,7 +407,7 @@ type spec struct {
 	branch string // checked out in the run's repository, and set to head
 	base   string // the base branch commit
 	head   string // the commit claude starts from
-	remote string // the Task branch on GitHub, "" when there is none
+	remote string // the PRD branch on GitHub, "" when there is none
 	// merge merges the base branch after setup and lists the conflicts in the input.
 	merge bool
 	input string     // claude's input. open adds what setup and the merge did.
@@ -416,7 +416,7 @@ type spec struct {
 
 // start starts a run of ro for issue n, when the usage gate is open and a slot is free. build
 // says what goes in. A start that does not get through is undone: a problem only a person can fix
-// sends the issue to stuck, and an error leaves builder's Task queued and returns the error.
+// sends the issue to stuck, and an error leaves builder's PRD queued and returns the error.
 func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Context) (spec, error)) error {
 	name := r.name(ro, n)
 	if ready, err := r.reserve(ctx, ro, name); err != nil || !ready {
@@ -588,10 +588,10 @@ func (r *runs) record(name string, in inputs) error {
 
 // needsPerson turns an environment error that only a person can fix into the reason to give them.
 // Build output stays in the log, never in the comment.
-func needsPerson(task int, err error) (string, error) {
+func needsPerson(prd int, err error) (string, error) {
 	var person interface{ Why() string }
 	if errors.As(err, &person) {
-		slog.Warn("sandbox environment needs a person", "task", task, "err", err)
+		slog.Warn("sandbox environment needs a person", "prd", prd, "err", err)
 		return person.Why(), nil
 	}
 	return "", err
@@ -633,7 +633,7 @@ func (r *runs) take(ctx context.Context, ro role, n int, in inputs, said string)
 		return "", false, err
 	}
 	if in.moved(remote, head) {
-		return "", false, r.restart(ctx, ro, n, "the Task branch changed on GitHub during the run")
+		return "", false, r.restart(ctx, ro, n, "the PRD branch changed on GitHub during the run")
 	}
 	// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
 	kept, err := r.Git.IsAncestor(ctx, in.Head, head)
@@ -813,7 +813,7 @@ func (r *runs) failed(ctx context.Context, ro role, n int, why, detail string) e
 	return r.remove(ctx, name, true)
 }
 
-// restart removes the run without counting it as a failure. builder's Task goes back to the queue.
+// restart removes the run without counting it as a failure. builder's PRD goes back to the queue.
 func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
 	slog.Info("starting a run over", "role", ro.name, "issue", n, "why", why)
 	if err := r.remove(ctx, r.name(ro, n), false); err != nil {

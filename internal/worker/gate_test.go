@@ -144,22 +144,24 @@ func TestUsageIsReadOnlyForAStart(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	f := newFakeUsage()
 	e.runs.gate = f.gate
-	alone := e.gh.AddIssue("Task with nothing to wait for", "", label.Task, string(label.Pending))
-	task, pr, _ := e.reviewTask()
+	alone := e.gh.AddIssue("PRD with no status", "", label.PRD)
+	prd, pr, _ := e.reviewPRD()
 	e.gh.SetMergeable(pr, nil)
 
-	e.sequence(alone)
-	e.review(task)
+	if err := e.builder().Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.review(prd)
 	f.wantChecks(t, 0)
 	e.wantStatus(alone, label.Queued)
 
 	e.gh.SetMergeable(pr, new(true))
-	e.review(task)
+	e.review(prd)
 	f.wantChecks(t, 1)
-	e.wantState(e.reviewerBox(task), running)
+	e.wantState(e.reviewerBox(prd), running)
 
 	f.clock = f.clock.Add(usageFresh)
-	e.review(task)
+	e.review(prd)
 	f.wantChecks(t, 1)
 }
 
@@ -169,26 +171,23 @@ func TestNoRunStartsOverTheLimit(t *testing.T) {
 	f := newFakeUsage()
 	f.usage.FiveHour.Used = 0.95
 	e.runs.gate = f.gate
-	alone := e.gh.AddIssue("Task with nothing to wait for", "", label.Task, string(label.Pending))
-	prd := e.gh.AddIssue("PRD", "", label.PRD)
-	queued := e.gh.AddIssue("queued", "", label.Task, string(label.Queued))
-	pending := e.gh.AddIssue("pending", "", label.Task, string(label.Pending))
-	review, _, _ := e.reviewTask()
-	conflict, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	alone := e.gh.AddIssue("PRD with no status", "", label.PRD)
+	queued := e.gh.AddIssue("queued", "", label.PRD, string(label.Queued))
+	review, _, _ := e.reviewPRD()
+	conflict, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
-	e.sequence(alone)
-	e.split(prd)
+	if err := e.builder().Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	e.step(queued)
-	e.sequence(pending)
 	e.review(review)
 	e.resolve(conflict)
 
 	e.wantStatus(alone, label.Queued)
-	for _, name := range []string{e.splitterBox(prd), e.builderBox(queued), e.sequencerBox(pending), e.reviewerBox(review), e.resolverBox(conflict)} {
+	for _, name := range []string{e.builderBox(queued), e.reviewerBox(review), e.resolverBox(conflict)} {
 		if e.sbx.exists(name) {
 			t.Errorf("%s started over the limit", name)
 		}
 	}
 	e.wantStatus(queued, label.Queued)
-	e.wantStatus(pending, label.Pending)
 }

@@ -22,7 +22,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/template"
 )
 
-// TestRealBuilderRun takes a small Task through builder with the real sbx and the real claude,
+// TestRealBuilderRun takes a small PRD through builder with the real sbx and the real claude,
 // against a fake GitHub and a local origin. It spends Claude usage and takes a few minutes, so it
 // runs only with EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1.
 func TestRealBuilderRun(t *testing.T) {
@@ -34,7 +34,7 @@ func TestRealBuilderRun(t *testing.T) {
 }
 
 // TestRealBuilderRunFromTemplate is TestRealBuilderRun with the environment main.go wires in, so
-// the project's Dockerfile is built into a template and the Task's sandbox starts from it.
+// the project's Dockerfile is built into a template and the PRD's sandbox starts from it.
 func TestRealBuilderRunFromTemplate(t *testing.T) {
 	if os.Getenv("EXOMECHA_TEST_SBX") != "1" || os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
 		t.Skip("set EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1 to run claude in a real sandbox")
@@ -44,7 +44,7 @@ func TestRealBuilderRunFromTemplate(t *testing.T) {
 		"README.md":               "A practice project.\n",
 		".exomecha/Dockerfile":    dockerfile,
 		".exomecha/allowed-hosts": "example.com\n",
-		// Fails, which sends the Task to stuck, unless the sandbox came from the template.
+		// Fails, which sends the PRD to stuck, unless the sandbox came from the template.
 		setupScript: "grep -qx from-template /etc/exomecha-test-marker\n",
 	})
 	owner, repo := "impl-int", fmt.Sprintf("t%d", time.Now().UnixNano()%100_000)
@@ -89,7 +89,7 @@ func wantOpus(t *testing.T, model string) {
 	}
 }
 
-// runRealBuilder takes a Task that asks for hello.txt through builder until its PR opens.
+// runRealBuilder takes a PRD that asks for hello.txt through builder until its PR opens.
 func runRealBuilder(t *testing.T, e *env, prefix string) {
 	t.Helper()
 	sbx := sandbox.CLI{}
@@ -97,10 +97,10 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 	e.deps.SandboxPrefix = prefix
 	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
-	task := e.gh.AddIssue("Add hello.txt",
+	prd := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`. Commit it with the message `feat: add hello`.\n",
-		label.Task, string(label.Queued))
-	name := e.builderBox(task)
+		label.PRD, string(label.Queued))
+	name := e.builderBox(prd)
 	t.Cleanup(func() {
 		if err := sbx.Remove(context.Background(), name); err != nil {
 			t.Errorf("remove %s: %v", name, err)
@@ -114,10 +114,10 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 		if m := e.runModel(name); m != "" {
 			model = m
 		}
-		if err := e.builder().Handle(ctx, task); err != nil {
+		if err := e.builder().Handle(ctx, prd); err != nil {
 			t.Fatal(err)
 		}
-		status := e.statuses(task)
+		status := e.statuses(prd)
 		if len(status) != 1 || status[0] != string(label.Working) {
 			break
 		}
@@ -128,14 +128,14 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 		}
 	}
 
-	if got := e.statuses(task); len(got) != 1 || got[0] != string(label.Review) {
-		t.Fatalf("status = %q, last comment %q", got, e.gh.Issue(task).Comments)
+	if got := e.statuses(prd); len(got) != 1 || got[0] != string(label.Review) {
+		t.Fatalf("status = %q, last comment %q", got, e.gh.Issue(prd).Comments)
 	}
 	wantOpus(t, model)
-	if got := gittest.ReadFile(t, e.origin, branchName(task), "hello.txt"); got != "hello" {
+	if got := gittest.ReadFile(t, e.origin, branchName(prd), "hello.txt"); got != "hello" {
 		t.Errorf("hello.txt = %q", got)
 	}
-	e.wantAuthor(branchName(task))
+	e.wantAuthor(branchName(prd))
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want one", n)
 	}
@@ -159,9 +159,9 @@ func TestRealResolverRun(t *testing.T) {
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-r%d-", time.Now().UnixNano()%100_000)
 	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
-	task, _, head := e.conflictTask(map[string]string{"greeting.txt": "hello\nfrom the feature\n"}, map[string]string{"greeting.txt": "hello\nfrom main\n"})
-	e.gh.AddComment(task, "If greeting.txt conflicts, keep both added lines, main's line first.")
-	name := e.resolverBox(task)
+	prd, _, head := e.conflictPRD(map[string]string{"greeting.txt": "hello\nfrom the feature\n"}, map[string]string{"greeting.txt": "hello\nfrom main\n"})
+	e.gh.AddComment(prd, "If greeting.txt conflicts, keep both added lines, main's line first.")
+	name := e.resolverBox(prd)
 	t.Cleanup(func() {
 		if err := sbx.Remove(context.Background(), name); err != nil {
 			t.Errorf("remove %s: %v", name, err)
@@ -175,10 +175,10 @@ func TestRealResolverRun(t *testing.T) {
 		if m := e.runModel(name); m != "" {
 			model = m
 		}
-		if err := e.resolver().Handle(ctx, task); err != nil {
+		if err := e.resolver().Handle(ctx, prd); err != nil {
 			t.Fatal(err)
 		}
-		if gittest.Head(e.origin, branchName(task)) != head || len(e.gh.Issue(task).Comments) > 1 {
+		if gittest.Head(e.origin, branchName(prd)) != head || len(e.gh.Issue(prd).Comments) > 1 {
 			break
 		}
 		select {
@@ -188,25 +188,25 @@ func TestRealResolverRun(t *testing.T) {
 		}
 	}
 
-	if comments := e.gh.Issue(task).Comments; len(comments) > 1 {
+	if comments := e.gh.Issue(prd).Comments; len(comments) > 1 {
 		t.Fatalf("resolver commented: %q", comments[len(comments)-1].Body)
 	}
 	wantOpus(t, model)
-	if n := len(gittest.Parents(t, e.origin, branchName(task))); n != 2 {
+	if n := len(gittest.Parents(t, e.origin, branchName(prd))); n != 2 {
 		t.Errorf("branch head has %d parents, want a merge commit", n)
 	}
-	message := gittest.Run(t, e.origin, "log", "-1", "--format=%B", branchName(task))
+	message := gittest.Run(t, e.origin, "log", "-1", "--format=%B", branchName(prd))
 	lines := strings.Split(message, "\n")
-	if lines[len(lines)-1] != fmt.Sprintf("Task: #%d", task) || slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "#") }) {
-		t.Errorf("merge message = %q, want Task: #%d as the last line and no line starting with #", message, task)
+	if lines[len(lines)-1] != fmt.Sprintf("PRD: #%d", prd) || slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "#") }) {
+		t.Errorf("merge message = %q, want PRD: #%d as the last line and no line starting with #", message, prd)
 	}
-	got := gittest.ReadFile(t, e.origin, branchName(task), "greeting.txt")
+	got := gittest.ReadFile(t, e.origin, branchName(prd), "greeting.txt")
 	if strings.Contains(got, "<<<<<<<") || strings.Contains(got, ">>>>>>>") {
 		t.Errorf("greeting.txt still has conflict markers: %q", got)
 	}
 	t.Logf("greeting.txt after the merge: %q", got)
-	e.wantAuthor(branchName(task))
-	e.wantStatus(task, label.Review)
+	e.wantAuthor(branchName(prd))
+	e.wantStatus(prd, label.Review)
 }
 
 // TestRealReviewerRun is TestRealBuilderRun for reviewer: a PR that adds hello.txt, reviewed in a
@@ -221,16 +221,14 @@ func TestRealReviewerRun(t *testing.T) {
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-v%d-", time.Now().UnixNano()%100_000)
 	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
-	prd := e.gh.AddIssue("Greet visitors", "People who open the repository should find a greeting file at its root.\n", label.PRD, label.Tasked)
-	task := e.gh.AddIssue("Add hello.txt",
+	prd := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`.\n\n"+
 			"## Acceptance criteria\n\n- `hello.txt` exists at the root and holds exactly the line `hello`.\n",
-		label.Task, string(label.Review))
-	e.gh.AddSubIssue(prd, task)
-	head := gittest.Commit(t, e.origin, branchName(task), "main", map[string]string{"hello.txt": "hello\n"})
-	pr := e.gh.AddPull(branchName(task), "main")
+		label.PRD, string(label.Review))
+	head := gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"hello.txt": "hello\n"})
+	pr := e.gh.AddPull(branchName(prd), "main")
 	e.gh.SetMergeable(pr, new(true))
-	name := e.reviewerBox(task)
+	name := e.reviewerBox(prd)
 	t.Cleanup(func() {
 		if err := sbx.Remove(context.Background(), name); err != nil {
 			t.Errorf("remove %s: %v", name, err)
@@ -244,10 +242,10 @@ func TestRealReviewerRun(t *testing.T) {
 		if m := e.runModel(name); m != "" {
 			model = m
 		}
-		if err := e.reviewer().Handle(ctx, task); err != nil {
+		if err := e.reviewer().Handle(ctx, prd); err != nil {
 			t.Fatal(err)
 		}
-		status := e.statuses(task)
+		status := e.statuses(prd)
 		if e.gh.Pull(pr).Merged || len(status) != 1 || status[0] != string(label.Review) {
 			break
 		}
@@ -264,16 +262,16 @@ func TestRealReviewerRun(t *testing.T) {
 		for _, r := range p.Reviews {
 			reviews = append(reviews, r.Body)
 		}
-		t.Fatalf("PR not merged: status %q, reviews %q, comments %q", e.statuses(task), reviews, e.gh.Issue(task).Comments)
+		t.Fatalf("PR not merged: status %q, reviews %q, comments %q", e.statuses(prd), reviews, e.gh.Issue(prd).Comments)
 	}
 	wantOpus(t, model)
 	if p.MergedSHA != head {
 		t.Errorf("merged %s, want the reviewed head %s", p.MergedSHA, head)
 	}
-	if i := e.gh.Issue(task); i.Open || i.StateReason != "completed" {
-		t.Errorf("Task open=%v reason=%q, want closed as completed", i.Open, i.StateReason)
+	if i := e.gh.Issue(prd); i.Open || i.StateReason != "completed" {
+		t.Errorf("PRD open=%v reason=%q, want closed as completed", i.Open, i.StateReason)
 	}
-	e.wantStatus(task, label.None)
+	e.wantStatus(prd, label.None)
 	if _, err := os.Lstat(e.runs.dir(name)); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("run directory left after the merge: %v", err)
 	}

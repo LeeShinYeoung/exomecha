@@ -56,16 +56,8 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 		start func(e *env) int
 	}{
 		{reviewerRole, func(e *env) int {
-			task, _, _, _ := e.reviewing()
-			return task
-		}},
-		{splitterRole, func(e *env) int {
-			prd, _ := e.splitting()
+			prd, _, _, _ := e.reviewing()
 			return prd
-		}},
-		{sequencerRole, func(e *env) int {
-			task, _, _ := e.sequencing()
-			return task
 		}},
 	} {
 		t.Run(c.role.name, func(t *testing.T) {
@@ -82,18 +74,18 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 }
 
 func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
-	e := newEnv(t, setupRepo(`echo "task $EXOMECHA_TASK" > `+setupMarker+"\n"))
-	task, name := e.startedTask()
+	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
+	prd, name := e.startedPRD()
 	b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker))
-	if want := fmt.Sprintf("task %d\n", task); err != nil || string(b) != want {
+	if want := fmt.Sprintf("prd %d\n", prd); err != nil || string(b) != want {
 		t.Fatalf("setup marker = %q, %v, want %q", b, err, want)
 	}
 	wantContains(t, "claude input", e.readCtl(name, "input.md"), "## Setup", "before you started")
 	e.play(name, commit(t, "feat: add feature", map[string]string{"feature.txt": "hello\n"}), builderDone)
-	e.step(task)
+	e.step(prd)
 
-	e.wantStatus(task, label.Review)
-	files := gittest.Run(t, e.origin, "ls-tree", "-r", "--name-only", branchName(task))
+	e.wantStatus(prd, label.Review)
+	files := gittest.Run(t, e.origin, "ls-tree", "-r", "--name-only", branchName(prd))
 	wantContains(t, "pushed files", files, "feature.txt")
 	wantNotContains(t, "pushed files", files, setupMarker)
 }
@@ -101,34 +93,34 @@ func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
 func TestBuilderStuckWhenSetupFails(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, setupRepo("echo 'a secret in the output' >&2\nfalse\nexit 0\n"))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
 
-	e.step(task)
+	e.step(prd)
 
-	e.wantStatus(task, label.Stuck)
-	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "`"+setupScript+"` did not end cleanly (exit status 1)", label.Pending)
+	e.wantStatus(prd, label.Stuck)
+	comment := e.lastComment(prd)
+	wantStuckComment(t, comment, "`"+setupScript+"` did not end cleanly (exit status 1)", label.Queued)
 	wantNotContains(t, "stuck comment", comment, "a secret in the output", "merge the base branch")
 	wantContains(t, "log", log.String(), "a secret in the output")
-	e.wantRemoved(e.builderBox(task))
-	if head := gittest.Head(e.origin, branchName(task)); head != "" {
+	e.wantRemoved(e.builderBox(prd))
+	if head := gittest.Head(e.origin, branchName(prd)); head != "" {
 		t.Errorf("branch was pushed after a failed setup: %s", head)
 	}
 }
 
 func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 	e := newEnv(t, setupRepo("echo base > "+setupMarker+"\n"))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
-	branch := branchName(task)
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
+	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{
 		setupScript:   "echo branch > " + setupMarker + "\n",
 		"feature.txt": "first\n",
 	})
 	e.gh.AddPull(branch, "main")
 
-	e.step(task)
+	e.step(prd)
 
-	b, err := os.ReadFile(filepath.Join(e.sbx.repo(e.builderBox(task)), setupMarker))
+	b, err := os.ReadFile(filepath.Join(e.sbx.repo(e.builderBox(prd)), setupMarker))
 	if err != nil || string(b) != "base\n" {
 		t.Errorf("setup marker = %q, %v, want the base branch's script to have run", b, err)
 	}
@@ -136,17 +128,17 @@ func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 
 func TestBuilderStuckOnBranchOlderThanSetup(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
-	branch := branchName(task)
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
+	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	e.gh.AddPull(branch, "main")
 	gittest.Commit(t, e.origin, "main", "", setupRepo("echo ran > "+setupMarker+"\n"))
 
-	e.step(task)
+	e.step(prd)
 
-	e.wantStatus(task, label.Stuck)
-	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "changed the working copy", label.Pending)
+	e.wantStatus(prd, label.Stuck)
+	comment := e.lastComment(prd)
+	wantStuckComment(t, comment, "changed the working copy", label.Queued)
 	wantContains(t, "stuck comment", comment, "merge the base branch into `"+branch+"`")
 }
 
@@ -154,18 +146,18 @@ func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
 	started := filepath.Join(t.TempDir(), "started")
 	t.Setenv("SETUP_STARTED", started)
 	e := newEnv(t, setupRepo("touch \"$SETUP_STARTED\"\nexec sleep 10\n"))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cancelWhenExists(ctx, cancel, started)
 
-	if err := e.builder().Handle(ctx, task); err == nil {
+	if err := e.builder().Handle(ctx, prd); err == nil {
 		t.Fatal("Handle returned nil for a setup interrupted by shutdown")
 	}
 
-	e.wantStatus(task, label.Queued)
-	e.wantRemoved(e.builderBox(task))
-	if n := len(e.gh.Issue(task).Comments); n != 0 {
+	e.wantStatus(prd, label.Queued)
+	e.wantRemoved(e.builderBox(prd))
+	if n := len(e.gh.Issue(prd).Comments); n != 0 {
 		t.Errorf("interrupted setup left %d comments", n)
 	}
 }
@@ -174,45 +166,45 @@ func TestResolverRunsSetupBeforeMerge(t *testing.T) {
 	// The first line fails if the merge has already started.
 	script := "test ! -e \"$(git rev-parse --git-path MERGE_HEAD)\"\necho ran > " + setupMarker + "\n"
 	e := newEnv(t, setupRepo(script))
-	task, name, _ := e.conflicted()
+	prd, name, _ := e.conflicted()
 	if _, err := os.Stat(filepath.Join(e.sbx.repo(name), setupMarker)); err != nil {
 		t.Fatalf("setup did not run: %v", err)
 	}
 	wantContains(t, "claude input", e.readCtl(name, "input.md"), "## Setup", "before the merge started")
 	e.play(name, resolveWith(t, "main\nfeature\n"), resolverDone)
-	e.resolve(task)
+	e.resolve(prd)
 
-	e.wantStatus(task, label.Review)
-	if n := len(gittest.Parents(t, e.origin, branchName(task))); n != 2 {
+	e.wantStatus(prd, label.Review)
+	if n := len(gittest.Parents(t, e.origin, branchName(prd))); n != 2 {
 		t.Errorf("branch head has %d parents, want a merge commit", n)
 	}
 }
 
 func TestResolverStuckWhenSetupFails(t *testing.T) {
 	e := newEnv(t, setupRepo("exit 1\n"))
-	task, _, head := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	prd, _, head := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
-	e.resolve(task)
+	e.resolve(prd)
 
-	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "`"+setupScript+"` did not end cleanly (exit status 1)", label.Review)
-	if got := gittest.Head(e.origin, branchName(task)); got != head {
+	e.wantStatus(prd, label.Stuck)
+	wantStuckComment(t, e.lastComment(prd), "`"+setupScript+"` did not end cleanly (exit status 1)", label.Review)
+	if got := gittest.Head(e.origin, branchName(prd)); got != head {
 		t.Errorf("branch moved to %s, want it left at %s", got, head)
 	}
-	e.wantRemoved(e.resolverBox(task))
+	e.wantRemoved(e.resolverBox(prd))
 }
 
 func TestResolverSkipsSetupWhenNothingToMerge(t *testing.T) {
 	e := newEnv(t, setupRepo("exit 1\n"))
-	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Review))
-	gittest.Commit(t, e.origin, branchName(task), "main", map[string]string{"app.txt": "feature\n"})
-	pr := e.gh.AddPull(branchName(task), "main")
+	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
+	gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})
+	pr := e.gh.AddPull(branchName(prd), "main")
 	e.gh.SetMergeable(pr, new(false))
 
-	e.resolve(task)
+	e.resolve(prd)
 
-	e.wantStatus(task, label.Review)
-	if n := len(e.gh.Issue(task).Comments); n != 0 {
+	e.wantStatus(prd, label.Review)
+	if n := len(e.gh.Issue(prd).Comments); n != 0 {
 		t.Errorf("a failing setup script ran with nothing to merge: %d comments", n)
 	}
 }

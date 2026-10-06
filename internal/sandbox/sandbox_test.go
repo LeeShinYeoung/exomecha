@@ -135,11 +135,11 @@ func TestList(t *testing.T) {
 func TestExec(t *testing.T) {
 	f := newFakeSBX(t)
 	f.answer("exec", "out\n")
-	out, err := (CLI{}).Exec(t.Context(), "box", "/home/agent/repo", []string{"EXOMECHA_TASK=3"}, "git", "status")
+	out, err := (CLI{}).Exec(t.Context(), "box", "/home/agent/repo", []string{"EXOMECHA_PRD=3"}, "git", "status")
 	if err != nil || string(out) != "out\n" {
 		t.Errorf("Exec = %q, %v", out, err)
 	}
-	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "EXOMECHA_TASK=3", "box", "git", "status"})
+	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "EXOMECHA_PRD=3", "box", "git", "status"})
 }
 
 func TestExecFailure(t *testing.T) {
@@ -372,7 +372,7 @@ func TestBuildName(t *testing.T) {
 
 func TestNameFits63(t *testing.T) {
 	prefix := Prefix("some-organization", strings.Repeat("long-repository-name-", 3))
-	for _, role := range []string{"builder", "resolver", "reviewer", "splitter", "sequencer"} {
+	for _, role := range []string{"builder", "resolver", "reviewer"} {
 		if name := Name(prefix, 9999999, role); len(name) > 63 {
 			t.Errorf("%s is %d chars, sbx allows 63", name, len(name))
 		}
@@ -390,8 +390,6 @@ func TestParse(t *testing.T) {
 		{prefix + "12-builder", 12, "builder", true},
 		{prefix + "7-resolver", 7, "resolver", true},
 		{prefix + "8-reviewer", 8, "reviewer", true},
-		{prefix + "9-splitter", 9, "splitter", true},
-		{prefix + "10-sequencer", 10, "sequencer", true},
 		{Name(prefix, 9999999, "resolver"), 9999999, "resolver", true},
 		{prefix + "012-builder", 0, "", false},
 		{prefix + "0-builder", 0, "", false},
@@ -401,7 +399,7 @@ func TestParse(t *testing.T) {
 		{prefix + "x-12-builder", 0, "", false},
 		{Name(Prefix("o", "r2"), 12, "builder"), 0, "", false},
 		{Name(Prefix("o", "r-2"), 12, "builder"), 0, "", false},
-		{"exomecha-task-o-r-12-builder", 0, "", false},
+		{"exomecha-prd-o-r-12-builder", 0, "", false},
 		{"exomecha-build-o-r", 0, "", false},
 		{"impl-run-12-builder", 0, "", false},
 	} {

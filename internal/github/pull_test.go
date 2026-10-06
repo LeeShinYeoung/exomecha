@@ -33,7 +33,7 @@ func TestMerge(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pr := s.AddPull("exomecha/task-1", "main")
+			pr := s.AddPull("exomecha/prd-1", "main")
 			c.refuse(s, pr)
 
 			err = client.Merge(t.Context(), pr, "")
@@ -60,7 +60,7 @@ func TestMerged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const branch = "exomecha/task-1"
+	const branch = "exomecha/prd-1"
 	want := func(what string, merged bool) {
 		t.Helper()
 		if got, err := client.Merged(t.Context(), branch); err != nil || got != merged {

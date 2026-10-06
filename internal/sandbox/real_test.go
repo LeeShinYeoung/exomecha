@@ -50,10 +50,10 @@ func TestRealSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	url := sbx.GitURL(name, repo)
-	if err := g.SendTo(ctx, url, base, "exomecha/task-1", base); err != nil {
+	if err := g.SendTo(ctx, url, base, "exomecha/prd-1", base); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sbx.Exec(ctx, name, repo, nil, "git", "checkout", "-q", "exomecha/task-1"); err != nil {
+	if _, err := sbx.Exec(ctx, name, repo, nil, "git", "checkout", "-q", "exomecha/prd-1"); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := sbx.Exec(ctx, name, repo, nil, "git", "remote", "-v"); err != nil || len(out) != 0 {

@@ -19,7 +19,7 @@ func TestSetStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := s.AddIssue("Task", "", label.Task, "priority", string(label.Queued))
+	n := s.AddIssue("PRD", "", label.PRD, "priority", string(label.Queued))
 	want := func(labels ...string) {
 		t.Helper()
 		if got := s.Issue(n).Labels; !slices.Equal(got, labels) {
@@ -31,22 +31,22 @@ func TestSetStatus(t *testing.T) {
 	if err := client.SetStatus(t.Context(), n, label.Queued, label.Working); err == nil {
 		t.Fatal("SetStatus returned nil with GitHub failing")
 	}
-	want(label.Task, "priority", string(label.Queued))
+	want(label.PRD, "priority", string(label.Queued))
 
 	s.Fail(labelsRoute, 0)
 	if err := client.SetStatus(t.Context(), n, label.Queued, label.Working); err != nil {
 		t.Fatal(err)
 	}
-	want(label.Task, "priority", string(label.Working))
+	want(label.PRD, "priority", string(label.Working))
 
 	s.Relabel(n, "", string(label.Review))
 	if err := client.SetStatus(t.Context(), n, label.Working, label.Queued); err != nil {
 		t.Fatal(err)
 	}
-	want(label.Task, "priority", string(label.Queued))
+	want(label.PRD, "priority", string(label.Queued))
 
 	if err := client.ClearStatus(t.Context(), n); err != nil {
 		t.Fatal(err)
 	}
-	want(label.Task, "priority")
+	want(label.PRD, "priority")
 }

@@ -70,17 +70,6 @@ func (c *Client) PR(ctx context.Context, number int) (PR, error) {
 	}, nil
 }
 
-func (c *Client) PRFiles(ctx context.Context, number int) ([]string, error) {
-	var out []string
-	for f, err := range c.api.PullRequests.ListFilesIter(ctx, c.owner, c.repo, number, &gh.ListOptions{PerPage: 100}) {
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, f.GetFilename())
-	}
-	return out, nil
-}
-
 // COMMENT only: the token owner authored the PR, and GitHub blocks approving or requesting changes on your own PR.
 func (c *Client) AddReview(ctx context.Context, number int, body string) error {
 	_, _, err := c.api.PullRequests.CreateReview(ctx, c.owner, c.repo, number, &gh.PullRequestReviewRequest{
