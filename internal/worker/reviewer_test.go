@@ -103,7 +103,7 @@ func TestReviewerStuckWhenPRClosedByHand(t *testing.T) {
 		t.Error("a review started for a closed PR")
 	}
 	e.wantStatus(prd, label.Stuck)
-	wantStuckComment(t, e.lastComment(prd), "closed without being merged", label.Queued)
+	wantStuckComment(t, e.lastComment(prd), "closed without being merged", label.Ready)
 }
 
 func TestReviewerWaitsForMergeable(t *testing.T) {
@@ -139,7 +139,7 @@ func TestReviewerRequeuesOnFailedCI(t *testing.T) {
 	if e.sbx.exists(e.reviewerBox(prd)) {
 		t.Error("a review started on failed CI")
 	}
-	e.wantStatus(prd, label.Queued)
+	e.wantStatus(prd, label.Ready)
 	reviews := e.gh.Pull(pr).Reviews
 	if len(reviews) != 1 {
 		t.Fatalf("reviews = %+v, want one", reviews)
@@ -212,7 +212,7 @@ func TestReviewerChangesRequeues(t *testing.T) {
 
 	e.review(prd)
 
-	e.wantStatus(prd, label.Queued)
+	e.wantStatus(prd, label.Ready)
 	p := e.gh.Pull(pr)
 	if p.Merged {
 		t.Error("PR merged despite requested changes")
@@ -528,54 +528,5 @@ func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
 	}
 	if !e.gh.Pull(pr).Merged {
 		t.Error("the review already going was not collected")
-	}
-}
-
-func TestReviewerSweepRereadsALaggingList(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	problem := e.gh.AddIssue("problem", "", label.Problem)
-	prd := e.gh.AddIssue("PRD", "", label.PRD)
-	e.gh.AddSubIssue(problem, prd)
-	e.gh.CloseIssue(prd)
-	e.gh.HoldList()
-	if err := e.deps.GitHub.Close(t.Context(), problem, "not_planned"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := e.reviewer().Sweep(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if got := e.gh.Issue(problem).StateReason; got != "not_planned" {
-		t.Errorf("problem closed as %q, want it left as the person closed it", got)
-	}
-}
-
-func TestReviewerSweepClosesFinishedProblems(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	problem := e.gh.AddIssue("problem", "", label.Problem)
-	empty := e.gh.AddIssue("problem without PRDs", "", label.Problem)
-	prd1 := e.gh.AddIssue("PRD 1", "", label.PRD)
-	prd2 := e.gh.AddIssue("PRD 2", "", label.PRD, string(label.Review))
-	e.gh.AddSubIssue(problem, prd1)
-	e.gh.AddSubIssue(problem, prd2)
-	e.gh.CloseIssue(prd1)
-	r := e.reviewer()
-
-	if err := r.Sweep(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if !e.gh.Issue(problem).Open || !e.gh.Issue(empty).Open {
-		t.Error("closed a problem that still has an open PRD, or one with no PRDs")
-	}
-
-	e.gh.CloseIssue(prd2)
-	if err := r.Sweep(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if e.gh.Issue(problem).Open {
-		t.Error("the problem is still open after every PRD closed")
-	}
-	if !e.gh.Issue(empty).Open {
-		t.Error("closed a problem with no PRDs")
 	}
 }

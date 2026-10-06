@@ -29,10 +29,6 @@ type Worker interface {
 	Handle(ctx context.Context, number int) error
 }
 
-type Sweeper interface {
-	Sweep(ctx context.Context) error
-}
-
 type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
@@ -120,11 +116,6 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 	// next round.
 	now := d.now()
 	log := slog.With("worker", w.Name())
-	if s, ok := w.(Sweeper); ok {
-		if err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
-			log.Error("sweep failed", "err", err)
-		}
-	}
 	numbers, err := w.Pick(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -305,7 +296,7 @@ func holds(i github.Issue, kind string, status label.Status) bool {
 }
 
 // back is where the person sends the PRD after answering, so it returns to the worker that
-// owns the problem: queued leads back to builder, review leads back to resolver.
+// owns the problem: ready leads back to builder, review leads back to resolver.
 func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
 	trimmed := trimClosingTags(reason)
 	if trimmed != strings.TrimSpace(reason) {

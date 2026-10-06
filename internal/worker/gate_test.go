@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
@@ -144,16 +145,11 @@ func TestUsageIsReadOnlyForAStart(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	f := newFakeUsage()
 	e.runs.gate = f.gate
-	alone := e.gh.AddIssue("PRD with no status", "", label.PRD)
 	prd, pr, _ := e.reviewPRD()
 	e.gh.SetMergeable(pr, nil)
 
-	if err := e.builder().Sweep(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	e.review(prd)
 	f.wantChecks(t, 0)
-	e.wantStatus(alone, label.Queued)
 
 	e.gh.SetMergeable(pr, new(true))
 	e.review(prd)
@@ -171,23 +167,22 @@ func TestNoRunStartsOverTheLimit(t *testing.T) {
 	f := newFakeUsage()
 	f.usage.FiveHour.Used = 0.95
 	e.runs.gate = f.gate
-	alone := e.gh.AddIssue("PRD with no status", "", label.PRD)
-	queued := e.gh.AddIssue("queued", "", label.PRD, string(label.Queued))
+	ready := e.gh.AddIssue("ready", "", label.PRD, string(label.Ready))
 	review, _, _ := e.reviewPRD()
+	failed, _, sha := e.reviewPRD()
+	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure", URL: "http://ci/test"})
 	conflict, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
-	if err := e.builder().Sweep(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	e.step(queued)
+	e.step(ready)
 	e.review(review)
+	e.review(failed)
 	e.resolve(conflict)
 
-	e.wantStatus(alone, label.Queued)
-	for _, name := range []string{e.builderBox(queued), e.reviewerBox(review), e.resolverBox(conflict)} {
+	for _, name := range []string{e.builderBox(ready), e.reviewerBox(review), e.resolverBox(conflict)} {
 		if e.sbx.exists(name) {
 			t.Errorf("%s started over the limit", name)
 		}
 	}
-	e.wantStatus(queued, label.Queued)
+	e.wantStatus(ready, label.Ready)
+	e.wantStatus(failed, label.Ready)
 }

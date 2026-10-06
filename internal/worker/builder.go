@@ -26,14 +26,14 @@ var builderRole = role{
 	schema:  builderSchema,
 	project: true,
 	from:    label.Working,
-	back:    label.Queued,
-	queued:  label.Queued,
+	back:    label.Ready,
+	ready:   label.Ready,
 	// For a PRD with no tier label. A tier label takes its place.
 	tier: label.Normal,
 }
 
 // begin waits while a blocker is open. A run of a ready PRD was left when a person sent the PRD
-// back to the queue, and it holds a slot for nothing.
+// back to ready, and it holds a slot for nothing.
 var builderTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:    {idle, drop, drop, drop, drop, drop, drop},
@@ -50,37 +50,10 @@ type builder struct {
 
 func (*builder) Name() string { return builderRole.name }
 
-// Sweep queues each new PRD, which has no status yet.
-func (b *builder) Sweep(ctx context.Context) error {
-	prds, err := b.GitHub.ListOpen(ctx, label.PRD)
-	if err != nil {
-		return err
-	}
-	for _, p := range prds {
-		if p.Status() != label.None {
-			continue
-		}
-		// The list can be a minute behind. The PRD may have closed since, or been queued and
-		// started, and queueing it again would drop its run.
-		p, err := b.GitHub.Issue(ctx, p.Number)
-		if err != nil {
-			return err
-		}
-		if !p.Open || p.Status() != label.None {
-			continue
-		}
-		if err := b.GitHub.SetStatus(ctx, p.Number, label.None, label.Queued); err != nil {
-			return err
-		}
-		slog.Info("queued PRD", "prd", p.Number)
-	}
-	return nil
-}
-
-// Pick returns the queued PRDs that are ready, every working PRD, and every PRD that has a
+// Pick returns the ready PRDs with no open blocker, every working PRD, and every PRD that has a
 // builder sandbox, whatever its label.
 func (b *builder) Pick(ctx context.Context) ([]int, error) {
-	queued, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Queued))
+	ready, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Ready))
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +62,7 @@ func (b *builder) Pick(ctx context.Context) ([]int, error) {
 		return nil, err
 	}
 	var picked []int
-	for _, t := range queued {
+	for _, t := range ready {
 		unblocked, err := b.unblocked(ctx, t.Number)
 		if err != nil {
 			return nil, err
@@ -129,7 +102,7 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 
 func (b *builder) place(prd github.Issue) place {
 	switch {
-	case holds(prd, label.PRD, label.Queued):
+	case holds(prd, label.PRD, label.Ready):
 		return ready
 	case holds(prd, label.PRD, label.Working):
 		return working
