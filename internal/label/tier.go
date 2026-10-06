@@ -22,9 +22,3 @@ func TierOf(labels []string) Tier {
 	}
 	return ""
 }
-
-// TierNamed returns the tier splitter's AI names with a bare word, such as "light".
-func TierNamed(name string) (Tier, bool) {
-	t := Tier("tier:" + name)
-	return t, name != "" && slices.Contains(tiers, t)
-}

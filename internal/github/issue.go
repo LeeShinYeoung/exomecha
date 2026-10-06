@@ -91,24 +91,9 @@ func (c *Client) Issue(ctx context.Context, number int) (Issue, error) {
 	return issueFrom(i), nil
 }
 
-func (c *Client) CreateIssue(ctx context.Context, title, body string, labels []string) (Issue, error) {
-	i, _, err := c.api.Issues.Create(ctx, c.owner, c.repo, gh.CreateIssueRequest{
-		Title:  title,
-		Body:   gh.Ptr(body),
-		Labels: labels,
-	})
-	if err != nil {
-		return Issue{}, err
-	}
-	return issueFrom(i), nil
-}
-
 type CloseReason string
 
-const (
-	Completed  CloseReason = "completed"
-	NotPlanned CloseReason = "not_planned"
-)
+const Completed CloseReason = "completed"
 
 func (c *Client) Close(ctx context.Context, number int, reason CloseReason) error {
 	_, _, err := c.api.Issues.Update(ctx, c.owner, c.repo, number, gh.UpdateIssueRequest{

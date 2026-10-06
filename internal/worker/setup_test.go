@@ -59,14 +59,6 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 			task, _, _, _ := e.reviewing()
 			return task
 		}},
-		{splitterRole, func(e *env) int {
-			prd, _ := e.splitting()
-			return prd
-		}},
-		{sequencerRole, func(e *env) int {
-			task, _, _ := e.sequencing()
-			return task
-		}},
 	} {
 		t.Run(c.role.name, func(t *testing.T) {
 			e := newEnv(t, setupRepo("exit 1\n"))
@@ -101,13 +93,13 @@ func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
 func TestBuilderStuckWhenSetupFails(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, setupRepo("echo 'a secret in the output' >&2\nfalse\nexit 0\n"))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "`"+setupScript+"` did not end cleanly (exit status 1)", label.Pending)
+	wantStuckComment(t, comment, "`"+setupScript+"` did not end cleanly (exit status 1)", label.Queued)
 	wantNotContains(t, "stuck comment", comment, "a secret in the output", "merge the base branch")
 	wantContains(t, "log", log.String(), "a secret in the output")
 	e.wantRemoved(e.builderBox(task))
@@ -118,7 +110,7 @@ func TestBuilderStuckWhenSetupFails(t *testing.T) {
 
 func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 	e := newEnv(t, setupRepo("echo base > "+setupMarker+"\n"))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	branch := branchName(task)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{
 		setupScript:   "echo branch > " + setupMarker + "\n",
@@ -136,7 +128,7 @@ func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 
 func TestBuilderStuckOnBranchOlderThanSetup(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	branch := branchName(task)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	e.gh.AddPull(branch, "main")
@@ -146,7 +138,7 @@ func TestBuilderStuckOnBranchOlderThanSetup(t *testing.T) {
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "changed the working copy", label.Pending)
+	wantStuckComment(t, comment, "changed the working copy", label.Queued)
 	wantContains(t, "stuck comment", comment, "merge the base branch into `"+branch+"`")
 }
 
@@ -154,7 +146,7 @@ func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
 	started := filepath.Join(t.TempDir(), "started")
 	t.Setenv("SETUP_STARTED", started)
 	e := newEnv(t, setupRepo("touch \"$SETUP_STARTED\"\nexec sleep 10\n"))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cancelWhenExists(ctx, cancel, started)
@@ -204,7 +196,7 @@ func TestResolverStuckWhenSetupFails(t *testing.T) {
 
 func TestResolverSkipsSetupWhenNothingToMerge(t *testing.T) {
 	e := newEnv(t, setupRepo("exit 1\n"))
-	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Review))
+	task := e.gh.AddIssue("Task", "task body", label.PRD, string(label.Review))
 	gittest.Commit(t, e.origin, branchName(task), "main", map[string]string{"app.txt": "feature\n"})
 	pr := e.gh.AddPull(branchName(task), "main")
 	e.gh.SetMergeable(pr, new(false))

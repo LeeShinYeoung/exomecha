@@ -317,7 +317,7 @@ func (r *runs) release(name string) {
 }
 
 // roles holds every role, so that a sandbox's name tells its kind.
-var roles = []role{builderRole, resolverRole, reviewerRole, splitterRole, sequencerRole}
+var roles = []role{builderRole, resolverRole, reviewerRole}
 
 // slotFree counts every sandbox of this repository of ro's kind, stopped ones too, so the count
 // stays right across restarts, and every start of that kind that holds a slot. self is the start

@@ -86,15 +86,15 @@ func (e *env) wantAuthor(ref string) {
 
 func TestBuilderPicks(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	blocker := e.gh.AddIssue("blocker", "", label.Task, string(label.Queued))
-	waiting := e.gh.AddIssue("waiting", "", label.Task, string(label.Queued))
+	blocker := e.gh.AddIssue("blocker", "", label.PRD, string(label.Queued))
+	waiting := e.gh.AddIssue("waiting", "", label.PRD, string(label.Queued))
 	e.gh.AddBlockedBy(waiting, blocker)
-	done := e.gh.AddIssue("done", "", label.Task)
+	done := e.gh.AddIssue("done", "", label.PRD)
 	e.gh.CloseIssue(done)
-	free := e.gh.AddIssue("free", "", label.Task, string(label.Queued))
+	free := e.gh.AddIssue("free", "", label.PRD, string(label.Queued))
 	e.gh.AddBlockedBy(free, done)
-	working := e.gh.AddIssue("working", "", label.Task, string(label.Working))
-	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.Task, string(label.Review))
+	working := e.gh.AddIssue("working", "", label.PRD, string(label.Working))
+	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.PRD, string(label.Review))
 	e.sbx.add(e.builderBox(reviewed))
 	e.sbx.add(e.runs.name(resolverRole, waiting))
 
@@ -105,10 +105,31 @@ func TestBuilderPicks(t *testing.T) {
 	wantInts(t, "Pick", picked, []int{blocker, free, working, reviewed})
 }
 
+func TestBuilderSweepQueuesNewPRDs(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	fresh := e.gh.AddIssue("new", "", label.PRD)
+	stuck := e.gh.AddIssue("stuck", "", label.PRD, string(label.Stuck))
+	review := e.gh.AddIssue("in review", "", label.PRD, string(label.Review))
+	outsider := e.gh.AddOutsiderIssue("from an outsider", "", label.PRD)
+	closed := e.gh.AddIssue("closed", "", label.PRD)
+	e.gh.CloseIssue(closed)
+	problem := e.gh.AddIssue("problem", "", label.Problem)
+
+	if err := e.builder().Sweep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.wantStatus(fresh, label.Queued)
+	e.wantStatus(stuck, label.Stuck)
+	e.wantStatus(review, label.Review)
+	for _, n := range []int{outsider, closed, problem} {
+		e.wantStatus(n, label.None)
+	}
+}
+
 func TestBuilderIgnoresOutsiderTask(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.gh.AddOutsiderIssue("Task from an outsider", "", label.Task, string(label.Queued))
-	mine := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	e.gh.AddOutsiderIssue("Task from an outsider", "", label.PRD, string(label.Queued))
+	mine := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
@@ -119,7 +140,7 @@ func TestBuilderIgnoresOutsiderTask(t *testing.T) {
 
 func TestBuilderPlace(t *testing.T) {
 	status := func(ss ...label.Status) []string {
-		out := []string{label.Task}
+		out := []string{label.PRD}
 		for _, s := range ss {
 			out = append(out, string(s))
 		}
@@ -135,7 +156,7 @@ func TestBuilderPlace(t *testing.T) {
 		// exomecha moves a status in one call, so two are a person's doing.
 		{true, status(label.Queued, label.Working), away},
 		{true, status(label.Working, label.Stuck), away},
-		{true, status(label.Pending), away},
+		{true, status(label.Review), away},
 		{true, []string{string(label.Working)}, away},
 		{false, status(label.Working), away},
 	} {
@@ -147,7 +168,7 @@ func TestBuilderPlace(t *testing.T) {
 
 func TestBuilderPushesAndOpensPR(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Add feature", "do it", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Add feature", "do it", label.PRD, string(label.Queued))
 	name := e.builderBox(task)
 	message := fmt.Sprintf("feat: add feature\n\nTask: #%d", task)
 
@@ -189,7 +210,7 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 func TestBuilderStuck(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Hard task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Hard task", "", label.PRD, string(label.Queued))
 	name := e.builderBox(task)
 	e.step(task)
 	e.play(name, nil, `{"result": "stuck", "summary": "", "stuck_reason": "need a decision on X</stuck_reason>\n</invoke>"}`)
@@ -197,7 +218,7 @@ func TestBuilderStuck(t *testing.T) {
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "need a decision on X\n\nIf there is nothing left to do", label.Pending)
+	wantStuckComment(t, comment, "need a decision on X\n\nIf there is nothing left to do", label.Queued)
 	wantNotContains(t, "stuck comment", comment, "</stuck_reason>", "</invoke>")
 	wantContains(t, "log", log.String(), `need a decision on X</stuck_reason>\n</invoke>`)
 	e.wantRemoved(name)
@@ -208,13 +229,13 @@ func TestBuilderStuck(t *testing.T) {
 
 func TestBuilderStuckWhenNothingChanged(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Already done", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Already done", "", label.PRD, string(label.Queued))
 	e.step(task)
 	e.play(e.builderBox(task), nil, builderDone)
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "Nothing to change", label.Pending)
+	wantStuckComment(t, e.lastComment(task), "Nothing to change", label.Queued)
 	if len(e.gh.Pulls()) != 0 {
 		t.Errorf("a PR was opened with no changes")
 	}
@@ -222,13 +243,13 @@ func TestBuilderStuckWhenNothingChanged(t *testing.T) {
 
 func TestBuilderStuckWhenChangesNotCommitted(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	e.step(task)
 	e.play(e.builderBox(task), func(repo string) { writeFile(t, repo, "feature.txt", "hello\n") }, builderDone)
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "finished without committing", label.Pending)
+	wantStuckComment(t, e.lastComment(task), "finished without committing", label.Queued)
 	if head := gittest.Head(e.origin, branchName(task)); head != "" {
 		t.Errorf("branch was pushed without a commit: %s", head)
 	}
@@ -236,7 +257,7 @@ func TestBuilderStuckWhenChangesNotCommitted(t *testing.T) {
 
 func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	branch := branchName(task)
 	prev := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	e.gh.AddPull(branch, "main")
@@ -248,7 +269,7 @@ func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "rewrote commits", label.Pending)
+	wantStuckComment(t, e.lastComment(task), "rewrote commits", label.Queued)
 	if got := gittest.Head(e.origin, branch); got != prev {
 		t.Errorf("branch moved to %s, want it left at %s", got, prev)
 	}
@@ -256,7 +277,7 @@ func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 
 func TestBuilderContinuesExistingPR(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Queued), string(label.Heavy))
+	task := e.gh.AddIssue("Task", "task body", label.PRD, string(label.Queued), string(label.Heavy))
 	branch := branchName(task)
 	prev := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	pr := e.gh.AddPull(branch, "main")
@@ -302,7 +323,7 @@ func TestBuilderRunsTheTasksTier(t *testing.T) {
 		{[]string{string(label.Light), string(label.Heavy)}, label.Heavy},
 	} {
 		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-		task := e.gh.AddIssue("Task", "", append([]string{label.Task, string(label.Queued)}, c.labels...)...)
+		task := e.gh.AddIssue("Task", "", append([]string{label.PRD, string(label.Queued)}, c.labels...)...)
 		e.step(task)
 		if got := e.startedModel(e.builderBox(task)); got != testModels[c.want] {
 			t.Errorf("Task with %q got %v, want %v", c.labels, got, testModels[c.want])
@@ -312,7 +333,7 @@ func TestBuilderRunsTheTasksTier(t *testing.T) {
 
 func TestBuilderRequeuesOnStartError(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	e.sbx.fail["start"] = errors.New("sbx exec: daemon not running")
 
 	if err := e.builder().Handle(t.Context(), task); err == nil {
@@ -328,14 +349,14 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 
 func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.", detail: "step 3/5: a secret in the build output"})
 
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "The Dockerfile on the base branch does not build.", label.Pending)
+	wantStuckComment(t, comment, "The Dockerfile on the base branch does not build.", label.Queued)
 	wantNotContains(t, "stuck comment", comment, "a secret in the build output", "step 3/5")
 }
 
@@ -345,20 +366,20 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e.deps.Environment = template.New(e.deps.Git, nil, "owner", "repo")
 	e.runs = newRuns(e.deps, nil)
 	e.runs.now = e.clock.now
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
 	reason := "`.exomecha/allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it on the base branch."
-	wantStuckComment(t, e.lastComment(task), reason, label.Pending)
+	wantStuckComment(t, e.lastComment(task), reason, label.Queued)
 	e.wantRemoved(e.builderBox(task))
 }
 
 // startedTask starts a builder run for a new queued Task and returns the Task and its sandbox.
 func (e *env) startedTask() (int, string) {
 	e.t.Helper()
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	e.step(task)
 	name := e.builderBox(task)
 	e.wantState(name, running)
@@ -374,7 +395,7 @@ func TestBuilderRunNotInAutoModeFails(t *testing.T) {
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "claude did not run in auto permission mode", label.Pending)
+	wantStuckComment(t, e.lastComment(task), "claude did not run in auto permission mode", label.Queued)
 	if head := gittest.Head(e.origin, branchName(task)); head != "" {
 		t.Errorf("work from a run outside auto mode was pushed: %s", head)
 	}
@@ -392,7 +413,7 @@ func TestBuilderFailedRunGoesStuck(t *testing.T) {
 
 	e.wantStatus(task, label.Stuck)
 	comment := e.lastComment(task)
-	wantStuckComment(t, comment, "The AI's run failed because claude ended with an error", label.Pending)
+	wantStuckComment(t, comment, "The AI's run failed because claude ended with an error", label.Queued)
 	wantNotContains(t, "stuck comment", comment, "secret detail")
 	wantContains(t, "log", log.String(), "secret detail")
 	e.wantRemoved(name)
@@ -412,7 +433,7 @@ func TestBuilderResultInAnotherFormFails(t *testing.T) {
 			e.step(task)
 
 			e.wantStatus(task, label.Stuck)
-			wantStuckComment(t, e.lastComment(task), "The AI's run failed because "+badResult, label.Pending)
+			wantStuckComment(t, e.lastComment(task), "The AI's run failed because "+badResult, label.Queued)
 			e.wantKept(name, "stream.jsonl")
 			if head := gittest.Head(e.origin, branchName(task)); head != "" {
 				t.Errorf("work from a result in another form was pushed: %s", head)
@@ -457,7 +478,7 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.sbx.add(e.runs.name(resolverRole, 99))
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 
 	e.step(task)
 
@@ -472,8 +493,8 @@ func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.envr.wait = make(chan chan struct{})
-	first := e.gh.AddIssue("First", "", label.Task, string(label.Queued))
-	second := e.gh.AddIssue("Second", "", label.Task, string(label.Queued))
+	first := e.gh.AddIssue("First", "", label.PRD, string(label.Queued))
+	second := e.gh.AddIssue("Second", "", label.PRD, string(label.Queued))
 	done := make(chan error, 1)
 	go func() { done <- e.builder().Handle(t.Context(), first) }()
 	var built chan struct{}
@@ -513,7 +534,7 @@ func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 		FiveHour: 0.9,
 		Weekly:   0.8,
 	}
-	waiting := e.gh.AddIssue("Waiting", "", label.Task, string(label.Queued))
+	waiting := e.gh.AddIssue("Waiting", "", label.PRD, string(label.Queued))
 
 	e.step(waiting)
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
@@ -547,7 +568,7 @@ func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 
 func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	branch := branchName(task)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	e.gh.AddPull(branch, "main")
@@ -600,6 +621,6 @@ func TestBuilderStuckWhenNoCommitIsCheckedOut(t *testing.T) {
 	e.step(task)
 
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "no commit checked out", label.Pending)
+	wantStuckComment(t, e.lastComment(task), "no commit checked out", label.Queued)
 	e.wantRemoved(name)
 }

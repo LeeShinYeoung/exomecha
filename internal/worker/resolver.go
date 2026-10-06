@@ -48,7 +48,7 @@ func (*resolver) Name() string { return resolverRole.name }
 
 // Pick returns the Tasks in review whose PR conflicts, and every Task that has a resolver sandbox.
 func (r *resolver) Pick(ctx context.Context) ([]int, error) {
-	tasks, err := r.GitHub.ListOpen(ctx, label.Task, string(label.Review))
+	tasks, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 }
 
 func (r *resolver) place(ctx context.Context, task github.Issue) (place, error) {
-	if !holds(task, label.Task, label.Review) {
+	if !holds(task, label.PRD, label.Review) {
 		return away, nil
 	}
 	pr, ok, err := taskPR(ctx, r.GitHub, task.Number)
@@ -113,11 +113,7 @@ func (r *resolver) start(ctx context.Context, task github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		prd, err := parentPRD(ctx, r.GitHub, n)
-		if err != nil {
-			return spec{}, err
-		}
-		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: taskText(task) + comments + prd}, nil
+		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: taskText(task) + comments}, nil
 	})
 }
 

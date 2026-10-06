@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"fmt"
 	"maps"
 	"net/http"
 	"os"
@@ -345,7 +344,7 @@ func TestRoundDelaysArePerWorker(t *testing.T) {
 // A real builder start that sbx fails waits a minute in the loop, then starts.
 func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 	name := e.builderBox(task)
 	e.sbx.fail["create"] = errors.New("sbx run: daemon not running")
 	r := newRounds(e.builder(), e.clock)
@@ -387,9 +386,7 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 }
 
 const (
-	issuesRoute   = "POST /repos/{owner}/{repo}/issues"
 	labelsRoute   = "PUT /repos/{owner}/{repo}/issues/{n}/labels"
-	blockedRoute  = "POST /repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by"
 	commentsRoute = "POST /repos/{owner}/{repo}/issues/{n}/comments"
 	pullsRoute    = "POST /repos/{owner}/{repo}/pulls"
 	pullRoute     = "GET /repos/{owner}/{repo}/pulls/{n}"
@@ -442,10 +439,8 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 	builderHandle := func(e *env, n int) error { return e.builder().Handle(e.t.Context(), n) }
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
-	splitterHandle := func(e *env, n int) error { return e.splitter().Handle(e.t.Context(), n) }
-	sequencerHandle := func(e *env, n int) error { return e.sequencer().Handle(e.t.Context(), n) }
 	queued := func(e *env) (int, string) {
-		task := e.gh.AddIssue("Task", "", label.Task, string(label.Queued))
+		task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
 		return task, e.builderBox(task)
 	}
 	built := func(e *env) (int, string) {
@@ -495,7 +490,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.wantRemoved(name)
 		}},
 		{"builder", "restart's SetStatus", func(e *env) (int, string) {
-			task := e.gh.AddIssue("Task", "", label.Task, string(label.Working))
+			task := e.gh.AddIssue("Task", "", label.PRD, string(label.Working))
 			return task, e.builderBox(task)
 		}, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Queued)
@@ -559,55 +554,6 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			if !e.gh.Pulls()[0].Merged {
 				e.t.Error("PR not merged")
 			}
-			e.wantRemoved(name)
-		}},
-		{"splitter", "start's create", func(e *env) (int, string) {
-			prd := e.gh.AddIssue("PRD", "the plan", label.PRD)
-			return prd, e.splitterBox(prd)
-		}, sbxFault("create"), splitterHandle, func(e *env, n int, name string) {
-			e.wantState(name, running)
-		}},
-		// A Task left from an earlier try is closed on every try, the one that works too.
-		{"splitter", "collect's CreateIssue", func(e *env) (int, string) {
-			prd, name := e.splitting()
-			e.gh.AddSubIssue(prd, e.gh.AddIssue("left over", "", label.Task, string(label.Pending)))
-			e.play(name, nil, `{"tasks": [{"title": "A", "body": "a", "blocked_by": []}, {"title": "B", "body": "b", "blocked_by": [1]}]}`)
-			return prd, name
-		}, githubFault(issuesRoute), splitterHandle, func(e *env, n int, name string) {
-			e.wantRemoved(name)
-			subs := e.gh.Issue(n).SubIssues
-			if len(subs) != 3 || e.gh.Issue(subs[0]).Open {
-				e.t.Fatalf("PRD sub-issues = %v, want the left-over Task closed and two new ones", subs)
-			}
-			for _, task := range subs[1:] {
-				e.wantStatus(task, label.Pending)
-			}
-			wantInts(e.t, "B blocked by", e.gh.Issue(subs[2]).BlockedBy, []int{subs[1]})
-			if !e.gh.Issue(n).HasLabel(label.Tasked) {
-				e.t.Errorf("PRD has no %s label", label.Tasked)
-			}
-		}},
-		{"sequencer", "SetStatus without candidates", func(e *env) (int, string) {
-			task := e.gh.AddIssue("Task", "", label.Task, string(label.Pending))
-			return task, e.sequencerBox(task)
-		}, githubFault(labelsRoute), sequencerHandle, func(e *env, n int, name string) {
-			e.wantStatus(n, label.Queued)
-			e.wantRemoved(name)
-		}},
-		{"sequencer", "start's create", func(e *env) (int, string) {
-			e.gh.AddIssue("lower", "", label.Task, string(label.Queued))
-			task := e.gh.AddIssue("Task", "", label.Task, string(label.Pending))
-			return task, e.sequencerBox(task)
-		}, sbxFault("create"), sequencerHandle, func(e *env, n int, name string) {
-			e.wantState(name, running)
-		}},
-		{"sequencer", "collect's AddBlockedBy", func(e *env) (int, string) {
-			task, lower, name := e.sequencing()
-			e.play(name, nil, fmt.Sprintf(`{"blocked_by": [%d]}`, lower))
-			return task, name
-		}, githubFault(blockedRoute), sequencerHandle, func(e *env, n int, name string) {
-			wantInts(e.t, "blocked by", e.gh.Issue(n).BlockedBy, []int{n - 1}) // sequencing's lower Task
-			e.wantStatus(n, label.Queued)
 			e.wantRemoved(name)
 		}},
 	} {

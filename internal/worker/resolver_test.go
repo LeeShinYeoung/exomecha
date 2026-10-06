@@ -15,7 +15,7 @@ const resolverDone = `{"result": "resolved", "reason": "kept both lines"}`
 // conflictTask sets up a Task in review whose branch and main both changed since the branch
 // started, and whose PR GitHub reports as conflicting. It returns the branch head.
 func (e *env) conflictTask(feature, main map[string]string) (task, pr int, head string) {
-	task = e.gh.AddIssue("Task", "task body", label.Task, string(label.Review))
+	task = e.gh.AddIssue("Task", "task body", label.PRD, string(label.Review))
 	head = gittest.Commit(e.t, e.origin, branchName(task), "main", feature)
 	gittest.Commit(e.t, e.origin, "main", "", main)
 	pr = e.gh.AddPull(branchName(task), "main")
@@ -216,7 +216,7 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 
 func TestResolverNothingToMerge(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "task body", label.Task, string(label.Review))
+	task := e.gh.AddIssue("Task", "task body", label.PRD, string(label.Review))
 	head := gittest.Commit(t, e.origin, branchName(task), "main", map[string]string{"app.txt": "feature\n"})
 	pr := e.gh.AddPull(branchName(task), "main")
 	e.gh.SetMergeable(pr, new(false))

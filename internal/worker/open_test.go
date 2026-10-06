@@ -208,8 +208,6 @@ func TestOpenRunsTheRolesTier(t *testing.T) {
 		tier label.Tier // the spec's
 		want label.Tier
 	}{
-		{splitterRole, "", label.Heavy},
-		{sequencerRole, "", label.Light},
 		{reviewerRole, "", label.Heavy},
 		{resolverRole, "", label.Light},
 		{builderRole, "", label.Normal},

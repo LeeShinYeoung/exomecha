@@ -26,7 +26,7 @@ var builderRole = role{
 	schema:  builderSchema,
 	project: true,
 	from:    label.Working,
-	back:    label.Pending,
+	back:    label.Queued,
 	queued:  label.Queued,
 	// For a Task with no tier label. A tier label takes its place.
 	tier: label.Normal,
@@ -50,14 +50,32 @@ type builder struct {
 
 func (*builder) Name() string { return builderRole.name }
 
+// Sweep queues each new PRD, which has no status yet.
+func (b *builder) Sweep(ctx context.Context) error {
+	prds, err := b.GitHub.ListOpen(ctx, label.PRD)
+	if err != nil {
+		return err
+	}
+	for _, p := range prds {
+		if p.Status() != label.None {
+			continue
+		}
+		if err := b.GitHub.SetStatus(ctx, p.Number, label.None, label.Queued); err != nil {
+			return err
+		}
+		slog.Info("queued task", "task", p.Number)
+	}
+	return nil
+}
+
 // Pick returns the queued Tasks that are ready, every working Task, and every Task that has a
 // builder sandbox, whatever its label.
 func (b *builder) Pick(ctx context.Context) ([]int, error) {
-	queued, err := b.GitHub.ListOpen(ctx, label.Task, string(label.Queued))
+	queued, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Queued))
 	if err != nil {
 		return nil, err
 	}
-	working, err := b.GitHub.ListOpen(ctx, label.Task, string(label.Working))
+	working, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Working))
 	if err != nil {
 		return nil, err
 	}
@@ -102,9 +120,9 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 
 func (b *builder) place(task github.Issue) place {
 	switch {
-	case holds(task, label.Task, label.Queued):
+	case holds(task, label.PRD, label.Queued):
 		return ready
-	case holds(task, label.Task, label.Working):
+	case holds(task, label.PRD, label.Working):
 		return working
 	}
 	return away

@@ -99,7 +99,7 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 	e.runs = newRuns(e.deps, nil)
 	task := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`. Commit it with the message `feat: add hello`.\n",
-		label.Task, string(label.Queued))
+		label.PRD, string(label.Queued))
 	name := e.builderBox(task)
 	t.Cleanup(func() {
 		if err := sbx.Remove(context.Background(), name); err != nil {
@@ -221,12 +221,10 @@ func TestRealReviewerRun(t *testing.T) {
 	e.deps.SandboxPrefix = fmt.Sprintf("impl-run-v%d-", time.Now().UnixNano()%100_000)
 	e.useOpus()
 	e.runs = newRuns(e.deps, nil)
-	prd := e.gh.AddIssue("Greet visitors", "People who open the repository should find a greeting file at its root.\n", label.PRD, label.Tasked)
 	task := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`.\n\n"+
 			"## Acceptance criteria\n\n- `hello.txt` exists at the root and holds exactly the line `hello`.\n",
-		label.Task, string(label.Review))
-	e.gh.AddSubIssue(prd, task)
+		label.PRD, string(label.Review))
 	head := gittest.Commit(t, e.origin, branchName(task), "main", map[string]string{"hello.txt": "hello\n"})
 	pr := e.gh.AddPull(branchName(task), "main")
 	e.gh.SetMergeable(pr, new(true))

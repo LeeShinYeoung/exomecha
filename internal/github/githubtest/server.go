@@ -62,7 +62,6 @@ type Issue struct {
 	Comments    []Comment
 	Association string
 	SubIssues   []int
-	Parent      int
 	BlockedBy   []int
 }
 
@@ -89,7 +88,6 @@ type Pull struct {
 	Body        string
 	Open        bool
 	Mergeable   *bool
-	Files       []string
 	Reviews     []Review
 	Merged      bool
 	MergeMethod string
@@ -130,7 +128,6 @@ func New(t *testing.T) *Server {
 	const repo = "/repos/{owner}/{repo}"
 	s.route(mux, "GET /user", s.getUser)
 	s.route(mux, "GET "+repo+"/issues", s.listIssues)
-	s.route(mux, "POST "+repo+"/issues", s.createIssue)
 	s.route(mux, "GET "+repo+"/issues/{n}", s.getIssue)
 	s.route(mux, "PATCH "+repo+"/issues/{n}", s.updateIssue)
 	s.route(mux, "GET "+repo+"/issues/{n}/comments", s.listComments)
@@ -140,14 +137,10 @@ func New(t *testing.T) *Server {
 	s.route(mux, "POST "+repo+"/issues/{n}/labels", s.addLabels)
 	s.route(mux, "PUT "+repo+"/issues/{n}/labels", s.setLabels)
 	s.route(mux, "GET "+repo+"/issues/{n}/sub_issues", s.listSubIssues)
-	s.route(mux, "POST "+repo+"/issues/{n}/sub_issues", s.addSubIssue)
-	s.route(mux, "GET "+repo+"/issues/{n}/parent", s.getParent)
 	s.route(mux, "GET "+repo+"/issues/{n}/dependencies/blocked_by", s.listBlockedBy)
-	s.route(mux, "POST "+repo+"/issues/{n}/dependencies/blocked_by", s.addBlockedBy)
 	s.route(mux, "GET "+repo+"/pulls", s.listPulls)
 	s.route(mux, "POST "+repo+"/pulls", s.createPull)
 	s.route(mux, "GET "+repo+"/pulls/{n}", s.getPull)
-	s.route(mux, "GET "+repo+"/pulls/{n}/files", s.listFiles)
 	s.route(mux, "GET "+repo+"/pulls/{n}/reviews", s.listReviews)
 	s.route(mux, "POST "+repo+"/pulls/{n}/reviews", s.createReview)
 	s.route(mux, "PUT "+repo+"/pulls/{n}/merge", s.merge)
@@ -207,15 +200,6 @@ func (s *Server) pathIssue(r *http.Request) *Issue {
 func (s *Server) pathPull(r *http.Request) *Pull {
 	n, _ := strconv.Atoi(r.PathValue("n"))
 	return s.pulls[n]
-}
-
-func (s *Server) issueByID(id int64) *Issue {
-	for _, i := range s.issues {
-		if i.ID == id {
-			return i
-		}
-	}
-	return nil
 }
 
 func (s *Server) head(p *Pull) string {
@@ -327,18 +311,6 @@ func containsAll(have, want []string) bool {
 		}
 	}
 	return true
-}
-
-func (s *Server) createIssue(r *http.Request) (int, any) {
-	var req struct {
-		Title  string   `json:"title"`
-		Body   string   `json:"body"`
-		Labels []string `json:"labels"`
-	}
-	if !s.decode(r, &req) {
-		return http.StatusBadRequest, message("bad body")
-	}
-	return http.StatusCreated, issueJSON(s.newIssue(req.Title, req.Body, req.Labels))
 }
 
 func (s *Server) getIssue(r *http.Request) (int, any) {
@@ -462,64 +434,12 @@ func (s *Server) listSubIssues(r *http.Request) (int, any) {
 	return http.StatusOK, s.issuesJSON(i.SubIssues)
 }
 
-func (s *Server) addSubIssue(r *http.Request) (int, any) {
-	parent := s.pathIssue(r)
-	if parent == nil {
-		return notFound()
-	}
-	var req struct {
-		SubIssueID int64 `json:"sub_issue_id"`
-	}
-	if !s.decode(r, &req) {
-		return http.StatusBadRequest, message("bad body")
-	}
-	child := s.issueByID(req.SubIssueID)
-	if child == nil {
-		return notFound()
-	}
-	if child.Parent != 0 {
-		return http.StatusUnprocessableEntity, message("issue already has a parent")
-	}
-	child.Parent = parent.Number
-	parent.SubIssues = append(parent.SubIssues, child.Number)
-	return http.StatusCreated, issueJSON(parent)
-}
-
-func (s *Server) getParent(r *http.Request) (int, any) {
-	i := s.pathIssue(r)
-	if i == nil || i.Parent == 0 {
-		return notFound()
-	}
-	return http.StatusOK, issueJSON(s.issues[i.Parent])
-}
-
 func (s *Server) listBlockedBy(r *http.Request) (int, any) {
 	i := s.pathIssue(r)
 	if i == nil {
 		return notFound()
 	}
 	return http.StatusOK, s.issuesJSON(i.BlockedBy)
-}
-
-func (s *Server) addBlockedBy(r *http.Request) (int, any) {
-	i := s.pathIssue(r)
-	if i == nil {
-		return notFound()
-	}
-	var req struct {
-		IssueID int64 `json:"issue_id"`
-	}
-	if !s.decode(r, &req) {
-		return http.StatusBadRequest, message("bad body")
-	}
-	blocker := s.issueByID(req.IssueID)
-	if blocker == nil {
-		return notFound()
-	}
-	if !slices.Contains(i.BlockedBy, blocker.Number) {
-		i.BlockedBy = append(i.BlockedBy, blocker.Number)
-	}
-	return http.StatusCreated, issueJSON(i)
 }
 
 func (s *Server) listPulls(r *http.Request) (int, any) {
@@ -571,18 +491,6 @@ func (s *Server) getPull(r *http.Request) (int, any) {
 		return notFound()
 	}
 	return http.StatusOK, s.pullJSON(p)
-}
-
-func (s *Server) listFiles(r *http.Request) (int, any) {
-	p := s.pathPull(r)
-	if p == nil {
-		return notFound()
-	}
-	out := []any{}
-	for _, f := range p.Files {
-		out = append(out, map[string]string{"filename": f})
-	}
-	return http.StatusOK, out
 }
 
 func reviewJSON(k int, rv Review) any {
@@ -734,7 +642,6 @@ func (s *Server) AddOutsiderComment(n int, body string) {
 func (s *Server) AddSubIssue(parent, child int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.issues[child].Parent = parent
 	s.issues[parent].SubIssues = append(s.issues[parent].SubIssues, child)
 }
 
@@ -792,12 +699,6 @@ func (s *Server) SetMergeable(n int, mergeable *bool) {
 	s.pulls[n].Mergeable = mergeable
 }
 
-func (s *Server) SetFiles(n int, files ...string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pulls[n].Files = files
-}
-
 func (s *Server) AddReview(n int, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -814,7 +715,6 @@ func (s *Server) Pull(n int) Pull {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := *s.pulls[n]
-	p.Files = slices.Clone(p.Files)
 	p.Reviews = slices.Clone(p.Reviews)
 	return p
 }

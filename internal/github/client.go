@@ -3,7 +3,6 @@ package github
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -54,9 +53,4 @@ func (c *Client) Identity(ctx context.Context) (name, email string, err error) {
 // leave the Task in status:working until exomecha restarts.
 func WaitForRateLimit(ctx context.Context) context.Context {
 	return context.WithValue(ctx, gh.SleepUntilPrimaryRateLimitResetWhenRateLimited, true)
-}
-
-func isNotFound(err error) bool {
-	var e *gh.ErrorResponse
-	return errors.As(err, &e) && e.Response != nil && e.Response.StatusCode == http.StatusNotFound
 }

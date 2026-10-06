@@ -372,7 +372,7 @@ func TestBuildName(t *testing.T) {
 
 func TestNameFits63(t *testing.T) {
 	prefix := Prefix("some-organization", strings.Repeat("long-repository-name-", 3))
-	for _, role := range []string{"builder", "resolver", "reviewer", "splitter", "sequencer"} {
+	for _, role := range []string{"builder", "resolver", "reviewer"} {
 		if name := Name(prefix, 9999999, role); len(name) > 63 {
 			t.Errorf("%s is %d chars, sbx allows 63", name, len(name))
 		}
@@ -390,8 +390,6 @@ func TestParse(t *testing.T) {
 		{prefix + "12-builder", 12, "builder", true},
 		{prefix + "7-resolver", 7, "resolver", true},
 		{prefix + "8-reviewer", 8, "reviewer", true},
-		{prefix + "9-splitter", 9, "splitter", true},
-		{prefix + "10-sequencer", 10, "sequencer", true},
 		{Name(prefix, 9999999, "resolver"), 9999999, "resolver", true},
 		{prefix + "012-builder", 0, "", false},
 		{prefix + "0-builder", 0, "", false},

@@ -28,12 +28,10 @@ func (e *env) review(n int) {
 
 func (e *env) reviewerBox(n int) string { return e.runs.name(reviewerRole, n) }
 
-// reviewTask sets up a Task in review under a PRD, with a pushed branch and an open,
-// mergeable PR. With no CI runs set, its head commit is an hour old.
+// reviewTask sets up a Task in review, with a pushed branch and an open, mergeable PR. With no
+// CI runs set, its head commit is an hour old.
 func (e *env) reviewTask() (task, pr int, sha string) {
-	prd := e.gh.AddIssue("PRD", "why we decided this", label.PRD, label.Tasked)
-	task = e.gh.AddIssue("Task", "task body", label.Task, string(label.Review))
-	e.gh.AddSubIssue(prd, task)
+	task = e.gh.AddIssue("Task", "task body", label.PRD, string(label.Review))
 	sha = gittest.Commit(e.t, e.origin, branchName(task), "main", map[string]string{"feature.txt": "x\n"})
 	pr = e.gh.AddPull(branchName(task), "main")
 	e.gh.SetMergeable(pr, new(true))
@@ -105,7 +103,7 @@ func TestReviewerStuckWhenPRClosedByHand(t *testing.T) {
 		t.Error("a review started for a closed PR")
 	}
 	e.wantStatus(task, label.Stuck)
-	wantStuckComment(t, e.lastComment(task), "closed without being merged", label.Pending)
+	wantStuckComment(t, e.lastComment(task), "closed without being merged", label.Queued)
 }
 
 func TestReviewerWaitsForMergeable(t *testing.T) {
@@ -182,7 +180,7 @@ func TestReviewerApproveMerges(t *testing.T) {
 	if got := gittest.Run(t, repo, "rev-parse", "origin/main"); got != gittest.Head(e.origin, "main") {
 		t.Errorf("origin/main in the sandbox = %s", got)
 	}
-	wantContains(t, "claude input", e.readCtl(name, "input.md"), "task body", "why we decided this", "git diff origin/main...HEAD")
+	wantContains(t, "claude input", e.readCtl(name, "input.md"), "task body", "git diff origin/main...HEAD")
 
 	e.play(name, nil, approve)
 	e.review(task)
@@ -533,36 +531,32 @@ func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
 	}
 }
 
-func TestReviewerSweepClosesFinishedPRDs(t *testing.T) {
+func TestReviewerSweepClosesFinishedProblems(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	problem := e.gh.AddIssue("problem", "", label.Problem)
-	prd1 := e.gh.AddIssue("PRD 1", "", label.PRD, label.Tasked)
-	prd2 := e.gh.AddIssue("PRD 2", "", label.PRD, label.Tasked)
-	empty := e.gh.AddIssue("PRD without tasks", "", label.PRD, label.Tasked)
+	empty := e.gh.AddIssue("problem without PRDs", "", label.Problem)
+	prd1 := e.gh.AddIssue("PRD 1", "", label.PRD)
+	prd2 := e.gh.AddIssue("PRD 2", "", label.PRD, string(label.Review))
 	e.gh.AddSubIssue(problem, prd1)
 	e.gh.AddSubIssue(problem, prd2)
-	t1 := e.gh.AddIssue("task 1", "", label.Task)
-	t2 := e.gh.AddIssue("task 2", "", label.Task, string(label.Review))
-	e.gh.AddSubIssue(prd1, t1)
-	e.gh.AddSubIssue(prd2, t2)
-	e.gh.CloseIssue(t1)
+	e.gh.CloseIssue(prd1)
 	r := e.reviewer()
 
 	if err := r.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if e.gh.Issue(prd1).Open {
-		t.Error("PRD 1 is open with all its tasks closed")
-	}
-	if !e.gh.Issue(prd2).Open || !e.gh.Issue(problem).Open || !e.gh.Issue(empty).Open {
-		t.Error("closed a PRD or problem that still has open work, or a PRD with no tasks")
+	if !e.gh.Issue(problem).Open || !e.gh.Issue(empty).Open {
+		t.Error("closed a problem that still has an open PRD, or one with no PRDs")
 	}
 
-	e.gh.CloseIssue(t2)
+	e.gh.CloseIssue(prd2)
 	if err := r.Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if e.gh.Issue(prd2).Open || e.gh.Issue(problem).Open {
-		t.Error("PRD 2 or the problem is still open after every task closed")
+	if e.gh.Issue(problem).Open {
+		t.Error("the problem is still open after every PRD closed")
+	}
+	if !e.gh.Issue(empty).Open {
+		t.Error("closed a problem with no PRDs")
 	}
 }

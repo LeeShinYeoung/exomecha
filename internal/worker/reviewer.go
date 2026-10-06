@@ -54,43 +54,24 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Sweep covers Tasks closed by a merge and Tasks a person closed by hand.
+// Sweep closes each problem whose PRDs are all closed, by a merge or by a person.
 func (r *reviewer) Sweep(ctx context.Context) error {
-	prds, err := r.GitHub.ListOpen(ctx, label.PRD, label.Tasked)
+	problems, err := r.GitHub.ListOpen(ctx, label.Problem)
 	if err != nil {
 		return err
 	}
-	for _, prd := range prds {
-		done, err := r.allClosed(ctx, prd.Number)
+	for _, p := range problems {
+		done, err := r.allClosed(ctx, p.Number)
 		if err != nil {
 			return err
 		}
 		if !done {
 			continue
 		}
-		if err := r.GitHub.Close(ctx, prd.Number, github.Completed); err != nil {
+		if err := r.GitHub.Close(ctx, p.Number, github.Completed); err != nil {
 			return err
 		}
-		slog.Info("closed PRD", "prd", prd.Number)
-
-		problem, ok, err := r.GitHub.Parent(ctx, prd.Number)
-		if err != nil {
-			return err
-		}
-		if !ok || !problem.Open {
-			continue
-		}
-		done, err = r.allClosed(ctx, problem.Number)
-		if err != nil {
-			return err
-		}
-		if !done {
-			continue
-		}
-		if err := r.GitHub.Close(ctx, problem.Number, github.Completed); err != nil {
-			return err
-		}
-		slog.Info("closed problem", "problem", problem.Number)
+		slog.Info("closed problem", "problem", p.Number)
 	}
 	return nil
 }
@@ -110,7 +91,7 @@ func (r *reviewer) allClosed(ctx context.Context, n int) (bool, error) {
 
 // Pick returns the Tasks in review whose PR does not conflict, and every Task that has a reviewer run.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
-	tasks, err := r.GitHub.ListOpen(ctx, label.Task, string(label.Review))
+	tasks, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +134,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
-		return toStuck(ctx, r.GitHub, n, label.Review, label.Pending,
+		return toStuck(ctx, r.GitHub, n, label.Review, label.Queued,
 			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
 	case failing:
 		var b strings.Builder
@@ -171,7 +152,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 
 // look finds the Task's place, with its open PR, and the CI runs that failed when the place is failing.
 func (r *reviewer) look(ctx context.Context, task github.Issue) (place, github.PR, []github.Run, error) {
-	if !holds(task, label.Task, label.Review) {
+	if !holds(task, label.PRD, label.Review) {
 		return away, github.PR{}, nil, nil
 	}
 	pr, ok, err := taskPR(ctx, r.GitHub, task.Number)
@@ -229,12 +210,8 @@ func (r *reviewer) start(ctx context.Context, task github.Issue, pr github.PR) e
 		if err != nil {
 			return spec{}, err
 		}
-		prd, err := parentPRD(ctx, r.GitHub, n)
-		if err != nil {
-			return spec{}, err
-		}
 		ref := r.Git.BaseRef()
-		input := taskText(task) + comments + prd +
+		input := taskText(task) + comments +
 			fmt.Sprintf("## Base branch\n\n`%s`. See this PR's changes with `git diff %s...HEAD`.\n", ref, ref)
 		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
 	})

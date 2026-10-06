@@ -88,8 +88,6 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
 	runs := newRuns(d, gate)
 	workers := []Worker{
-		&splitter{d, runs},
-		&sequencer{d, runs},
 		&builder{d, runs},
 		&reviewer{d, runs},
 		&resolver{d, runs},
@@ -262,14 +260,6 @@ func issueComments(ctx context.Context, gh *github.Client, n int) (string, error
 		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + b.String(), nil
 }
 
-func parentPRD(ctx context.Context, gh *github.Client, n int) (string, error) {
-	p, ok, err := gh.Parent(ctx, n)
-	if err != nil || !ok {
-		return "", err
-	}
-	return fmt.Sprintf("## Parent PRD #%d: %s (why it was decided this way)\n\n%s\n\n", p.Number, p.Title, strings.TrimSpace(p.Body)), nil
-}
-
 func taskText(t github.Issue) string {
 	return fmt.Sprintf("# Task #%d: %s\n\n%s\n\n", t.Number, t.Title, strings.TrimSpace(t.Body))
 }
@@ -315,19 +305,14 @@ func holds(i github.Issue, kind string, status label.Status) bool {
 }
 
 // back is where the person sends the Task after answering, so it returns to the worker that
-// owns the problem: pending leads back to builder, review leads back to resolver. A PRD has no
-// status to go back to, and splitter takes it again once the stuck label is gone.
+// owns the problem: queued leads back to builder, review leads back to resolver.
 func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
 	trimmed := trimClosingTags(reason)
 	if trimmed != strings.TrimSpace(reason) {
 		slog.Warn("trimmed closing tags from a stuck reason", "task", n, "reason", reason)
 	}
-	issue, again := "Task", "relabel it `"+string(back)+"`"
-	if back == label.None {
-		issue, again = "PRD", "remove the `"+string(label.Stuck)+"` label"
-	}
-	body := "This " + issue + " is blocked and needs a person.\n\n" + trimmed +
-		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and " + again + "."
+	body := "This Task is blocked and needs a person.\n\n" + trimmed +
+		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
 	if err := gh.AddComment(ctx, n, body); err != nil {
 		return err
 	}
