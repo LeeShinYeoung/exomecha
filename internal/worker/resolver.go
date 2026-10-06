@@ -30,7 +30,7 @@ var resolverRole = role{
 	tier:    label.Light,
 }
 
-// begin does nothing when the Task branch is missing or already has the base branch.
+// begin does nothing when the PRD branch is missing or already has the base branch.
 var resolverTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:  {idle, drop, drop, drop, drop, drop, drop},
@@ -38,7 +38,7 @@ var resolverTable = table{
 	ready: {begin, restart, idle, fail, fail, fail, harvest},
 }
 
-// resolver works like builder, one sandbox per Task, while the Task stays in review.
+// resolver works like builder, one sandbox per PRD, while the PRD stays in review.
 type resolver struct {
 	Deps
 	runs *runs
@@ -46,14 +46,14 @@ type resolver struct {
 
 func (*resolver) Name() string { return resolverRole.name }
 
-// Pick returns the Tasks in review whose PR conflicts, and every Task that has a resolver sandbox.
+// Pick returns the PRDs in review whose PR conflicts, and every PRD that has a resolver sandbox.
 func (r *resolver) Pick(ctx context.Context) ([]int, error) {
-	tasks, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
+	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
 		return nil, err
 	}
 	var picked []int
-	for _, t := range tasks {
+	for _, t := range prds {
 		p, err := r.place(ctx, t)
 		if err != nil {
 			return nil, err
@@ -66,24 +66,24 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 }
 
 func (r *resolver) Handle(ctx context.Context, n int) error {
-	task, err := r.GitHub.Issue(ctx, n)
+	prd, err := r.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
 	}
-	p, err := r.place(ctx, task)
+	p, err := r.place(ctx, prd)
 	if err != nil {
 		return err
 	}
 	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
-		func(ctx context.Context) error { return r.start(ctx, task) },
+		func(ctx context.Context) error { return r.start(ctx, prd) },
 		func(ctx context.Context, run run) error { return r.collect(ctx, n, run.in) })
 }
 
-func (r *resolver) place(ctx context.Context, task github.Issue) (place, error) {
-	if !holds(task, label.PRD, label.Review) {
+func (r *resolver) place(ctx context.Context, prd github.Issue) (place, error) {
+	if !holds(prd, label.PRD, label.Review) {
 		return away, nil
 	}
-	pr, ok, err := taskPR(ctx, r.GitHub, task.Number)
+	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
 	if err != nil {
 		return away, err
 	}
@@ -93,8 +93,8 @@ func (r *resolver) place(ctx context.Context, task github.Issue) (place, error) 
 	return clean, nil
 }
 
-func (r *resolver) start(ctx context.Context, task github.Issue) error {
-	n := task.Number
+func (r *resolver) start(ctx context.Context, prd github.Issue) error {
+	n := prd.Number
 	base, err := baseCommit(ctx, r.Git)
 	if err != nil {
 		return err
@@ -113,7 +113,7 @@ func (r *resolver) start(ctx context.Context, task github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: taskText(task) + comments}, nil
+		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: prdText(prd) + comments}, nil
 	})
 }
 
@@ -148,8 +148,8 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	if err := r.Git.PushCommit(ctx, head, branchName(n), false); err != nil {
 		return err
 	}
-	// The Task stays in review, and reviewer looks at it again at its next check, a minute later.
-	slog.Info("merged base branch and pushed", "task", n, "conflicts", len(in.Conflicts))
+	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
+	slog.Info("merged base branch and pushed", "prd", n, "conflicts", len(in.Conflicts))
 	return r.runs.done(ctx, resolverRole, n)
 }
 
@@ -211,7 +211,7 @@ func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, n
 		// The same merge fails the same way on every try, so only a person can get past it. Like
 		// setup's, the output stays in the log.
 		slog.Warn("merge failed without a conflict", "issue", n, "exit", code, "output", output)
-		return nil, "", fmt.Sprintf("Merging `%s` into this Task's branch in the sandbox failed without a conflict, so the AI did not start. "+
+		return nil, "", fmt.Sprintf("Merging `%s` into this PRD's branch in the sandbox failed without a conflict, so the AI did not start. "+
 			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
 	}
 	note = fmt.Sprintf("## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())

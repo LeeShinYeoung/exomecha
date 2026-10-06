@@ -103,9 +103,9 @@ func (c *Client) Close(ctx context.Context, number int, reason CloseReason) erro
 	if err == nil {
 		return nil
 	}
-	// GitHub closes a Task itself when a PR that says "Closes" merges, and can then refuse this
+	// GitHub closes a PRD itself when a PR that says "Closes" merges, and can then refuse this
 	// close. An issue already closed must count, or the caller stops before what comes after the
-	// close, such as clearing the Task's status.
+	// close, such as clearing the PRD's status.
 	if i, rerr := c.Issue(ctx, number); rerr == nil && !i.Open {
 		return nil
 	}

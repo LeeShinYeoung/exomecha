@@ -52,8 +52,8 @@ func builderCells(t *testing.T) tableWorker {
 			working: {restart, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
-			task, _ := e.startedTask()
-			return task
+			prd, _ := e.startedPRD()
+			return prd
 		},
 		put: func(e *env, n int, p place) {
 			if p == ready {
@@ -93,8 +93,8 @@ func resolverCells(t *testing.T) tableWorker {
 			ready: {begin, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
-			task, _, _ := e.conflicted()
-			return task
+			prd, _, _ := e.conflicted()
+			return prd
 		},
 		put: func(e *env, n int, p place) {
 			if p == clean {
@@ -138,8 +138,8 @@ func reviewerCells(t *testing.T) tableWorker {
 			ready:   {begin, restart, idle, fail, fail, fail, harvest},
 		},
 		start: func(e *env) int {
-			task, _, _, _ := e.reviewing()
-			return task
+			prd, _, _, _ := e.reviewing()
+			return prd
 		},
 		put: func(e *env, n int, p place) {
 			pr := e.gh.Pulls()[0].Number
@@ -192,13 +192,13 @@ func reviewerCells(t *testing.T) tableWorker {
 				t.Error("PR not merged")
 			}
 			if e.gh.Issue(n).Open {
-				t.Error("Task still open")
+				t.Error("PRD still open")
 			}
 		},
 	}
 }
 
-// leave returns the ways a Task leaves a worker: closed, relabeled to, and given a second status
+// leave returns the ways a PRD leaves a worker: closed, relabeled to, and given a second status
 // by a person. to must be none of the worker's own statuses.
 func leave(to label.Status) []func(e *env, n int) {
 	return []func(e *env, n int){

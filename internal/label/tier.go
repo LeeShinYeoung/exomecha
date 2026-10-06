@@ -10,7 +10,7 @@ const (
 	Heavy  Tier = "tier:heavy"
 )
 
-// Heaviest first: TierOf takes the first one a Task has, so the heaviest of several labels wins.
+// Heaviest first: TierOf takes the first one a PRD has, so the heaviest of several labels wins.
 var tiers = []Tier{Heavy, Normal, Light}
 
 // TierOf returns the heaviest tier in labels, or "" when there is none.

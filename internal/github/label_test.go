@@ -19,7 +19,7 @@ func TestSetStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n := s.AddIssue("Task", "", label.PRD, "priority", string(label.Queued))
+	n := s.AddIssue("PRD", "", label.PRD, "priority", string(label.Queued))
 	want := func(labels ...string) {
 		t.Helper()
 		if got := s.Issue(n).Labels; !slices.Equal(got, labels) {

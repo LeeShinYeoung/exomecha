@@ -35,15 +35,15 @@ func TestSendToAndFetchFrom(t *testing.T) {
 	base := f.rev(t, "origin/main")
 	box := sandboxRepo(t)
 
-	if err := f.git.SendTo(t.Context(), box, base, "exomecha/task-1", base); err != nil {
+	if err := f.git.SendTo(t.Context(), box, base, "exomecha/prd-1", base); err != nil {
 		t.Fatal(err)
 	}
-	for _, ref := range []string{"refs/remotes/origin/main", "refs/heads/exomecha/task-1"} {
+	for _, ref := range []string{"refs/remotes/origin/main", "refs/heads/exomecha/prd-1"} {
 		if got := gittest.Run(t, box, "rev-parse", ref); got != base {
 			t.Errorf("%s in the sandbox = %q, want %s", ref, got, base)
 		}
 	}
-	gittest.Run(t, box, "checkout", "-q", "exomecha/task-1")
+	gittest.Run(t, box, "checkout", "-q", "exomecha/prd-1")
 	writeFile(t, filepath.Join(box, "new.txt"), "new\n")
 	gittest.CommitAll(t, box, "add new.txt")
 
@@ -107,10 +107,10 @@ func TestSandboxTransfersCarryNoAuth(t *testing.T) {
 	}
 	url := "ext::" + command + " %s " + box
 
-	if err := f.git.SendTo(t.Context(), url, base, "exomecha/task-1", base); err != nil {
+	if err := f.git.SendTo(t.Context(), url, base, "exomecha/prd-1", base); err != nil {
 		t.Fatal(err)
 	}
-	gittest.Run(t, box, "checkout", "-q", "exomecha/task-1")
+	gittest.Run(t, box, "checkout", "-q", "exomecha/prd-1")
 	if _, err := f.git.FetchFrom(t.Context(), url, "box"); err != nil {
 		t.Fatal(err)
 	}
@@ -126,16 +126,16 @@ func TestSandboxTransfersCarryNoAuth(t *testing.T) {
 
 func TestPushCommit(t *testing.T) {
 	f := setup(t, map[string]string{"README.md": "hello\n"})
-	old := gittest.Commit(t, f.origin, "exomecha/task-1", "main", map[string]string{"old.txt": "old\n"})
+	old := gittest.Commit(t, f.origin, "exomecha/prd-1", "main", map[string]string{"old.txt": "old\n"})
 	if err := f.git.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	base := f.rev(t, "origin/main")
 	box := sandboxRepo(t)
-	if err := f.git.SendTo(t.Context(), box, base, "exomecha/task-1", base); err != nil {
+	if err := f.git.SendTo(t.Context(), box, base, "exomecha/prd-1", base); err != nil {
 		t.Fatal(err)
 	}
-	gittest.Run(t, box, "checkout", "-q", "exomecha/task-1")
+	gittest.Run(t, box, "checkout", "-q", "exomecha/prd-1")
 	writeFile(t, filepath.Join(box, "new.txt"), "new\n")
 	gittest.CommitAll(t, box, "new work")
 	head, err := f.git.FetchFrom(t.Context(), box, "box")
@@ -143,16 +143,16 @@ func TestPushCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := f.git.PushCommit(t.Context(), head, "exomecha/task-1", false); err == nil {
+	if err := f.git.PushCommit(t.Context(), head, "exomecha/prd-1", false); err == nil {
 		t.Error("PushCommit without force replaced a branch that does not hold the commit")
 	}
-	if got := gittest.Head(f.origin, "exomecha/task-1"); got != old {
+	if got := gittest.Head(f.origin, "exomecha/prd-1"); got != old {
 		t.Fatalf("branch = %s, want it left at %s", got, old)
 	}
-	if err := f.git.PushCommit(t.Context(), head, "exomecha/task-1", true); err != nil {
+	if err := f.git.PushCommit(t.Context(), head, "exomecha/prd-1", true); err != nil {
 		t.Fatal(err)
 	}
-	if got := gittest.Parents(t, f.origin, "exomecha/task-1"); !slices.Equal(got, []string{base}) {
+	if got := gittest.Parents(t, f.origin, "exomecha/prd-1"); !slices.Equal(got, []string{base}) {
 		t.Errorf("parents = %v, want only main %s (old branch replaced)", got, base)
 	}
 }
@@ -169,7 +169,7 @@ func TestPushDoesNotRunProjectHooks(t *testing.T) {
 	}
 	gittest.Run(t, filepath.Join(f.root, "repo"), "config", "core.hooksPath", hooks)
 
-	if err := f.git.PushCommit(t.Context(), f.rev(t, "origin/main"), "exomecha/task-1", false); err != nil {
+	if err := f.git.PushCommit(t.Context(), f.rev(t, "origin/main"), "exomecha/prd-1", false); err != nil {
 		t.Fatalf("PushCommit ran the project's pre-push hook: %v", err)
 	}
 }

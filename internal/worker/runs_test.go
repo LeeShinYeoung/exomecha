@@ -194,7 +194,7 @@ func (e *env) wantReserve(ro role, n int, want bool) {
 	}
 }
 
-func TestSlotsCountEveryTaskSandbox(t *testing.T) {
+func TestSlotsCountEveryPRDSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")

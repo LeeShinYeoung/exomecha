@@ -39,7 +39,7 @@ type Sandboxes interface {
 }
 
 // Problem is a failure only a person can fix on the base branch. Its Reason goes into the
-// Task's stuck comment.
+// PRD's stuck comment.
 type Problem struct {
 	Reason string
 	Output string // Log only: build output can hold secrets.
@@ -102,7 +102,7 @@ func (e *Env) Template(ctx context.Context) (ref string, err error) {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
-		// Waiters share a failed build's result, so Tasks picked together do not each start a
+		// Waiters share a failed build's result, so PRDs picked together do not each start a
 		// build that fails the same way.
 		if b.ref == ref && !b.abandoned {
 			return result(ref, b.err)
@@ -168,7 +168,7 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 	if err := e.sbx.CreateHelper(ctx, e.helper); err != nil {
 		return err
 	}
-	// Downloads in the Dockerfile meet the same network policy as the Task sandboxes.
+	// Downloads in the Dockerfile meet the same network policy as the PRD sandboxes.
 	if err := e.sbx.Allow(ctx, e.helper, hosts); err != nil {
 		if p, ok := errors.AsType[*sandbox.PatternError](err); ok {
 			return &Problem{Reason: fmt.Sprintf("sbx rejected `%s`: %s. Fix it on the base branch.", hostsPath, p.Detail)}
@@ -208,7 +208,7 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 	return nil
 }
 
-// A sandbox made from a removed template still starts, so Tasks running on an old tag are safe.
+// A sandbox made from a removed template still starts, so PRDs running on an old tag are safe.
 func (e *Env) removeOld(ctx context.Context, ref string) {
 	images, err := e.sbx.Templates(ctx)
 	if err != nil {

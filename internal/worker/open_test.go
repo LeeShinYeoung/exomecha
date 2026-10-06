@@ -24,14 +24,14 @@ func (e *env) rev(ref string) string {
 	return commit
 }
 
-// testSpec is a builder run for Task 1 on a new branch off main, and the name of its sandbox.
+// testSpec is a builder run for PRD 1 on a new branch off main, and the name of its sandbox.
 func (e *env) testSpec() (spec, string) {
 	e.t.Helper()
 	if err := e.deps.Git.Sync(e.t.Context()); err != nil {
 		e.t.Fatal(err)
 	}
 	base := e.rev("origin/main")
-	return spec{branch: branchName(1), base: base, head: base, input: "the Task\n\n"}, e.runs.name(builderRole, 1)
+	return spec{branch: branchName(1), base: base, head: base, input: "the PRD\n\n"}, e.runs.name(builderRole, 1)
 }
 
 func (e *env) open(s spec) string {
@@ -269,14 +269,14 @@ func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
 }
 
 func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
-	e := newEnv(t, setupRepo(`echo "task $EXOMECHA_TASK" > `+setupMarker+"\n"))
+	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
 	s, name := e.testSpec()
 
 	if problem := e.open(s); problem != "" {
 		t.Fatalf("open problem: %s", problem)
 	}
 	b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker))
-	if err != nil || string(b) != "task 1\n" {
+	if err != nil || string(b) != "prd 1\n" {
 		t.Errorf("setup marker = %q, %v", b, err)
 	}
 	if got, want := e.readCtl(name, "input.md"), s.input+setupNote+" It ran before you started.\n\n"; got != want {
@@ -345,7 +345,7 @@ func TestSetupGetsNoGitAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantContains(t, "script environment", string(b), "EXOMECHA_TASK=1")
+	wantContains(t, "script environment", string(b), "EXOMECHA_PRD=1")
 	// What the git runner adds to carry the token.
 	wantNotContains(t, "script environment", string(b), "GIT_CONFIG_COUNT", "GIT_CONFIG_VALUE", "AUTHORIZATION")
 }

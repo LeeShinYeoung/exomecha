@@ -135,11 +135,11 @@ func TestList(t *testing.T) {
 func TestExec(t *testing.T) {
 	f := newFakeSBX(t)
 	f.answer("exec", "out\n")
-	out, err := (CLI{}).Exec(t.Context(), "box", "/home/agent/repo", []string{"EXOMECHA_TASK=3"}, "git", "status")
+	out, err := (CLI{}).Exec(t.Context(), "box", "/home/agent/repo", []string{"EXOMECHA_PRD=3"}, "git", "status")
 	if err != nil || string(out) != "out\n" {
 		t.Errorf("Exec = %q, %v", out, err)
 	}
-	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "EXOMECHA_TASK=3", "box", "git", "status"})
+	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "EXOMECHA_PRD=3", "box", "git", "status"})
 }
 
 func TestExecFailure(t *testing.T) {
@@ -399,7 +399,7 @@ func TestParse(t *testing.T) {
 		{prefix + "x-12-builder", 0, "", false},
 		{Name(Prefix("o", "r2"), 12, "builder"), 0, "", false},
 		{Name(Prefix("o", "r-2"), 12, "builder"), 0, "", false},
-		{"exomecha-task-o-r-12-builder", 0, "", false},
+		{"exomecha-prd-o-r-12-builder", 0, "", false},
 		{"exomecha-build-o-r", 0, "", false},
 		{"impl-run-12-builder", 0, "", false},
 	} {

@@ -145,23 +145,23 @@ func TestUsageIsReadOnlyForAStart(t *testing.T) {
 	f := newFakeUsage()
 	e.runs.gate = f.gate
 	alone := e.gh.AddIssue("PRD with no status", "", label.PRD)
-	task, pr, _ := e.reviewTask()
+	prd, pr, _ := e.reviewPRD()
 	e.gh.SetMergeable(pr, nil)
 
 	if err := e.builder().Sweep(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	e.review(task)
+	e.review(prd)
 	f.wantChecks(t, 0)
 	e.wantStatus(alone, label.Queued)
 
 	e.gh.SetMergeable(pr, new(true))
-	e.review(task)
+	e.review(prd)
 	f.wantChecks(t, 1)
-	e.wantState(e.reviewerBox(task), running)
+	e.wantState(e.reviewerBox(prd), running)
 
 	f.clock = f.clock.Add(usageFresh)
-	e.review(task)
+	e.review(prd)
 	f.wantChecks(t, 1)
 }
 
@@ -173,8 +173,8 @@ func TestNoRunStartsOverTheLimit(t *testing.T) {
 	e.runs.gate = f.gate
 	alone := e.gh.AddIssue("PRD with no status", "", label.PRD)
 	queued := e.gh.AddIssue("queued", "", label.PRD, string(label.Queued))
-	review, _, _ := e.reviewTask()
-	conflict, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	review, _, _ := e.reviewPRD()
+	conflict, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
 	if err := e.builder().Sweep(t.Context()); err != nil {
 		t.Fatal(err)

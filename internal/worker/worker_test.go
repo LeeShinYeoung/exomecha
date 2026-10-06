@@ -154,7 +154,7 @@ func TestTrimClosingTags(t *testing.T) {
 }
 
 // wantStuckComment also checks which label the comment tells the person to set,
-// since that decides which worker gets the Task back. A PRD's comment says to remove the label.
+// since that decides which worker gets the PRD back. A PRD's comment says to remove the label.
 func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 	t.Helper()
 	if !strings.HasPrefix(comment, github.Marker) {
@@ -344,13 +344,13 @@ func TestRoundDelaysArePerWorker(t *testing.T) {
 // A real builder start that sbx fails waits a minute in the loop, then starts.
 func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
-	name := e.builderBox(task)
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
+	name := e.builderBox(prd)
 	e.sbx.fail["create"] = errors.New("sbx run: daemon not running")
 	r := newRounds(e.builder(), e.clock)
 
 	r.run(t.Context())
-	e.wantStatus(task, label.Queued)
+	e.wantStatus(prd, label.Queued)
 	e.wantRemoved(name)
 	delete(e.sbx.fail, "create")
 	e.clock.advance(minBackoff / 2)
@@ -360,29 +360,29 @@ func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	}
 	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
-	e.wantStatus(task, label.Working)
+	e.wantStatus(prd, label.Working)
 	e.wantState(name, running)
 }
 
 // A real reviewer whose stuck comment GitHub fails waits a minute in the loop, then comments.
 func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	task, pr, _ := e.reviewTask()
+	prd, pr, _ := e.reviewPRD()
 	e.gh.ClosePull(pr)
 	e.gh.Fail(commentsRoute, http.StatusBadGateway)
 	r := newRounds(e.reviewer(), e.clock)
 
 	r.run(t.Context())
-	e.wantStatus(task, label.Review)
+	e.wantStatus(prd, label.Review)
 	e.gh.Fail(commentsRoute, 0)
 	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
-	if n := len(e.gh.Issue(task).Comments); n != 0 {
+	if n := len(e.gh.Issue(prd).Comments); n != 0 {
 		t.Fatal("tried again before a minute passed")
 	}
 	e.clock.advance(minBackoff / 2)
 	r.run(t.Context())
-	e.wantStatus(task, label.Stuck)
+	e.wantStatus(prd, label.Stuck)
 }
 
 const (
@@ -440,17 +440,17 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
 	queued := func(e *env) (int, string) {
-		task := e.gh.AddIssue("Task", "", label.PRD, string(label.Queued))
-		return task, e.builderBox(task)
+		prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
+		return prd, e.builderBox(prd)
 	}
 	built := func(e *env) (int, string) {
-		task, name := e.startedTask()
+		prd, name := e.startedPRD()
 		e.play(name, commit(e.t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
-		return task, name
+		return prd, name
 	}
 	inReview := func(e *env) (int, string) {
-		task, _, _ := e.reviewTask()
-		return task, e.reviewerBox(task)
+		prd, _, _ := e.reviewPRD()
+		return prd, e.reviewerBox(prd)
 	}
 	for _, c := range []struct {
 		worker, step string
@@ -484,35 +484,35 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 				e.t.Errorf("%d PRs, want one", got)
 			}
 		}},
-		// The Task keeps its one status, so the next try still finds it working.
+		// The PRD keeps its one status, so the next try still finds it working.
 		{"builder", "collect's SetStatus", built, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Review)
 			e.wantRemoved(name)
 		}},
 		{"builder", "restart's SetStatus", func(e *env) (int, string) {
-			task := e.gh.AddIssue("Task", "", label.PRD, string(label.Working))
-			return task, e.builderBox(task)
+			prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Working))
+			return prd, e.builderBox(prd)
 		}, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Queued)
 		}},
 		{"builder", "failed's AddComment", func(e *env) (int, string) {
-			task, name := e.startedTask()
+			prd, name := e.startedPRD()
 			e.sbx.stop(name)
-			return task, name
+			return prd, name
 		}, githubFault(commentsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Stuck)
 			e.wantKept(name, "input.md")
 		}},
 		{"resolver", "start's merge", func(e *env) (int, string) {
-			task, _, _ := e.conflictTask(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
-			return task, e.resolverBox(task)
+			prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+			return prd, e.resolverBox(prd)
 		}, execFault("git merge"), resolverHandle, func(e *env, n int, name string) {
 			e.wantState(name, running)
 		}},
 		{"resolver", "collect's push", func(e *env) (int, string) {
-			task, name, _ := e.conflicted()
+			prd, name, _ := e.conflicted()
 			e.play(name, resolveWith(e.t, "main\nfeature\n"), resolverDone)
-			return task, name
+			return prd, name
 		}, pushFault, resolverHandle, func(e *env, n int, name string) {
 			e.wantRemoved(name)
 			if got := len(gittest.Parents(e.t, e.origin, branchName(n))); got != 2 {
@@ -523,16 +523,16 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.wantState(name, running)
 		}},
 		{"reviewer", "closed's AddComment", func(e *env) (int, string) {
-			task, pr, _ := e.reviewTask()
+			prd, pr, _ := e.reviewPRD()
 			e.gh.ClosePull(pr)
-			return task, e.reviewerBox(task)
+			return prd, e.reviewerBox(prd)
 		}, githubFault(commentsRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Stuck)
 		}},
 		{"reviewer", "failing's AddReview", func(e *env) (int, string) {
-			task, _, sha := e.reviewTask()
+			prd, _, sha := e.reviewPRD()
 			e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
-			return task, e.reviewerBox(task)
+			return prd, e.reviewerBox(prd)
 		}, githubFault(reviewsRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Queued)
 		}},
@@ -540,16 +540,16 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.wantState(name, running)
 		}},
 		{"reviewer", "changes' AddReview", func(e *env) (int, string) {
-			task, _, _, name := e.reviewing()
+			prd, _, _, name := e.reviewing()
 			e.play(name, nil, `{"verdict": "changes", "body": "rename it"}`)
-			return task, name
+			return prd, name
 		}, githubFault(reviewsRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Queued)
 			e.wantRemoved(name)
 		}},
 		{"reviewer", "approve's Merge", func(e *env) (int, string) {
-			task, _, name := e.approved()
-			return task, name
+			prd, _, name := e.approved()
+			return prd, name
 		}, githubFault(mergeRoute), reviewerHandle, func(e *env, n int, name string) {
 			if !e.gh.Pulls()[0].Merged {
 				e.t.Error("PR not merged")

@@ -22,9 +22,9 @@ type Worker interface {
 	Name() string
 	// Pick returns issue numbers in ascending order.
 	Pick(ctx context.Context) ([]int, error)
-	// Handle sends a Task to stuck and returns nil when the Task itself is the problem. Any other error
-	// is an environment error: leave the Task where the next check can retry it, and return the error.
-	// The loop puts off the next try after an error, longer each time in a row, so a Task that only
+	// Handle sends a PRD to stuck and returns nil when the PRD itself is the problem. Any other error
+	// is an environment error: leave the PRD where the next check can retry it, and return the error.
+	// The loop puts off the next try after an error, longer each time in a row, so a PRD that only
 	// has to wait returns nil.
 	Handle(ctx context.Context, number int) error
 }
@@ -260,12 +260,12 @@ func issueComments(ctx context.Context, gh *github.Client, n int) (string, error
 		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + b.String(), nil
 }
 
-func taskText(t github.Issue) string {
-	return fmt.Sprintf("# Task #%d: %s\n\n%s\n\n", t.Number, t.Title, strings.TrimSpace(t.Body))
+func prdText(t github.Issue) string {
+	return fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n", t.Number, t.Title, strings.TrimSpace(t.Body))
 }
 
 func branchName(n int) string {
-	return fmt.Sprintf("exomecha/task-%d", n)
+	return fmt.Sprintf("exomecha/prd-%d", n)
 }
 
 func baseCommit(ctx context.Context, g *git.Git) (string, error) {
@@ -279,7 +279,7 @@ func baseCommit(ctx context.Context, g *git.Git) (string, error) {
 	return base, err
 }
 
-func taskPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool, err error) {
+func prdPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool, err error) {
 	number, ok, err := gh.OpenPR(ctx, branchName(n))
 	if err != nil || !ok {
 		return pr, false, err
@@ -304,14 +304,14 @@ func holds(i github.Issue, kind string, status label.Status) bool {
 	return statuses == 1 && i.HasLabel(string(status))
 }
 
-// back is where the person sends the Task after answering, so it returns to the worker that
+// back is where the person sends the PRD after answering, so it returns to the worker that
 // owns the problem: queued leads back to builder, review leads back to resolver.
 func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
 	trimmed := trimClosingTags(reason)
 	if trimmed != strings.TrimSpace(reason) {
-		slog.Warn("trimmed closing tags from a stuck reason", "task", n, "reason", reason)
+		slog.Warn("trimmed closing tags from a stuck reason", "prd", n, "reason", reason)
 	}
-	body := "This Task is blocked and needs a person.\n\n" + trimmed +
+	body := "This PRD is blocked and needs a person.\n\n" + trimmed +
 		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
 	if err := gh.AddComment(ctx, n, body); err != nil {
 		return err
@@ -319,7 +319,7 @@ func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Sta
 	if err := gh.SetStatus(ctx, n, from, label.Stuck); err != nil {
 		return err
 	}
-	slog.Info("sent to stuck", "task", n)
+	slog.Info("sent to stuck", "prd", n)
 	return nil
 }
 

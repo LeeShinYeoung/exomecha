@@ -49,8 +49,8 @@ func (c *Client) Identity(ctx context.Context) (name, email string, err error) {
 }
 
 // WaitForRateLimit makes API calls under ctx wait for a used-up rate limit to reset instead of
-// failing. A failure halfway through a Task can also fail the step that undoes it, which would
-// leave the Task in status:working until exomecha restarts.
+// failing. A failure halfway through a PRD can also fail the step that undoes it, which would
+// leave the PRD in status:working until exomecha restarts.
 func WaitForRateLimit(ctx context.Context) context.Context {
 	return context.WithValue(ctx, gh.SleepUntilPrimaryRateLimitResetWhenRateLimited, true)
 }

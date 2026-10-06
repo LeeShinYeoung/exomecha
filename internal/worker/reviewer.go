@@ -35,7 +35,7 @@ var reviewerRole = role{
 }
 
 // merged, closed and failing drop the run, which was about a PR that no longer stands, and Handle
-// then settles the Task.
+// then settles the PRD.
 var reviewerTable = table{
 	// none, preparing, running, stalled, dead, gone, finished
 	away:    {idle, drop, drop, drop, drop, drop, drop},
@@ -46,7 +46,7 @@ var reviewerTable = table{
 	ready:   {begin, restart, idle, fail, fail, fail, harvest},
 }
 
-// reviewer reviews each Task's PR in a sandbox of its own, which gets only the code.
+// reviewer reviews each PRD's PR in a sandbox of its own, which gets only the code.
 type reviewer struct {
 	Deps
 	runs *runs
@@ -89,17 +89,17 @@ func (r *reviewer) allClosed(ctx context.Context, n int) (bool, error) {
 	return true, nil
 }
 
-// Pick returns the Tasks in review whose PR does not conflict, and every Task that has a reviewer run.
+// Pick returns the PRDs in review whose PR does not conflict, and every PRD that has a reviewer run.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
-	tasks, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
+	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
 		return nil, err
 	}
 	var picked []int
-	for _, t := range tasks {
-		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same Task
+	for _, t := range prds {
+		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same PRD
 		// at the same moment every minute, which starved resolver.
-		pr, ok, err := taskPR(ctx, r.GitHub, t.Number)
+		pr, ok, err := prdPR(ctx, r.GitHub, t.Number)
 		if err != nil {
 			return nil, err
 		}
@@ -111,16 +111,16 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 }
 
 func (r *reviewer) Handle(ctx context.Context, n int) error {
-	task, err := r.GitHub.Issue(ctx, n)
+	prd, err := r.GitHub.Issue(ctx, n)
 	if err != nil {
 		return err
 	}
-	p, pr, failed, err := r.look(ctx, task)
+	p, pr, failed, err := r.look(ctx, prd)
 	if err != nil {
 		return err
 	}
 	err = r.runs.step(ctx, reviewerRole, n, reviewerTable[p],
-		func(ctx context.Context) error { return r.start(ctx, task, pr) },
+		func(ctx context.Context) error { return r.start(ctx, prd, pr) },
 		func(ctx context.Context, run run) error { return r.collect(ctx, n, pr, run.in) })
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		if err := r.finish(ctx, n); err != nil {
 			return err
 		}
-		slog.Info("closed a task whose PR was merged", "task", n)
+		slog.Info("closed a PRD whose PR was merged", "prd", n)
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
@@ -145,24 +145,24 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		if err := r.requeue(ctx, n, pr.Number, b.String()); err != nil {
 			return err
 		}
-		slog.Info("requeued after CI failure", "task", n, "pr", pr.Number)
+		slog.Info("requeued after CI failure", "prd", n, "pr", pr.Number)
 	}
 	return nil
 }
 
-// look finds the Task's place, with its open PR, and the CI runs that failed when the place is failing.
-func (r *reviewer) look(ctx context.Context, task github.Issue) (place, github.PR, []github.Run, error) {
-	if !holds(task, label.PRD, label.Review) {
+// look finds the PRD's place, with its open PR, and the CI runs that failed when the place is failing.
+func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR, []github.Run, error) {
+	if !holds(prd, label.PRD, label.Review) {
 		return away, github.PR{}, nil, nil
 	}
-	pr, ok, err := taskPR(ctx, r.GitHub, task.Number)
+	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
 	switch {
 	case err != nil:
 		return away, pr, nil, err
 	case !ok:
-		// A PR can be merged with its Task still in review, since exomecha closes the Task after
+		// A PR can be merged with its PRD still in review, since exomecha closes the PRD after
 		// the merge and that can fail.
-		done, err := r.GitHub.Merged(ctx, branchName(task.Number))
+		done, err := r.GitHub.Merged(ctx, branchName(prd.Number))
 		switch {
 		case err != nil:
 			return away, pr, nil, err
@@ -199,8 +199,8 @@ func (r *reviewer) look(ctx context.Context, task github.Issue) (place, github.P
 	return ready, pr, nil, nil
 }
 
-func (r *reviewer) start(ctx context.Context, task github.Issue, pr github.PR) error {
-	n := task.Number
+func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) error {
+	n := prd.Number
 	return r.runs.start(ctx, reviewerRole, n, func(ctx context.Context) (spec, error) {
 		base, err := baseCommit(ctx, r.Git)
 		if err != nil {
@@ -211,7 +211,7 @@ func (r *reviewer) start(ctx context.Context, task github.Issue, pr github.PR) e
 			return spec{}, err
 		}
 		ref := r.Git.BaseRef()
-		input := taskText(task) + comments +
+		input := prdText(prd) + comments +
 			fmt.Sprintf("## Base branch\n\n`%s`. See this PR's changes with `git diff %s...HEAD`.\n", ref, ref)
 		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
 	})
@@ -233,7 +233,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		if err := r.requeue(ctx, n, pr.Number, out.Body); err != nil {
 			return err
 		}
-		slog.Info("requeued with review comments", "task", n, "pr", pr.Number)
+		slog.Info("requeued with review comments", "prd", n, "pr", pr.Number)
 	case "approve":
 		// With the head the run reviewed, GitHub refuses the merge if anything was pushed since.
 		err := r.GitHub.Merge(ctx, pr.Number, in.Head)
@@ -250,7 +250,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		if err := r.finish(ctx, n); err != nil {
 			return err
 		}
-		slog.Info("merged and closed task", "task", n, "pr", pr.Number)
+		slog.Info("merged and closed PRD", "prd", n, "pr", pr.Number)
 	default:
 		return r.runs.failed(ctx, reviewerRole, n, badResult, fmt.Sprintf("verdict %q", out.Verdict))
 	}
@@ -269,7 +269,7 @@ func (r *reviewer) refused(ctx context.Context, n, number int, message string) e
 		// The result stays until GitHub knows which it is.
 		return fmt.Errorf("GitHub refused to merge PR #%d before it knew whether the PR conflicts: %s", number, message)
 	case !*pr.Mergeable:
-		// The next round finds the PR conflicted and drops the run, and resolver takes the Task.
+		// The next round finds the PR conflicted and drops the run, and resolver takes the PRD.
 		return nil
 	}
 	return r.runs.stuck(ctx, reviewerRole, n, fmt.Sprintf("The AI approved PR #%d, but GitHub refused to merge it: %s\n\n"+
@@ -277,7 +277,7 @@ func (r *reviewer) refused(ctx context.Context, n, number int, message string) e
 		"Merge the PR yourself, or change the rule and relabel this issue as below.", number, message))
 }
 
-// finish closes the Task as completed and then clears its status. A Task left open in review
+// finish closes the PRD as completed and then clears its status. A PRD left open in review
 // comes back to merged, and one closed with its status is left alone by every worker.
 func (r *reviewer) finish(ctx context.Context, n int) error {
 	if err := r.GitHub.Close(ctx, n, github.Completed); err != nil {
@@ -286,7 +286,7 @@ func (r *reviewer) finish(ctx context.Context, n int) error {
 	return r.GitHub.ClearStatus(ctx, n)
 }
 
-// requeue leaves a review on the PR and sends the Task back to builder.
+// requeue leaves a review on the PR and sends the PRD back to builder.
 func (r *reviewer) requeue(ctx context.Context, n, pr int, review string) error {
 	if err := r.GitHub.AddReview(ctx, pr, review); err != nil {
 		return err
