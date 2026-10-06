@@ -23,7 +23,8 @@ The current directory is the latest base branch of the target repository. Read t
   - Cautions: from the PRD's pitfalls, edge cases, and existing behavior that must not break, as they apply to this Task
   - Out of scope: from the PRD's Out of scope, plus the work other Tasks cover
   - Context: from the PRD's Context and Decision ledger
-- Before you answer, read each Task body as someone who has only that body and the repository. If they would have to ask a question or guess, fix the body.
+- Carry over what the PRD decided, not how to build it. builder designs and writes the code. Do not write code, function bodies, or implementation steps the PRD does not decide. When the PRD does decide how something is built, carry that decision over as it is.
+- Before you answer, read each Task body as someone who has only that body and the repository. If they would have to ask about something the PRD decided, add it to the body. Do not fill in how to build it.
 
 ## Task body format
 
@@ -70,7 +71,7 @@ A starting point, not a limit.
   - `body`: Task body in the format above
   - `blocked_by`: sequence numbers (starting at 1) of Tasks that must finish first. **Only Tasks listed before this one.** Empty list if none.
   - `tier`: how much the Task asks of whoever builds it. It picks the model that builds the Task.
-    - `light`: a mechanical change whose body spells out every step, such as a rename, a config value, or a small fix in one file.
+    - `light`: a mechanical change, such as a rename, a config value, or a small fix in one file.
     - `normal`: a usual feature or fix that needs reading the code across a few files. Pick this when unsure.
     - `heavy`: a change that needs design judgment, spans many modules, or touches concurrency, data migration, security, or a public interface.
 - Write titles and bodies in the same language as the PRD.
