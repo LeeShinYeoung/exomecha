@@ -7,7 +7,7 @@
     {
       "name": "exomecha",
       "source": "./",
-      "description": "Skills that hand work to exomecha: record a problem (issue), decide a direction (discuss), file a PRD (prd), and set up a project's sandboxes (setup)"
+      "description": "Skills that hand work to exomecha: draft a PRD (draft-prd), list the drafts (summary-all-drafts), complete a PRD (complete-prd), and set up a project's sandboxes (setup)"
     }
   ]
 }

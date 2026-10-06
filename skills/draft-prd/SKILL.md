@@ -1,29 +1,30 @@
 ---
-name: issue
-description: Record a problem and the facts you confirmed as a type:problem GitHub issue. Never write a solution. Use when a person invokes /exomecha:issue.
+name: draft-prd
+description: Record a problem found or a problem to solve as a draft PRD, a light GitHub issue labeled prd and status:draft. Workers do not take a draft. Use when a person invokes /exomecha:draft-prd.
 ---
 
-# Record a problem
+# Draft a PRD
 
-Investigate the problem the person describes and file only the problem and the confirmed facts as a `type:problem` issue. The direction is decided in `/exomecha:discuss` and the plan in `/exomecha:prd`.
+Record a problem as a backlog item before the conversation that decides everything. A draft has the `prd` and `status:draft` labels, and no worker takes it. Later, `/exomecha:summary-all-drafts` lists the drafts, and `/exomecha:complete-prd <number>` turns one into a PRD that exomecha builds.
 
 ## Rules
 
-- **Never write a solution.** Even if the person suggests a fix, leave it out of the issue.
-- **Keep confirmed facts and guesses apart.** Only what you saw directly in code, logs, or a reproduction goes under "Confirmed facts".
 - Do not change code. If you changed anything temporarily to investigate, put it back.
-- One problem per issue. If two problems can be fixed separately, file two issues.
+- **Keep confirmed facts and guesses apart.** Only what you saw directly in code, logs, or a reproduction goes under "Confirmed facts".
+- Ideas from the conversation go under "Ideas", each marked as not decided. Do not decide a direction here.
+- One problem per draft. If two problems can be fixed separately, file two drafts.
+- Keep it light. Ask the person only when the problem itself is unclear.
 
 ## Steps
 
 1. The target repository is this session's git remote (`gh repo view --json nameWithOwner`). GitHub actions use the person's `gh` login.
-2. Investigate: what happens, how to reproduce it, what should happen. Read the related code and history.
-3. Write the body in the format below and file it.
+2. Read the code related to the problem, enough to tell what happens and where.
+3. Check that the labels exist: `gh label list --limit 100`. If `prd` or `status:draft` is missing, do not file. Tell the person that running exomecha once creates the labels.
+4. Write the body in the format below and file it.
    ```
-   gh issue create --title "<title>" --body-file <body file> --label type:problem
+   gh issue create --title "<title>" --body-file <body file> --label prd --label status:draft
    ```
-   If the `type:problem` label does not exist, do not file. Tell the person that running exomecha once creates the labels.
-4. Share the issue URL.
+5. Share the issue URL.
 
 ## Body format
 
@@ -36,10 +37,15 @@ Investigate the problem the person describes and file only the problem and the c
 
 ## Investigation notes
 
-- Starting point: (file, screen, or log where the investigation began)
 - Confirmed facts:
 - Guesses (not confirmed):
-- Ruled out:
-- Open questions:
 - Recorded at: <branch investigated>@<first 7 characters of the commit>
+
+## Ideas
+
+- (idea): not decided
+
+## Open questions
+
+- (what must be decided before this can be built, or None)
 ```
