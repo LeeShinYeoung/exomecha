@@ -344,13 +344,13 @@ func TestRoundDelaysArePerWorker(t *testing.T) {
 // A real builder start that sbx fails waits a minute in the loop, then starts.
 func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
 	e.sbx.fail["create"] = errors.New("sbx run: daemon not running")
 	r := newRounds(e.builder(), e.clock)
 
 	r.run(t.Context())
-	e.wantStatus(prd, label.Queued)
+	e.wantStatus(prd, label.Ready)
 	e.wantRemoved(name)
 	delete(e.sbx.fail, "create")
 	e.clock.advance(minBackoff / 2)
@@ -439,8 +439,8 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 	builderHandle := func(e *env, n int) error { return e.builder().Handle(e.t.Context(), n) }
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
-	queued := func(e *env) (int, string) {
-		prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Queued))
+	ready := func(e *env) (int, string) {
+		prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 		return prd, e.builderBox(prd)
 	}
 	built := func(e *env) (int, string) {
@@ -461,11 +461,11 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		// done checks what the step did once it went through.
 		done func(e *env, n int, name string)
 	}{
-		{"builder", "start's create", queued, sbxFault("create"), builderHandle, func(e *env, n int, name string) {
+		{"builder", "start's create", ready, sbxFault("create"), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Working)
 			e.wantState(name, running)
 		}},
-		{"builder", "claim", queued, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
+		{"builder", "claim", ready, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Working)
 			e.wantState(name, running)
 		}},
@@ -493,7 +493,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Working))
 			return prd, e.builderBox(prd)
 		}, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
-			e.wantStatus(n, label.Queued)
+			e.wantStatus(n, label.Ready)
 		}},
 		{"builder", "failed's AddComment", func(e *env) (int, string) {
 			prd, name := e.startedPRD()
@@ -534,7 +534,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
 			return prd, e.reviewerBox(prd)
 		}, githubFault(reviewsRoute), reviewerHandle, func(e *env, n int, name string) {
-			e.wantStatus(n, label.Queued)
+			e.wantStatus(n, label.Ready)
 		}},
 		{"reviewer", "start's create", inReview, sbxFault("create"), reviewerHandle, func(e *env, n int, name string) {
 			e.wantState(name, running)
@@ -544,7 +544,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.play(name, nil, `{"verdict": "changes", "body": "rename it"}`)
 			return prd, name
 		}, githubFault(reviewsRoute), reviewerHandle, func(e *env, n int, name string) {
-			e.wantStatus(n, label.Queued)
+			e.wantStatus(n, label.Ready)
 			e.wantRemoved(name)
 		}},
 		{"reviewer", "approve's Merge", func(e *env) (int, string) {

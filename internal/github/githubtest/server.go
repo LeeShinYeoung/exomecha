@@ -35,8 +35,6 @@ type Server struct {
 	number int
 	id     int64
 	issues map[int]*Issue
-	// listed, once HoldList sets it, is what the issue list answers with instead of issues.
-	listed map[int]*Issue
 	pulls  map[int]*Pull
 	labels []string
 	runs   map[string][]Run
@@ -63,7 +61,6 @@ type Issue struct {
 	StateReason string
 	Comments    []Comment
 	Association string
-	SubIssues   []int
 	BlockedBy   []int
 }
 
@@ -138,7 +135,6 @@ func New(t *testing.T) *Server {
 	s.route(mux, "POST "+repo+"/labels", s.createLabel)
 	s.route(mux, "POST "+repo+"/issues/{n}/labels", s.addLabels)
 	s.route(mux, "PUT "+repo+"/issues/{n}/labels", s.setLabels)
-	s.route(mux, "GET "+repo+"/issues/{n}/sub_issues", s.listSubIssues)
 	s.route(mux, "GET "+repo+"/issues/{n}/dependencies/blocked_by", s.listBlockedBy)
 	s.route(mux, "GET "+repo+"/pulls", s.listPulls)
 	s.route(mux, "POST "+repo+"/pulls", s.createPull)
@@ -291,12 +287,8 @@ func (s *Server) listIssues(r *http.Request) (int, any) {
 	if l := q.Get("labels"); l != "" {
 		want = strings.Split(l, ",")
 	}
-	issues := s.issues
-	if s.listed != nil {
-		issues = s.listed
-	}
 	var numbers []int
-	for n, i := range issues {
+	for n, i := range s.issues {
 		if state == "open" && !i.Open || state == "closed" && i.Open {
 			continue
 		}
@@ -307,11 +299,7 @@ func (s *Server) listIssues(r *http.Request) (int, any) {
 	}
 	// GitHub lists newest first.
 	slices.SortFunc(numbers, func(a, b int) int { return cmp.Compare(b, a) })
-	out := []any{}
-	for _, n := range numbers {
-		out = append(out, issueJSON(issues[n]))
-	}
-	return http.StatusOK, out
+	return http.StatusOK, s.issuesJSON(numbers)
 }
 
 func containsAll(have, want []string) bool {
@@ -434,14 +422,6 @@ func (s *Server) setLabels(r *http.Request) (int, any) {
 	}
 	i.Labels = slices.Compact(names)
 	return http.StatusOK, labelsJSON(i.Labels)
-}
-
-func (s *Server) listSubIssues(r *http.Request) (int, any) {
-	i := s.pathIssue(r)
-	if i == nil {
-		return notFound()
-	}
-	return http.StatusOK, s.issuesJSON(i.SubIssues)
 }
 
 func (s *Server) listBlockedBy(r *http.Request) (int, any) {
@@ -649,12 +629,6 @@ func (s *Server) AddOutsiderComment(n int, body string) {
 	s.issues[n].Comments = append(s.issues[n].Comments, Comment{Body: body, Association: associationNone})
 }
 
-func (s *Server) AddSubIssue(parent, child int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.issues[parent].SubIssues = append(s.issues[parent].SubIssues, child)
-}
-
 func (s *Server) AddBlockedBy(n, blocker int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -673,19 +647,6 @@ func (s *Server) Relabel(n int, from, to string) {
 	}
 }
 
-// HoldList makes the issue list keep answering with the issues as they are now. GitHub's list
-// can lag behind an issue's own page for up to a minute.
-func (s *Server) HoldList() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.listed = map[int]*Issue{}
-	for n, i := range s.issues {
-		c := *i
-		c.Labels = slices.Clone(i.Labels)
-		s.listed[n] = &c
-	}
-}
-
 func (s *Server) CloseIssue(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -699,7 +660,6 @@ func (s *Server) Issue(n int) Issue {
 	i := *s.issues[n]
 	i.Labels = slices.Clone(i.Labels)
 	i.Comments = slices.Clone(i.Comments)
-	i.SubIssues = slices.Clone(i.SubIssues)
 	i.BlockedBy = slices.Clone(i.BlockedBy)
 	return i
 }

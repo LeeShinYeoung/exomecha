@@ -57,7 +57,7 @@ func builderCells(t *testing.T) tableWorker {
 		},
 		put: func(e *env, n int, p place) {
 			if p == ready {
-				e.gh.Relabel(n, string(label.Working), string(label.Queued))
+				e.gh.Relabel(n, string(label.Working), string(label.Ready))
 			}
 		},
 		away: leave(label.Review),
@@ -101,7 +101,7 @@ func resolverCells(t *testing.T) tableWorker {
 				e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(true))
 			}
 		},
-		away: leave(label.Queued),
+		away: leave(label.Ready),
 		place: func(e *env, n int) place {
 			p, err := e.resolver().place(t.Context(), e.issue(n))
 			if err != nil {
@@ -157,17 +157,17 @@ func reviewerCells(t *testing.T) tableWorker {
 			}
 		},
 		// A conflict is resolver's.
-		away: append(leave(label.Queued), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
+		away: append(leave(label.Ready), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
 		settled: map[place]func(e *env, n int){
 			merged: func(e *env, n int) {
 				e.wantFinished(n)
 			},
 			closed: func(e *env, n int) {
 				e.wantStatus(n, label.Stuck)
-				wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Queued)
+				wantStuckComment(t, e.lastComment(n), "closed without being merged", label.Ready)
 			},
 			failing: func(e *env, n int) {
-				e.wantStatus(n, label.Queued)
+				e.wantStatus(n, label.Ready)
 				if reviews := e.gh.Pulls()[0].Reviews; len(reviews) != 1 || !strings.Contains(reviews[0].Body, "CI failed") {
 					t.Errorf("reviews = %+v, want one on the failed CI", reviews)
 				}
@@ -303,8 +303,8 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 		e.wantRemoved(name)
 		noComment()
 		notKept()
-		if w.role.queued != label.None {
-			e.wantStatus(n, w.role.queued)
+		if w.role.ready != label.None {
+			e.wantStatus(n, w.role.ready)
 		} else {
 			sameStatus()
 		}

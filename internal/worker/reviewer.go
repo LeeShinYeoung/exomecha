@@ -54,49 +54,6 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Sweep closes each problem whose PRDs are all closed, by a merge or by a person.
-func (r *reviewer) Sweep(ctx context.Context) error {
-	problems, err := r.GitHub.ListOpen(ctx, label.Problem)
-	if err != nil {
-		return err
-	}
-	for _, p := range problems {
-		done, err := r.allClosed(ctx, p.Number)
-		if err != nil {
-			return err
-		}
-		if !done {
-			continue
-		}
-		// The list can be a minute behind, and closing again would overwrite how a person closed it.
-		p, err := r.GitHub.Issue(ctx, p.Number)
-		if err != nil {
-			return err
-		}
-		if !p.Open {
-			continue
-		}
-		if err := r.GitHub.Close(ctx, p.Number, github.Completed); err != nil {
-			return err
-		}
-		slog.Info("closed problem", "problem", p.Number)
-	}
-	return nil
-}
-
-func (r *reviewer) allClosed(ctx context.Context, n int) (bool, error) {
-	subs, err := r.GitHub.SubIssues(ctx, n)
-	if err != nil || len(subs) == 0 {
-		return false, err
-	}
-	for _, s := range subs {
-		if s.Open {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 // Pick returns the PRDs in review whose PR does not conflict, and every PRD that has a reviewer run.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
@@ -142,7 +99,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
-		return toStuck(ctx, r.GitHub, n, label.Review, label.Queued,
+		return toStuck(ctx, r.GitHub, n, label.Review, label.Ready,
 			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
 	case failing:
 		var b strings.Builder
@@ -299,5 +256,5 @@ func (r *reviewer) requeue(ctx context.Context, n, pr int, review string) error 
 	if err := r.GitHub.AddReview(ctx, pr, review); err != nil {
 		return err
 	}
-	return r.GitHub.SetStatus(ctx, n, label.Review, label.Queued)
+	return r.GitHub.SetStatus(ctx, n, label.Review, label.Ready)
 }

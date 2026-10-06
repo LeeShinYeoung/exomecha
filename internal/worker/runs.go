@@ -86,7 +86,7 @@ const (
 	harvest        // the worker's collect
 	fail           // stuck at once, keeping the run's files
 	drop           // remove the run and leave the labels alone
-	restart        // remove the run without a failure, and builder's PRD goes back to the queue
+	restart        // remove the run without a failure, and builder's PRD goes back to ready
 )
 
 // place is where an issue is, as one worker sees it on GitHub.
@@ -113,9 +113,9 @@ type role struct {
 	// from is the issue's status while the run goes. A run that needs a person moves the issue
 	// from it to stuck, and the comment asks the person to relabel it back.
 	from, back label.Status
-	// queued is builder's alone: a start moves the PRD from queued to from, and a start that is
+	// ready is builder's alone: a start moves the PRD from ready to from, and a start that is
 	// undone or starts over moves it back.
-	queued label.Status
+	ready label.Status
 	// tier picks the model of the role's runs, unless the spec names one.
 	tier label.Tier
 }
@@ -416,15 +416,15 @@ type spec struct {
 
 // start starts a run of ro for issue n, when the usage gate is open and a slot is free. build
 // says what goes in. A start that does not get through is undone: a problem only a person can fix
-// sends the issue to stuck, and an error leaves builder's PRD queued and returns the error.
+// sends the issue to stuck, and an error leaves builder's PRD ready and returns the error.
 func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Context) (spec, error)) error {
 	name := r.name(ro, n)
 	if ready, err := r.reserve(ctx, ro, name); err != nil || !ready {
 		return err
 	}
 	defer r.release(name)
-	if ro.queued != label.None {
-		if err := r.GitHub.SetStatus(ctx, n, ro.queued, ro.from); err != nil {
+	if ro.ready != label.None {
+		if err := r.GitHub.SetStatus(ctx, n, ro.ready, ro.from); err != nil {
 			return err
 		}
 	}
@@ -444,8 +444,8 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	if problem != "" {
 		return toStuck(cleanup, r.GitHub, n, ro.from, ro.back, problem)
 	}
-	if ro.queued != label.None {
-		if rerr := r.GitHub.SetStatus(cleanup, n, ro.from, ro.queued); rerr != nil {
+	if ro.ready != label.None {
+		if rerr := r.GitHub.SetStatus(cleanup, n, ro.from, ro.ready); rerr != nil {
 			return errors.Join(err, rerr)
 		}
 	}
@@ -813,14 +813,14 @@ func (r *runs) failed(ctx context.Context, ro role, n int, why, detail string) e
 	return r.remove(ctx, name, true)
 }
 
-// restart removes the run without counting it as a failure. builder's PRD goes back to the queue.
+// restart removes the run without counting it as a failure. builder's PRD goes back to ready.
 func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
 	slog.Info("starting a run over", "role", ro.name, "issue", n, "why", why)
 	if err := r.remove(ctx, r.name(ro, n), false); err != nil {
 		return err
 	}
-	if ro.queued != label.None {
-		return r.GitHub.SetStatus(ctx, n, ro.from, ro.queued)
+	if ro.ready != label.None {
+		return r.GitHub.SetStatus(ctx, n, ro.from, ro.ready)
 	}
 	return nil
 }

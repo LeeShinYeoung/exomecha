@@ -99,7 +99,7 @@ func runRealBuilder(t *testing.T, e *env, prefix string) {
 	e.runs = newRuns(e.deps, nil)
 	prd := e.gh.AddIssue("Add hello.txt",
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`. Commit it with the message `feat: add hello`.\n",
-		label.PRD, string(label.Queued))
+		label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
 	t.Cleanup(func() {
 		if err := sbx.Remove(context.Background(), name); err != nil {

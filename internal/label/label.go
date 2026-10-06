@@ -1,9 +1,6 @@
 package label
 
-const (
-	Problem = "type:problem"
-	PRD     = "type:prd"
-)
+const PRD = "prd"
 
 type Def struct {
 	Name  string
@@ -12,9 +9,9 @@ type Def struct {
 
 func All() []Def {
 	return []Def{
-		{Problem, "4B6784"},
 		{PRD, "4B6784"},
-		{string(Queued), "B98300"},
+		{string(Draft), "9AA5B1"},
+		{string(Ready), "B98300"},
 		{string(Working), "D9692A"},
 		{string(Review), "2D955A"},
 		{string(Stuck), "CC3D38"},
