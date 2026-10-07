@@ -83,7 +83,7 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !ok || pr.Mergeable == nil || *pr.Mergeable {
+		if !conflicting(pr, ok) {
 			picked = append(picked, t.Number)
 		}
 	}
@@ -154,12 +154,11 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR
 	// The PR waits for a person to merge it. A conflict is resolver's.
 	case approved:
 		return away, pr, nil, nil
+	case conflicting(pr, ok):
+		return away, pr, nil, nil
 	// GitHub is still computing whether the PR merges.
 	case pr.Mergeable == nil:
 		return waiting, pr, nil, nil
-	// A conflict is resolver's.
-	case !*pr.Mergeable:
-		return away, pr, nil, nil
 	}
 	ci, failed, err := r.GitHub.CheckCI(ctx, pr.HeadSHA)
 	if err != nil {

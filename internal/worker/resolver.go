@@ -102,7 +102,7 @@ func (r *resolver) place(ctx context.Context, prd github.Issue) (place, error) {
 	if err != nil {
 		return away, err
 	}
-	conflicts := ok && pr.Mergeable != nil && !*pr.Mergeable
+	conflicts := conflicting(pr, ok)
 	switch {
 	case approved && conflicts:
 		return stale, nil

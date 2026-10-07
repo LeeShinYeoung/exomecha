@@ -313,6 +313,12 @@ func prdPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool
 	return pr, err == nil, err
 }
 
+// conflicting splits the PRDs in review between the workers: an open PR that conflicts is
+// resolver's, and any other, even one GitHub has not checked yet, is reviewer's.
+func conflicting(pr github.PR, ok bool) bool {
+	return ok && pr.Mergeable != nil && !*pr.Mergeable
+}
+
 // holds reports whether the issue is open, has the kind label, and has status as its only status.
 // exomecha changes a status in one call, so two statuses are a person's doing, and every worker
 // leaves the issue to them.
