@@ -256,6 +256,13 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 	}
 	statuses := e.statuses(n)
 	comments := len(e.gh.Issue(n).Comments)
+	reviews := func() (total int) {
+		for _, p := range e.gh.Pulls() {
+			total += len(p.Reviews)
+		}
+		return total
+	}
+	reviewed := reviews()
 
 	if err := w.handle(e, n); err != nil {
 		t.Fatal(err)
@@ -275,6 +282,9 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 		t.Helper()
 		if got := len(e.gh.Issue(n).Comments); settled == nil && got != comments {
 			t.Errorf("%d new comments, want none", got-comments)
+		}
+		if got := reviews(); settled == nil && got != reviewed {
+			t.Errorf("%d new PR reviews, want none", got-reviewed)
 		}
 	}
 	notKept := func() {

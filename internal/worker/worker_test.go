@@ -43,12 +43,15 @@ var testModels = map[label.Tier]agent.Model{
 
 func TestMain(m *testing.M) { gittest.Main(m) }
 
+// Unlike any word a run would hold by chance, so finding it anywhere is a leak.
+const testToken = "ghp_exomechaTestToken"
+
 func newEnv(t *testing.T, files map[string]string) *env {
 	t.Helper()
 	origin := gittest.NewOrigin(t, files)
 	s := githubtest.New(t)
 	s.HeadSHA = func(branch string) string { return gittest.Head(origin, branch) }
-	client, err := github.NewAt(s.URL, s.Owner, s.Repo, "token")
+	client, err := github.NewAt(s.URL, s.Owner, s.Repo, testToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +67,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 	}
 	e.deps = Deps{
 		GitHub:        client,
-		Git:           git.NewAt(gitRoot, origin, "main", "token"),
+		Git:           git.NewAt(gitRoot, origin, "main", testToken),
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),

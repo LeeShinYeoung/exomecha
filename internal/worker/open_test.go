@@ -3,6 +3,7 @@ package worker
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -130,6 +131,50 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	r, err := e.runs.read(t.Context(), builderRole, 1)
 	if err != nil || r.state != running || r.in.Head != s.head {
 		t.Errorf("after open: %+v, %v", r, err)
+	}
+}
+
+// The token can push past every check exomecha makes, so nothing a run can read may hold it.
+func TestRunsNeverSeeTheToken(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
+	s, builder := e.testSpec()
+	if problem := e.open(s); problem != "" {
+		t.Fatalf("open problem: %s", problem)
+	}
+	reader := e.runs.name(reviewerRole, 1)
+	s.branch = ""
+	if problem, err := e.runs.open(t.Context(), reviewerRole, 1, s); problem != "" || err != nil {
+		t.Fatalf("reviewer open = %q, %v", problem, err)
+	}
+
+	holds := func(ss []string) bool {
+		return slices.ContainsFunc(ss, func(s string) bool { return strings.Contains(s, testToken) })
+	}
+	for _, name := range []string{builder, reader} {
+		box := e.sbx.box(name)
+		for _, args := range slices.Concat(box.execs, box.envs, box.starts) {
+			if holds(args) {
+				t.Errorf("%s got the token in %q", name, args)
+			}
+		}
+		// The ctl directory is the sandbox's workspace.
+		err := filepath.WalkDir(e.runs.ctl(name), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			b, err := os.ReadFile(path)
+			if err == nil && strings.Contains(string(b), testToken) {
+				t.Errorf("%s holds the token", path)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), ".git", "config")); err != nil || strings.Contains(string(b), testToken) {
+			t.Errorf("git config of %s: %v, holds the token %v", name, err, strings.Contains(string(b), testToken))
+		}
 	}
 }
 
