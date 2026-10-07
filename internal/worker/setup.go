@@ -19,7 +19,7 @@ const setupNote = "## Setup\n\nexomecha ran the project's setup script in this d
 
 // A script still running after this long is stopped and the PRD goes to stuck. Without a limit,
 // a script that never ends would hold the PRD with nothing to show for it.
-var setupTimeout = 10 * time.Minute
+const setupTimeout = 10 * time.Minute
 
 // setup runs the base branch's setup script in the sandbox's repository, always the base branch's
 // copy, even on a PR branch, so a fix to the script reaches every open PRD. note tells claude it

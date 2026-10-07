@@ -132,8 +132,8 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 
 // look finds the PRD's place, with its open PR, and the CI runs that failed when the place is failing.
 func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR, []github.Run, error) {
-	approved := holds(prd, label.PRD, label.Approved)
-	if !approved && !holds(prd, label.PRD, label.Review) {
+	approved := holds(prd, label.Approved)
+	if !approved && !holds(prd, label.Review) {
 		return away, github.PR{}, nil, nil
 	}
 	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
@@ -238,7 +238,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 // finish closes the PRD as completed and then clears its status. A PRD left open comes back to
 // merged, and one closed with its status is left alone by every worker.
 func (r *reviewer) finish(ctx context.Context, n int) error {
-	if err := r.GitHub.Close(ctx, n, github.Completed); err != nil {
+	if err := r.GitHub.Close(ctx, n); err != nil {
 		return err
 	}
 	return r.GitHub.ClearStatus(ctx, n)

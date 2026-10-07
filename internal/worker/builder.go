@@ -101,9 +101,9 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 
 func (b *builder) place(prd github.Issue) place {
 	switch {
-	case holds(prd, label.PRD, label.Ready):
+	case holds(prd, label.Ready):
 		return ready
-	case holds(prd, label.PRD, label.Working):
+	case holds(prd, label.Working):
 		return working
 	}
 	return away

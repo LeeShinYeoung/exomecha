@@ -93,8 +93,8 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 }
 
 func (r *resolver) place(ctx context.Context, prd github.Issue) (place, error) {
-	approved := holds(prd, label.PRD, label.Approved)
-	if !approved && !holds(prd, label.PRD, label.Review) {
+	approved := holds(prd, label.Approved)
+	if !approved && !holds(prd, label.Review) {
 		return away, nil
 	}
 	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)

@@ -315,11 +315,11 @@ func conflicting(pr github.PR, ok bool) bool {
 	return ok && pr.Mergeable != nil && !*pr.Mergeable
 }
 
-// holds reports whether the issue is open, has the kind label, and has status as its only status.
+// holds reports whether the issue is an open PRD with status as its only status.
 // exomecha changes a status in one call, so two statuses are a person's doing, and every worker
 // leaves the issue to them.
-func holds(i github.Issue, kind string, status label.Status) bool {
-	if !i.Open || !i.HasLabel(kind) {
+func holds(i github.Issue, status label.Status) bool {
+	if !i.Open || !i.HasLabel(label.PRD) {
 		return false
 	}
 	statuses := 0

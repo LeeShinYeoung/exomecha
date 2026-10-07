@@ -824,7 +824,8 @@ func (r *runs) failed(ctx context.Context, ro role, n int, why, detail string) e
 	name := r.name(ro, n)
 	slog.Warn("run failed", "role", ro.name, "issue", n, "sandbox", name, "why", why, "detail", detail, "stderr", r.tail(name, "stderr.log"))
 	// Stuck goes first. With the run gone and the label as it was, a failed GitHub call would start another run.
-	if err := toStuck(ctx, r.GitHub, n, ro.from, ro.back, failedReason(why)); err != nil {
+	if err := toStuck(ctx, r.GitHub, n, ro.from, ro.back,
+		fmt.Sprintf("The AI's run failed because %s. The details are in exomecha's log.", why)); err != nil {
 		return err
 	}
 	return r.remove(ctx, name, true)
@@ -846,8 +847,4 @@ func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
 func (r *runs) drop(ctx context.Context, ro role, n int) error {
 	slog.Info("removing a run its issue no longer needs", "role", ro.name, "issue", n)
 	return r.remove(ctx, r.name(ro, n), false)
-}
-
-func failedReason(why string) string {
-	return fmt.Sprintf("The AI's run failed because %s. The details are in exomecha's log.", why)
 }

@@ -26,7 +26,6 @@ func trusted(association string) bool {
 }
 
 type Issue struct {
-	ID     int64
 	Number int
 	Title  string
 	Body   string
@@ -53,7 +52,6 @@ func issueFrom(i *gh.Issue) Issue {
 		labels = append(labels, l.GetName())
 	}
 	return Issue{
-		ID:     i.GetID(),
 		Number: i.GetNumber(),
 		Title:  i.GetTitle(),
 		Body:   i.GetBody(),
@@ -91,14 +89,10 @@ func (c *Client) Issue(ctx context.Context, number int) (Issue, error) {
 	return issueFrom(i), nil
 }
 
-type CloseReason string
-
-const Completed CloseReason = "completed"
-
-func (c *Client) Close(ctx context.Context, number int, reason CloseReason) error {
+func (c *Client) Close(ctx context.Context, number int) error {
 	_, _, err := c.api.Issues.Update(ctx, c.owner, c.repo, number, gh.UpdateIssueRequest{
 		State:       gh.Ptr("closed"),
-		StateReason: gh.Ptr(string(reason)),
+		StateReason: gh.Ptr("completed"),
 	})
 	if err == nil {
 		return nil

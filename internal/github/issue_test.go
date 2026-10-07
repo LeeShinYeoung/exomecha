@@ -18,14 +18,14 @@ func TestCloseRefused(t *testing.T) {
 	s.Fail(closeRoute, http.StatusUnprocessableEntity)
 
 	open := s.AddIssue("PRD", "")
-	if err := client.Close(t.Context(), open, Completed); err == nil {
+	if err := client.Close(t.Context(), open); err == nil {
 		t.Error("Close returned nil for an open issue GitHub refused to close")
 	}
 
 	// A merged PR that says "Closes" closed it a moment before.
 	closed := s.AddIssue("PRD", "")
 	s.CloseIssue(closed)
-	if err := client.Close(t.Context(), closed, Completed); err != nil {
+	if err := client.Close(t.Context(), closed); err != nil {
 		t.Errorf("Close of an issue already closed = %v, want nil", err)
 	}
 }
