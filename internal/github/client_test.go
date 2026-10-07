@@ -14,8 +14,9 @@ import (
 )
 
 func TestRequestGivesUpOnStalledServer(t *testing.T) {
+	old := requestTimeout
 	requestTimeout = time.Second
-	t.Cleanup(func() { requestTimeout = 30 * time.Second })
+	t.Cleanup(func() { requestTimeout = old })
 
 	// Never answers. Closing done lets the handler return so the server can shut down.
 	done := make(chan struct{})
