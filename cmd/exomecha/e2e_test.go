@@ -47,7 +47,8 @@ func e2e(t *testing.T, core bool) {
 
 const (
 	aRound = 30 * time.Second
-	aStart = 2 * time.Minute
+	// A run with a setup script took over 2 minutes to start while other scenarios built templates.
+	aStart = 3 * time.Minute
 	aRun   = 8 * time.Minute
 	aBuild = 6 * time.Minute
 )
@@ -73,6 +74,9 @@ type world struct {
 	done    chan struct{}
 	exitErr error
 	prds    []int
+	// The log lines of exomecha's current or last run. logTo is -1 while it runs.
+	logFrom, logTo int
+	allowed        []string
 }
 
 var worlds atomic.Int64
@@ -128,6 +132,7 @@ func (w *world) start(opts ...func(*config)) {
 	done := make(chan struct{})
 	w.mu.Lock()
 	w.cancel, w.done, w.exitErr = cancel, done, nil
+	w.logFrom, w.logTo = logs.size(), -1
 	w.mu.Unlock()
 	go func() {
 		err := serve(ctx, c)
@@ -150,7 +155,10 @@ func (w *world) stop() {
 	w.t.Helper()
 	w.mu.Lock()
 	cancel, done := w.cancel, w.done
-	w.cancel = nil
+	if cancel != nil {
+		// What exomecha logs once cancelled is about the stop, not a problem.
+		w.cancel, w.logTo = nil, logs.size()
+	}
 	w.mu.Unlock()
 	if cancel == nil {
 		return
@@ -226,14 +234,49 @@ func removeTemplates(ctx context.Context, repo string) {
 	}
 }
 
+// allow lets exomecha log the problems that contain any of msgs, which the scenario causes on purpose.
+func (w *world) allow(msgs ...string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.allowed = append(w.allowed, msgs...)
+}
+
+// problem returns the first warning, error or PRD sent to stuck that exomecha logged about the world
+// while it ran, unless the scenario allowed it.
+func (w *world) problem() string {
+	w.mu.Lock()
+	from, to, allowed := w.logFrom, w.logTo, w.allowed
+	w.mu.Unlock()
+	for _, line := range logs.between(from, to) {
+		if !strings.Contains(line, " level=WARN ") && !strings.Contains(line, " level=ERROR ") &&
+			!strings.Contains(line, `msg="sent to stuck"`) {
+			continue
+		}
+		if w.owns(line) && !slices.ContainsFunc(allowed, func(a string) bool { return strings.Contains(line, a) }) {
+			return line
+		}
+	}
+	return ""
+}
+
+// check fails the test once exomecha has stopped or logged a problem, after which what the scenario
+// waits for may never come.
+func (w *world) check(what string) {
+	w.t.Helper()
+	if w.stoppedEarly() {
+		w.t.Fatalf("exomecha stopped (%v) while waiting for %s.\n%s", w.exited(), what, w.describe())
+	}
+	if p := w.problem(); p != "" {
+		w.t.Fatalf("exomecha logged a problem while waiting for %s:\n%s\n%s", what, p, w.describe())
+	}
+}
+
 // waitFor fails the test unless cond holds within the given time.
 func (w *world) waitFor(what string, within time.Duration, cond func() bool) {
 	w.t.Helper()
 	deadline := time.Now().Add(within)
 	for !cond() {
-		if w.stoppedEarly() {
-			w.t.Fatalf("exomecha stopped (%v) while waiting for %s.\n%s", w.exited(), what, w.describe())
-		}
+		w.check(what)
 		if time.Now().After(deadline) {
 			w.t.Fatalf("waited %v for %s.\n%s", within, what, w.describe())
 		}
@@ -249,6 +292,7 @@ func (w *world) holds(what string, d time.Duration, cond func() bool) {
 		if !cond() {
 			w.t.Fatalf("%s stopped holding.\n%s", what, w.describe())
 		}
+		w.check(what)
 		time.Sleep(time.Second)
 	}
 }
@@ -565,6 +609,7 @@ func (w *world) holdAsTheyStart(within time.Duration, want int, names ...string)
 				held = append(held, n)
 			}
 		}
+		w.check(fmt.Sprintf("%d of %v to start", want, names))
 		if len(held) < want && time.Now().After(deadline) {
 			w.t.Fatalf("waited %v for %d of %v to start, held %v.\n%s", within, want, names, held, w.describe())
 		}
@@ -643,12 +688,28 @@ func (l *e2eLog) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (l *e2eLog) size() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.lines)
+}
+
+// between returns the lines from from up to to, or to the end when to is -1.
+func (l *e2eLog) between(from, to int) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if to < 0 {
+		to = len(l.lines)
+	}
+	return slices.Clone(l.lines[from:to])
+}
+
 func (l *e2eLog) about(w *world) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var out []string
 	for _, line := range l.lines {
-		if strings.Contains(line, w.slug()) || w.mentions(line) {
+		if w.owns(line) {
 			out = append(out, line)
 		}
 	}
@@ -657,6 +718,8 @@ func (l *e2eLog) about(w *world) []string {
 	}
 	return out
 }
+
+func (w *world) owns(line string) bool { return strings.Contains(line, w.slug()) || w.mentions(line) }
 
 // mentions reports whether a log line names one of the world's issues or PRs.
 func (w *world) mentions(line string) bool {
@@ -842,7 +905,7 @@ func (l *e2eLog) count(w *world, s string) int {
 	defer l.mu.Unlock()
 	n := 0
 	for _, line := range l.lines {
-		if strings.Contains(line, s) && (strings.Contains(line, w.slug()) || w.mentions(line)) {
+		if strings.Contains(line, s) && w.owns(line) {
 			n++
 		}
 	}

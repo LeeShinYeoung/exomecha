@@ -28,6 +28,7 @@ func TestE2ESetupAndCommitChecks(t *testing.T) {
 	})
 	files["CLAUDE.md"] += "- The commit-msg hook in .githooks checks every commit message.\n"
 	w := newWorld(t, "setup", files, func(c *config) { c.ciGrace = time.Hour })
+	w.allow("setup script rejected", "sent to stuck")
 	prd := w.filePRD(shoutPRD, string(label.Ready), string(label.Light))
 	w.start()
 
@@ -214,6 +215,7 @@ func TestE2ETemplateProblems(t *testing.T) {
 	w := newWorld(t, "templateprob", project(map[string]string{
 		".exomecha/Dockerfile": "FROM docker/sandbox-templates:claude-code-docker\nRUN echo exomecha-secret && false\n",
 	}), func(c *config) { c.ciGrace = time.Hour })
+	w.allow("template build failed", "sandbox environment needs a person", "sent to stuck")
 	a := w.filePRD(shoutPRD, string(label.Ready), string(label.Light))
 	w.start()
 
@@ -245,6 +247,7 @@ func TestE2ERunFailures(t *testing.T) {
 	e2e(t, true)
 	const stall = 2 * time.Minute
 	w := newWorld(t, "runfail", project(), func(c *config) { c.ciGrace = 10 * time.Second; c.stallAfter = stall })
+	w.allow("run failed", "sent to stuck")
 	a := w.filePRD(shoutPRD, string(label.Ready), string(label.Light))
 	b, _ := w.seedReview(farewellPRD, farewellDone)
 	since := time.Now()

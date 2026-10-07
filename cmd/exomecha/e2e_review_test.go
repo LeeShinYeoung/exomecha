@@ -113,6 +113,7 @@ func TestE2EPushDuringReview(t *testing.T) {
 func TestE2EPRClosedByHand(t *testing.T) {
 	e2e(t, false)
 	w := newWorld(t, "closedpr", project(), func(c *config) { c.ciGrace = time.Hour })
+	w.allow("sent to stuck")
 	// A merge into main is then not the default branch's, so GitHub leaves the PRD to reviewer.
 	w.gh.Live(w.origin, "trunk")
 	a, prA := w.seedReview(shoutPRD, shoutDone)
