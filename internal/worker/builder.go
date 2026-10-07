@@ -143,6 +143,11 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		}
 		s.head = remote
 		s.input += fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this PRD. The current directory is its branch.\n\n", pr)
+		onPR, err := prComments(ctx, b.GitHub, pr)
+		if err != nil {
+			return spec{}, err
+		}
+		s.input += onPR
 		review, err := b.GitHub.LatestReview(ctx, pr)
 		if err != nil {
 			return spec{}, err

@@ -117,6 +117,9 @@ type Comment struct {
 	CreatedAt time.Time
 	Exomecha  bool
 	Trusted   bool // written by someone who can write to the repository
+	// Only a comment on a line of a PR's diff has these.
+	Path string
+	Line int
 }
 
 func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {

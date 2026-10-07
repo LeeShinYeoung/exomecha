@@ -1,7 +1,9 @@
 package github
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -101,6 +103,49 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 		return "", nil
 	}
 	return latest, nil
+}
+
+// PRComments returns what was written on the PR, oldest first: comments on the conversation, the
+// bodies of reviews, and comments on lines of the diff.
+func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) {
+	// A PR's conversation is its issue's comments.
+	out, err := c.Comments(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, number, &gh.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return nil, err
+		}
+		// The token owner's review that is not submitted yet is listed too. A review made only of
+		// comments on lines has no body, and those comments come below.
+		if r.GetState() == "PENDING" || strings.TrimSpace(r.GetBody()) == "" {
+			continue
+		}
+		out = append(out, Comment{
+			Body:      withoutMarker(r.GetBody()),
+			CreatedAt: r.GetSubmittedAt().Time,
+			Exomecha:  byExomecha(r.GetBody()),
+			Trusted:   trusted(r.GetAuthorAssociation()),
+		})
+	}
+	opts := &gh.PullRequestListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for cm, err := range c.api.PullRequests.ListCommentsIter(ctx, c.owner, c.repo, number, opts) {
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Comment{
+			Body:      withoutMarker(cm.GetBody()),
+			CreatedAt: cm.GetCreatedAt().Time,
+			Exomecha:  byExomecha(cm.GetBody()),
+			Trusted:   trusted(cm.GetAuthorAssociation()),
+			Path:      cm.GetPath(),
+			// line is empty once a later push takes the line out of the diff.
+			Line: cmp.Or(cm.GetLine(), cm.GetOriginalLine()),
+		})
+	}
+	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, nil
 }
 
 type CI int

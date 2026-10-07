@@ -251,6 +251,34 @@ func issueComments(ctx context.Context, gh *github.Client, n int) (string, error
 		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + b.String(), nil
 }
 
+// A person may answer on the PR instead of on the PRD. exomecha's reviews are left out: builder gets
+// the latest one on its own, and an approval is not an instruction.
+func prComments(ctx context.Context, gh *github.Client, pr int) (string, error) {
+	comments, err := gh.PRComments(ctx, pr)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, c := range comments {
+		if !c.Trusted || c.Exomecha {
+			continue
+		}
+		where := ""
+		if c.Path != "" {
+			where = ", on " + c.Path
+		}
+		if c.Line > 0 {
+			where += fmt.Sprintf(" line %d", c.Line)
+		}
+		fmt.Fprintf(&b, "### %s (person%s)\n\n%s\n\n", c.CreatedAt.Local().Format(time.DateTime), where, strings.TrimSpace(c.Body))
+	}
+	if b.Len() == 0 {
+		return "", nil
+	}
+	return "## Comments on the PR\n\nOldest first: a person's comments on the conversation, in reviews, and on lines of the diff. They add to or correct the body like a person's comments on the PRD. " +
+		"Commits after a comment may already have done what it asks.\n\n" + b.String(), nil
+}
+
 func prdText(t github.Issue) string {
 	return fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n", t.Number, t.Title, strings.TrimSpace(t.Body))
 }

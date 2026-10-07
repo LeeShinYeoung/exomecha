@@ -213,6 +213,21 @@ func (e *env) wantApproved(prd, pr int) {
 	}
 }
 
+func TestReviewerReadsAPersonsCommentsOnThePR(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr, _ := e.reviewPRD()
+	e.gh.AddLineComment(pr, "feature.txt", 1, "keep it short")
+	e.gh.AddPullComment(pr, "also log it")
+	e.gh.AddOutsiderReview(pr, "an outsider's review")
+
+	e.review(prd)
+
+	input := e.readCtl(e.reviewerBox(prd), "input.md")
+	wantContains(t, "claude input", input, "## Comments on the PR",
+		"(person, on feature.txt line 1)\n\nkeep it short", "(person)\n\nalso log it")
+	wantNotContains(t, "claude input", input, "an outsider's review")
+}
+
 // approvedPRD is a PRD whose PR exomecha approved, waiting for a person.
 func (e *env) approvedPRD() (prd, pr int) {
 	prd, pr, _ = e.reviewPRD()
