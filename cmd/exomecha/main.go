@@ -154,13 +154,18 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return fmt.Errorf("read the token's GitHub user: %w", err)
 	}
-	root := c.root
+	root, claudeDir := c.root, ""
 	if root == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return err
 		}
 		root = filepath.Join(home, ".exomecha", c.owner, c.name)
+		// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
+		claudeDir = filepath.Join(home, ".exomecha", "claude")
+		if err := worker.Seed(claudeDir); err != nil {
+			return fmt.Errorf("write the default claude settings: %w", err)
+		}
 	}
 	g := git.New(root, c.owner, c.name, c.base, c.token)
 	if c.gitURL != "" {
@@ -173,6 +178,7 @@ func serve(ctx context.Context, c config) error {
 		Environment:   template.New(g, sbx, c.owner, c.name),
 		SandboxDir:    filepath.Join(root, "sandboxes"),
 		SandboxPrefix: sandbox.Prefix(c.owner, c.name),
+		ClaudeDir:     claudeDir,
 		ProjectLimit:  c.projectLimit,
 		ReadLimit:     c.readLimit,
 		GitName:       author,

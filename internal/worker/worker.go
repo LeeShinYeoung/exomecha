@@ -40,6 +40,8 @@ type Deps struct {
 	SandboxDir string
 	// SandboxPrefix starts the name of every run's sandbox of this repository and nothing else.
 	SandboxPrefix string
+	// ClaudeDir holds the claude user settings every run's sandbox gets. Empty gives none.
+	ClaudeDir string
 	// How many sandboxes of project runs, and of reader runs, may exist at once.
 	ProjectLimit int
 	ReadLimit    int

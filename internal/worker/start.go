@@ -161,6 +161,10 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string
 	if err := r.send(ctx, ro, n, s); err != nil {
 		return "", err
 	}
+	// Before setup, so the project's script can change what the defaults set.
+	if err := r.defaults(ctx, ro, n); err != nil {
+		return "", err
+	}
 	in, input := inputs{Base: s.base, Head: s.head, Remote: s.remote}, s.input
 	if ro.project {
 		note, problem, err := r.setup(ctx, ro, n, s)
