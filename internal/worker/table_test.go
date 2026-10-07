@@ -308,7 +308,7 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 	case fail:
 		e.wantRemoved(name)
 		e.wantStatus(n, label.Stuck)
-		wantStuckComment(t, e.lastComment(n), "The AI's run failed because "+why(s), w.role.back)
+		wantStuckComment(t, e.lastComment(n), "The AI's run failed because "+e.runs.why(s), w.role.back)
 		e.wantKept(name, "input.md")
 	case harvest:
 		e.wantRemoved(name)

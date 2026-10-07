@@ -177,6 +177,21 @@ func TestReviewerWaitsForCIToAppear(t *testing.T) {
 	e.wantState(e.reviewerBox(prd), running)
 }
 
+func TestReviewerWaitsForTheGivenCIGrace(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.deps.CIGrace = 30 * time.Second
+	prd, pr, sha := e.reviewPRD()
+	e.gh.SetCommitTime(sha, time.Now().Add(-10*time.Second))
+
+	e.review(prd)
+	e.wantUntouched(prd, pr)
+
+	e.gh.SetCommitTime(sha, time.Now().Add(-time.Minute))
+	e.review(prd)
+	e.wantState(e.reviewerBox(prd), running)
+}
+
 func TestReviewerApproveLeavesThePRToAPerson(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})

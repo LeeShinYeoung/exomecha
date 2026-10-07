@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -174,7 +175,7 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR
 		if err != nil {
 			return away, pr, nil, err
 		}
-		if time.Since(at) < ciGrace {
+		if time.Since(at) < cmp.Or(r.CIGrace, ciGrace) {
 			return waiting, pr, nil, nil
 		}
 		// Still no runs after the grace period: treat it as a project without CI.
