@@ -1,13 +1,11 @@
 package worker
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
@@ -180,14 +178,14 @@ func TestReviewerWaitsForCIToAppear(t *testing.T) {
 func TestReviewerWaitsForTheGivenCIGrace(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.deps.CIGrace = 30 * time.Second
+	e.deps.CIGrace = 30 * time.Minute
 	prd, pr, sha := e.reviewPRD()
-	e.gh.SetCommitTime(sha, time.Now().Add(-10*time.Second))
+	e.gh.SetCommitTime(sha, time.Now().Add(-10*time.Minute))
 
 	e.review(prd)
 	e.wantUntouched(prd, pr)
 
-	e.gh.SetCommitTime(sha, time.Now().Add(-time.Minute))
+	e.gh.SetCommitTime(sha, time.Now().Add(-time.Hour))
 	e.review(prd)
 	e.wantState(e.reviewerBox(prd), running)
 }
@@ -469,8 +467,7 @@ func TestReviewerFinishesARunAfterRestart(t *testing.T) {
 		t.Fatal("the finished review still holds its sandbox")
 	}
 
-	e.runs = newRuns(e.deps, nil)
-	e.runs.now = e.clock.now
+	e.newRuns()
 	e.gh.SetMergeable(pr, new(true))
 	picked, err := e.reviewer().Pick(t.Context())
 	if err != nil {
@@ -488,13 +485,9 @@ func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	running, pr, _, name := e.reviewing()
-	e.runs.gate = &Gate{
-		Check: func(context.Context) (agent.Usage, error) {
-			return agent.Usage{Known: true, FiveHour: agent.Window{Used: 0.99}}, nil
-		},
-		FiveHour: 0.9,
-		Weekly:   0.8,
-	}
+	f := newFakeUsage(e.clock)
+	f.usage.FiveHour.Used = 0.99
+	e.runs.gate = f.gate
 	waiting, _, _ := e.reviewPRD()
 
 	e.review(waiting)

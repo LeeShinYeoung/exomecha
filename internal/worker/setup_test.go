@@ -3,7 +3,6 @@ package worker
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -48,43 +47,13 @@ func cancelWhenExists(ctx context.Context, cancel context.CancelFunc, path strin
 	}()
 }
 
-// The workers that only read the code run in a sandbox without the setup script, so a broken
-// script must not get in their way.
-func TestReadersDoNotRunSetup(t *testing.T) {
+func TestBuilderDoesNotPushTheSetupMarker(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		role role
-		// start starts the worker's run and returns its issue.
-		start func(e *env) int
-	}{
-		{reviewerRole, func(e *env) int {
-			prd, _, _, _ := e.reviewing()
-			return prd
-		}},
-	} {
-		t.Run(c.role.name, func(t *testing.T) {
-			t.Parallel()
-			e := newEnv(t, setupRepo("exit 1\n"))
-			name := e.runs.name(c.role, c.start(e))
-
-			e.wantState(name, running)
-			if _, err := os.Stat(filepath.Join(e.runs.ctl(name), "setup.sh")); err == nil {
-				t.Error("the setup script went into the run's directory")
-			}
-			wantNotContains(t, "claude input", e.readCtl(name, "input.md"), "## Setup")
-		})
-	}
-}
-
-func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
+	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
 	prd, name := e.startedPRD()
-	b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker))
-	if want := fmt.Sprintf("prd %d\n", prd); err != nil || string(b) != want {
-		t.Fatalf("setup marker = %q, %v, want %q", b, err, want)
+	if _, err := os.Stat(filepath.Join(e.sbx.repo(name), setupMarker)); err != nil {
+		t.Fatalf("setup did not run: %v", err)
 	}
-	wantContains(t, "claude input", e.readCtl(name, "input.md"), "## Setup", "before you started")
 	e.play(name, commit(t, "feat: add feature", map[string]string{"feature.txt": "hello\n"}), builderDone)
 	e.step(prd)
 
@@ -92,24 +61,6 @@ func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
 	files := gittest.Run(t, e.origin, "ls-tree", "-r", "--name-only", branchName(prd))
 	wantContains(t, "pushed files", files, "feature.txt")
 	wantNotContains(t, "pushed files", files, setupMarker)
-}
-
-func TestBuilderStuckWhenSetupFails(t *testing.T) {
-	log := captureLog(t)
-	e := newEnv(t, setupRepo("echo 'a secret in the output' >&2\nfalse\nexit 0\n"))
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
-
-	e.step(prd)
-
-	e.wantStatus(prd, label.Stuck)
-	comment := e.lastComment(prd)
-	wantStuckComment(t, comment, "`"+setupScript+"` did not end cleanly (exit status 1)", label.Ready)
-	wantNotContains(t, "stuck comment", comment, "a secret in the output", "merge the base branch")
-	wantContains(t, "log", log.String(), "a secret in the output")
-	e.wantRemoved(e.builderBox(prd))
-	if head := gittest.Head(e.origin, branchName(prd)); head != "" {
-		t.Errorf("branch was pushed after a failed setup: %s", head)
-	}
 }
 
 func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
@@ -131,31 +82,13 @@ func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 	}
 }
 
-func TestBuilderStuckOnBranchOlderThanSetup(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
-	branch := branchName(prd)
-	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
-	e.gh.AddPull(branch, "main")
-	gittest.Commit(t, e.origin, "main", "", setupRepo("echo ran > "+setupMarker+"\n"))
-
-	e.step(prd)
-
-	e.wantStatus(prd, label.Stuck)
-	comment := e.lastComment(prd)
-	wantStuckComment(t, comment, "changed the working copy", label.Ready)
-	wantContains(t, "stuck comment", comment, "merge the base branch into `"+branch+"`")
-}
-
 func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
-	started := filepath.Join(t.TempDir(), "started")
-	t.Setenv("SETUP_STARTED", started)
-	e := newEnv(t, setupRepo("touch \"$SETUP_STARTED\"\nexec sleep 10\n"))
+	t.Parallel()
+	e := newEnv(t, setupRepo("touch "+setupMarker+"\nexec sleep 10\n"))
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	cancelWhenExists(ctx, cancel, started)
+	cancelWhenExists(ctx, cancel, filepath.Join(e.sbx.repo(e.builderBox(prd)), setupMarker))
 
 	if err := e.builder().Handle(ctx, prd); err == nil {
 		t.Fatal("Handle returned nil for a setup interrupted by shutdown")
@@ -200,20 +133,4 @@ func TestResolverStuckWhenSetupFails(t *testing.T) {
 		t.Errorf("branch moved to %s, want it left at %s", got, head)
 	}
 	e.wantRemoved(e.resolverBox(prd))
-}
-
-func TestResolverSkipsSetupWhenNothingToMerge(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, setupRepo("exit 1\n"))
-	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
-	gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})
-	pr := e.gh.AddPull(branchName(prd), "main")
-	e.gh.SetMergeable(pr, new(false))
-
-	e.resolve(prd)
-
-	e.wantStatus(prd, label.Review)
-	if n := len(e.gh.Issue(prd).Comments); n != 0 {
-		t.Errorf("a failing setup script ran with nothing to merge: %d comments", n)
-	}
 }

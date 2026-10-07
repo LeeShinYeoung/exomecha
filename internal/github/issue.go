@@ -26,7 +26,6 @@ func trusted(association string) bool {
 }
 
 type Issue struct {
-	ID     int64
 	Number int
 	Title  string
 	Body   string
@@ -53,7 +52,6 @@ func issueFrom(i *gh.Issue) Issue {
 		labels = append(labels, l.GetName())
 	}
 	return Issue{
-		ID:     i.GetID(),
 		Number: i.GetNumber(),
 		Title:  i.GetTitle(),
 		Body:   i.GetBody(),
@@ -91,14 +89,10 @@ func (c *Client) Issue(ctx context.Context, number int) (Issue, error) {
 	return issueFrom(i), nil
 }
 
-type CloseReason string
-
-const Completed CloseReason = "completed"
-
-func (c *Client) Close(ctx context.Context, number int, reason CloseReason) error {
+func (c *Client) Close(ctx context.Context, number int) error {
 	_, _, err := c.api.Issues.Update(ctx, c.owner, c.repo, number, gh.UpdateIssueRequest{
 		State:       gh.Ptr("closed"),
-		StateReason: gh.Ptr(string(reason)),
+		StateReason: gh.Ptr("completed"),
 	})
 	if err == nil {
 		return nil
@@ -129,12 +123,7 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, Comment{
-			Body:      withoutMarker(cm.GetBody()),
-			CreatedAt: cm.GetCreatedAt().Time,
-			Exomecha:  byExomecha(cm.GetBody()),
-			Trusted:   trusted(cm.GetAuthorAssociation()),
-		})
+		out = append(out, commentFrom(cm.GetBody(), cm.GetAuthorAssociation(), cm.GetCreatedAt().Time))
 	}
 	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return out, nil
@@ -142,9 +131,22 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 
 func (c *Client) AddComment(ctx context.Context, number int, body string) error {
 	_, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, number, gh.IssueCommentRequest{
-		Body: Marker + "\n" + body,
+		Body: withMarker(body),
 	})
 	return err
+}
+
+func commentFrom(body, association string, at time.Time) Comment {
+	return Comment{
+		Body:      withoutMarker(body),
+		CreatedAt: at,
+		Exomecha:  byExomecha(body),
+		Trusted:   trusted(association),
+	}
+}
+
+func withMarker(body string) string {
+	return Marker + "\n" + body
 }
 
 func byExomecha(body string) bool {

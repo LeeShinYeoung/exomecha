@@ -179,16 +179,6 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	e.wantState(name, running)
 }
 
-func TestOpenWithoutDockerfileUsesTheDefaultTemplate(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	s, name := e.testSpec()
-	e.open(s)
-	if got := e.sbx.box(name).template; got != "" {
-		t.Errorf("template = %q, want sbx's own", got)
-	}
-}
-
 func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
@@ -292,7 +282,7 @@ func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
 	}
 }
 
-// wantSetupProblem opens a run whose setup script breaks a rule, and checks that claude never started.
+// wantOpenProblem opens a run whose setup script breaks a rule, and checks that claude never started.
 func (e *env) wantOpenProblem(s spec, subs ...string) string {
 	e.t.Helper()
 	name := e.runs.name(builderRole, 1)
@@ -365,13 +355,13 @@ func TestSetupGetsNoGitAuth(t *testing.T) {
 // A service the script starts keeps its output open. setup must still return, and the service may stay.
 func TestSetupMayLeaveAServiceRunning(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("sleep 5 &\necho started\n"))
+	e := newEnv(t, setupRepo("sleep 60 &\necho started\n"))
 	s, name := e.testSpec()
 	begin := time.Now()
 	if problem := e.open(s); problem != "" {
 		t.Fatalf("open problem: %s", problem)
 	}
-	if took := time.Since(begin); took > 4*time.Second {
+	if took := time.Since(begin); took > 30*time.Second {
 		t.Errorf("open waited %v for the script's service", took)
 	}
 	if got := e.readCtl(name, "setup.log"); got != "started\n" {

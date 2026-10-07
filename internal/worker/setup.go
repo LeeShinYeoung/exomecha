@@ -19,7 +19,7 @@ const setupNote = "## Setup\n\nexomecha ran the project's setup script in this d
 
 // A script still running after this long is stopped and the PRD goes to stuck. Without a limit,
 // a script that never ends would hold the PRD with nothing to show for it.
-var setupTimeout = 10 * time.Minute
+const setupTimeout = 10 * time.Minute
 
 // setup runs the base branch's setup script in the sandbox's repository, always the base branch's
 // copy, even on a PR branch, so a fix to the script reaches every open PRD. note tells claude it
@@ -53,9 +53,9 @@ func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (note, problem
 	if err != nil {
 		return "", "", fmt.Errorf("run %s: %w", setupScript, err)
 	}
-	code, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	_, code, err := splitStatus(string(out))
 	if err != nil {
-		return "", "", fmt.Errorf("read the exit status of %s: %q", setupScript, out)
+		return "", "", fmt.Errorf("%s: %w", setupScript, err)
 	}
 
 	head, changes := s.head, ""
@@ -65,11 +65,9 @@ func (r *runs) setup(ctx context.Context, ro role, n int, s spec) (note, problem
 			return "", "", err
 		}
 		head = strings.TrimSpace(out)
-		if changes, err = r.git(ctx, name, repoDir, "status", "--porcelain"); err != nil {
+		if changes, err = r.changes(ctx, name); err != nil {
 			return "", "", err
 		}
-		// Not TrimSpace: a line for an unstaged change starts with a space.
-		changes = strings.TrimRight(changes, "\n")
 	}
 	minutes := int(setupTimeout.Minutes())
 	var what string

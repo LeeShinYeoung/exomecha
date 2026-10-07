@@ -387,8 +387,7 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
 	e.deps.Environment = template.New(e.deps.Git, nil, "owner", "repo")
-	e.runs = newRuns(e.deps, nil)
-	e.runs.now = e.clock.now
+	e.newRuns()
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 
 	e.step(prd)
@@ -472,7 +471,7 @@ func TestBuilderResultInAnotherFormFails(t *testing.T) {
 func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	f := newFakeUsage()
+	f := newFakeUsage(e.clock)
 	e.runs.gate = f.gate
 	prd, name := e.startedPRD()
 	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
@@ -494,8 +493,8 @@ func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 		t.Fatal("started again over the limit")
 	}
 
-	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.Add(5 * time.Hour)}
-	f.clock = f.clock.Add(2 * time.Hour)
+	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: e.clock.now().Add(5 * time.Hour)}
+	e.clock.advance(2 * time.Hour)
 	e.step(prd)
 	e.wantState(name, running)
 }
@@ -556,13 +555,9 @@ func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	running, name := e.startedPRD()
-	e.runs.gate = &Gate{
-		Check: func(context.Context) (agent.Usage, error) {
-			return agent.Usage{Known: true, FiveHour: agent.Window{Used: 0.99}}, nil
-		},
-		FiveHour: 0.9,
-		Weekly:   0.8,
-	}
+	f := newFakeUsage(e.clock)
+	f.usage.FiveHour.Used = 0.99
+	e.runs.gate = f.gate
 	waiting := e.gh.AddIssue("Waiting", "", label.PRD, string(label.Ready))
 
 	e.step(waiting)
@@ -583,8 +578,7 @@ func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 	prd, name := e.startedPRD()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
 
-	e.runs = newRuns(e.deps, nil)
-	e.runs.now = e.clock.now
+	e.newRuns()
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)

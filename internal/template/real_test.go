@@ -95,7 +95,7 @@ func wantTags(t *testing.T, e *Env, ref string) {
 	var tags []string
 	for _, img := range images {
 		if img.Repository == e.repository() {
-			tags = append(tags, img.Repository+":"+img.Tag)
+			tags = append(tags, img.Ref())
 		}
 	}
 	if len(tags) != 1 || tags[0] != ref {
@@ -117,7 +117,7 @@ func cleanUp(t *testing.T, e *Env, box string) {
 	}
 	for _, img := range images {
 		if img.Repository == e.repository() {
-			if err := e.sbx.RemoveTemplate(ctx, img.Repository+":"+img.Tag); err != nil {
+			if err := e.sbx.RemoveTemplate(ctx, img.Ref()); err != nil {
 				t.Errorf("remove template: %v", err)
 			}
 		}

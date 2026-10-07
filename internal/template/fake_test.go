@@ -63,7 +63,7 @@ func (f *fakeSbx) RemoveTemplate(ctx context.Context, ref string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i, img := range f.images {
-		if img.Repository+":"+img.Tag == ref {
+		if img.Ref() == ref {
 			f.images = append(f.images[:i], f.images[i+1:]...)
 			return nil
 		}

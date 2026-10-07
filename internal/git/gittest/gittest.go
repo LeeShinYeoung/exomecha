@@ -23,6 +23,12 @@ func Main(m *testing.M) {
 	if err := os.WriteFile(cfg, []byte(content), 0o644); err != nil {
 		log.Fatal(err)
 	}
+	// GIT_CONFIG_COUNT and its keys outrank every config file, so the caller's must not reach the tests.
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "GIT_CONFIG") {
+			os.Unsetenv(k)
+		}
+	}
 	os.Setenv("GIT_CONFIG_GLOBAL", cfg)
 	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	m.Run()

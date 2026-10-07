@@ -224,7 +224,7 @@ func (e *Env) removeOld(ctx context.Context, ref string) {
 		if img.Repository != e.repository() || img.Tag == current.Tag || img.ID == current.ID {
 			continue
 		}
-		old := img.Repository + ":" + img.Tag
+		old := img.Ref()
 		if err := e.sbx.RemoveTemplate(ctx, old); err != nil {
 			slog.Warn("remove old template failed", "ref", old, "err", err)
 			continue
@@ -235,7 +235,7 @@ func (e *Env) removeOld(ctx context.Context, ref string) {
 
 func find(images []sandbox.Template, ref string) (sandbox.Template, bool) {
 	for _, img := range images {
-		if img.Repository+":"+img.Tag == ref {
+		if img.Ref() == ref {
 			return img, true
 		}
 	}

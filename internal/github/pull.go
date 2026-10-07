@@ -72,7 +72,7 @@ func (c *Client) PR(ctx context.Context, number int) (PR, error) {
 // COMMENT only: the token owner authored the PR, and GitHub blocks approving or requesting changes on your own PR.
 func (c *Client) AddReview(ctx context.Context, number int, body string) error {
 	_, _, err := c.api.PullRequests.CreateReview(ctx, c.owner, c.repo, number, &gh.PullRequestReviewRequest{
-		Body:  gh.Ptr(Marker + "\n" + body),
+		Body:  gh.Ptr(withMarker(body)),
 		Event: gh.Ptr("COMMENT"),
 	})
 	return err
@@ -122,27 +122,18 @@ func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) 
 		if r.GetState() == "PENDING" || strings.TrimSpace(r.GetBody()) == "" {
 			continue
 		}
-		out = append(out, Comment{
-			Body:      withoutMarker(r.GetBody()),
-			CreatedAt: r.GetSubmittedAt().Time,
-			Exomecha:  byExomecha(r.GetBody()),
-			Trusted:   trusted(r.GetAuthorAssociation()),
-		})
+		out = append(out, commentFrom(r.GetBody(), r.GetAuthorAssociation(), r.GetSubmittedAt().Time))
 	}
 	opts := &gh.PullRequestListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for cm, err := range c.api.PullRequests.ListCommentsIter(ctx, c.owner, c.repo, number, opts) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, Comment{
-			Body:      withoutMarker(cm.GetBody()),
-			CreatedAt: cm.GetCreatedAt().Time,
-			Exomecha:  byExomecha(cm.GetBody()),
-			Trusted:   trusted(cm.GetAuthorAssociation()),
-			Path:      cm.GetPath(),
-			// line is empty once a later push takes the line out of the diff.
-			Line: cmp.Or(cm.GetLine(), cm.GetOriginalLine()),
-		})
+		c := commentFrom(cm.GetBody(), cm.GetAuthorAssociation(), cm.GetCreatedAt().Time)
+		c.Path = cm.GetPath()
+		// line is empty once a later push takes the line out of the diff.
+		c.Line = cmp.Or(cm.GetLine(), cm.GetOriginalLine())
+		out = append(out, c)
 	}
 	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return out, nil

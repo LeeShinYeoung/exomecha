@@ -14,18 +14,18 @@ import (
 // fakeUsage is a Gate whose clock the test moves and whose readings the test sets.
 type fakeUsage struct {
 	gate   *Gate
-	clock  time.Time
+	clock  *clock
 	usage  agent.Usage
 	err    error
 	checks int
 }
 
-func newFakeUsage() *fakeUsage {
-	f := &fakeUsage{clock: time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)}
+func newFakeUsage(c *clock) *fakeUsage {
+	f := &fakeUsage{clock: c}
 	f.usage = agent.Usage{
 		Known:    true,
-		FiveHour: agent.Window{Used: 0.5, ResetsAt: f.clock.Add(2 * time.Hour)},
-		Weekly:   agent.Window{Used: 0.5, ResetsAt: f.clock.Add(48 * time.Hour)},
+		FiveHour: agent.Window{Used: 0.5, ResetsAt: f.clock.now().Add(2 * time.Hour)},
+		Weekly:   agent.Window{Used: 0.5, ResetsAt: f.clock.now().Add(48 * time.Hour)},
 	}
 	f.gate = &Gate{
 		Check: func(context.Context) (agent.Usage, error) {
@@ -34,7 +34,7 @@ func newFakeUsage() *fakeUsage {
 		},
 		FiveHour: 0.9,
 		Weekly:   0.8,
-		now:      func() time.Time { return f.clock },
+		now:      c.now,
 	}
 	return f
 }
@@ -56,40 +56,40 @@ func (f *fakeUsage) wantChecks(t *testing.T, want int) {
 
 func TestGateReusesReadingForThreeMinutes(t *testing.T) {
 	t.Parallel()
-	f := newFakeUsage()
+	f := newFakeUsage(newClock())
 	f.wantOpen(t, true)
-	f.clock = f.clock.Add(usageFresh - time.Second)
+	f.clock.advance(usageFresh - time.Second)
 	f.wantOpen(t, true)
 	f.wantChecks(t, 1)
 
-	f.clock = f.clock.Add(time.Second)
+	f.clock.advance(time.Second)
 	f.wantOpen(t, true)
 	f.wantChecks(t, 2)
 }
 
 func TestGateChecksAgainAfterReset(t *testing.T) {
 	t.Parallel()
-	f := newFakeUsage()
-	f.usage.FiveHour = agent.Window{Used: 0.95, ResetsAt: f.clock.Add(time.Minute)}
+	f := newFakeUsage(newClock())
+	f.usage.FiveHour = agent.Window{Used: 0.95, ResetsAt: f.clock.now().Add(time.Minute)}
 	f.wantOpen(t, false)
 
-	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.Add(5 * time.Hour)}
-	f.clock = f.clock.Add(time.Minute)
+	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.now().Add(5 * time.Hour)}
+	f.clock.advance(time.Minute)
 	f.wantOpen(t, true)
 	f.wantChecks(t, 2)
 }
 
 func TestGateWaitsForResetWhileClosed(t *testing.T) {
 	t.Parallel()
-	f := newFakeUsage()
-	f.usage.FiveHour = agent.Window{Used: 0.95, ResetsAt: f.clock.Add(2 * time.Hour)}
+	f := newFakeUsage(newClock())
+	f.usage.FiveHour = agent.Window{Used: 0.95, ResetsAt: f.clock.now().Add(2 * time.Hour)}
 	f.wantOpen(t, false)
-	f.clock = f.clock.Add(time.Hour)
+	f.clock.advance(time.Hour)
 	f.wantOpen(t, false)
 	f.wantChecks(t, 1)
 
-	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.Add(5 * time.Hour)}
-	f.clock = f.clock.Add(time.Hour)
+	f.usage.FiveHour = agent.Window{Used: 0, ResetsAt: f.clock.now().Add(5 * time.Hour)}
+	f.clock.advance(time.Hour)
 	f.wantOpen(t, true)
 	f.wantChecks(t, 2)
 }
@@ -109,7 +109,7 @@ func TestGateLimits(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			f := newFakeUsage()
+			f := newFakeUsage(newClock())
 			f.usage.FiveHour.Used, f.usage.Weekly.Used, f.usage.Rejected = c.fiveHour, c.weekly, c.rejected
 			f.wantOpen(t, c.open)
 		})
@@ -118,14 +118,14 @@ func TestGateLimits(t *testing.T) {
 
 func TestGateOpenWhenUsageUnknown(t *testing.T) {
 	t.Parallel()
-	f := newFakeUsage()
+	f := newFakeUsage(newClock())
 	f.usage = agent.Usage{}
 	f.wantOpen(t, true)
 }
 
 func TestGateCheckError(t *testing.T) {
 	t.Parallel()
-	f := newFakeUsage()
+	f := newFakeUsage(newClock())
 	f.err = errors.New("claude crashed")
 	if open, err := f.gate.Open(t.Context()); err == nil || open {
 		t.Errorf("Open = %v, %v, want closed with an error", open, err)
@@ -136,14 +136,14 @@ func TestGateCheckError(t *testing.T) {
 // then stays closed until the reset.
 func TestGateReadsAgainWhenStale(t *testing.T) {
 	t.Parallel()
-	f := newFakeUsage()
+	f := newFakeUsage(newClock())
 	f.wantOpen(t, true)
 	f.usage.FiveHour.Used = 0.95
 	f.gate.stale()
 	f.wantOpen(t, false)
 	f.wantChecks(t, 2)
 
-	f.clock = f.clock.Add(time.Hour)
+	f.clock.advance(time.Hour)
 	f.wantOpen(t, false)
 	f.wantChecks(t, 2)
 }
@@ -152,7 +152,7 @@ func TestGateReadsAgainWhenStale(t *testing.T) {
 func TestUsageIsReadOnlyForAStart(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	f := newFakeUsage()
+	f := newFakeUsage(newClock())
 	e.runs.gate = f.gate
 	prd, pr, _ := e.reviewPRD()
 	e.gh.SetMergeable(pr, nil)
@@ -165,7 +165,7 @@ func TestUsageIsReadOnlyForAStart(t *testing.T) {
 	f.wantChecks(t, 1)
 	e.wantState(e.reviewerBox(prd), running)
 
-	f.clock = f.clock.Add(usageFresh)
+	f.clock.advance(usageFresh)
 	e.review(prd)
 	f.wantChecks(t, 1)
 }
@@ -174,7 +174,7 @@ func TestUsageIsReadOnlyForAStart(t *testing.T) {
 func TestNoRunStartsOverTheLimit(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	f := newFakeUsage()
+	f := newFakeUsage(newClock())
 	f.usage.FiveHour.Used = 0.95
 	e.runs.gate = f.gate
 	ready := e.gh.AddIssue("ready", "", label.PRD, string(label.Ready))
