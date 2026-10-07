@@ -1,0 +1,20 @@
+{
+  "enabledPlugins": {
+    "humanizer@humanizer": true,
+    "ponytail@ponytail": true
+  },
+  "extraKnownMarketplaces": {
+    "humanizer": {
+      "source": {
+        "source": "github",
+        "repo": "blader/humanizer"
+      }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
+    }
+  }
+}

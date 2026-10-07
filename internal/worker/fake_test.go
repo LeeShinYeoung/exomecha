@@ -50,6 +50,10 @@ func newFakeSandboxes(t *testing.T) *fakeSandboxes {
 	if err := os.WriteFile(filepath.Join(bin, "timeout"), []byte("#!/bin/sh\nshift\nexec \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The real claude would change the claude settings of the machine running the tests.
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	gitConfig := filepath.Join(bin, "gitconfig")
 	if err := os.WriteFile(gitConfig, []byte("[user]\n\tuseConfigOnly = true\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -70,7 +74,7 @@ func (f *fakeSandboxes) disk(name string) string { return filepath.Join(f.root, 
 func (f *fakeSandboxes) repo(name string) string { return filepath.Join(f.disk(name), "repo") }
 
 func (f *fakeSandboxes) local(name, s string) string {
-	return strings.ReplaceAll(s, repoDir, f.repo(name))
+	return strings.ReplaceAll(s, homeDir, f.disk(name))
 }
 
 func (f *fakeSandboxes) failing(verb string) error {
