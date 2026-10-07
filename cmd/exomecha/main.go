@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git"
@@ -29,42 +30,72 @@ func main() {
 	}
 }
 
-func run() error {
+// config is what one exomecha runs with. main reads it from the environment. Only the e2e tests
+// set the fields after the tier models.
+type config struct {
+	owner, name, base, token string
+	fiveHour, weekly         float64
+	projectLimit, readLimit  int
+	light, normal, heavy     agent.Model
+
+	apiURL, gitURL, root          string // empty: GitHub's API, github.com, ~/.exomecha/<owner>/<name>
+	interval, ciGrace, stallAfter time.Duration
+	usage                         func(context.Context) (agent.Usage, error) // nil: claude's own reading
+	started                       func()                                     // called just before the workers start
+}
+
+func defaults() config {
+	return config{
+		fiveHour:     0.9,
+		weekly:       0.8,
+		projectLimit: 2,
+		readLimit:    2,
+		light:        agent.Model{Name: "opus", Effort: "low"},
+		normal:       agent.Model{Name: "opus", Effort: "high"},
+		heavy:        agent.Model{Name: "opus", Effort: "xhigh"},
+	}
+}
+
+func configFromEnv() (config, error) {
+	c := defaults()
 	repo := os.Getenv("EXOMECHA_REPO")
-	base := os.Getenv("EXOMECHA_BASE_BRANCH")
-	token := os.Getenv("EXOMECHA_GITHUB_TOKEN")
-	if repo == "" || base == "" || token == "" {
-		return errors.New("EXOMECHA_REPO, EXOMECHA_BASE_BRANCH and EXOMECHA_GITHUB_TOKEN must all be set")
+	c.base = os.Getenv("EXOMECHA_BASE_BRANCH")
+	c.token = os.Getenv("EXOMECHA_GITHUB_TOKEN")
+	if repo == "" || c.base == "" || c.token == "" {
+		return config{}, errors.New("EXOMECHA_REPO, EXOMECHA_BASE_BRANCH and EXOMECHA_GITHUB_TOKEN must all be set")
 	}
-	owner, name, ok := strings.Cut(repo, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return fmt.Errorf("EXOMECHA_REPO must be owner/name: %q", repo)
+	var ok bool
+	c.owner, c.name, ok = strings.Cut(repo, "/")
+	if !ok || c.owner == "" || c.name == "" || strings.Contains(c.name, "/") {
+		return config{}, fmt.Errorf("EXOMECHA_REPO must be owner/name: %q", repo)
 	}
-	fiveHour, err := usageLimit("EXOMECHA_FIVE_HOUR_LIMIT", 90)
-	if err != nil {
-		return err
+	var err error
+	if c.fiveHour, err = usageLimit("EXOMECHA_FIVE_HOUR_LIMIT", c.fiveHour); err != nil {
+		return config{}, err
 	}
-	weekly, err := usageLimit("EXOMECHA_WEEKLY_LIMIT", 80)
-	if err != nil {
-		return err
+	if c.weekly, err = usageLimit("EXOMECHA_WEEKLY_LIMIT", c.weekly); err != nil {
+		return config{}, err
 	}
-	projectLimit, err := limit("EXOMECHA_SANDBOX_LIMIT", 2)
-	if err != nil {
-		return err
+	if c.projectLimit, err = limit("EXOMECHA_SANDBOX_LIMIT", c.projectLimit); err != nil {
+		return config{}, err
 	}
-	readLimit, err := limit("EXOMECHA_READ_SANDBOX_LIMIT", 2)
-	if err != nil {
-		return err
+	if c.readLimit, err = limit("EXOMECHA_READ_SANDBOX_LIMIT", c.readLimit); err != nil {
+		return config{}, err
 	}
-	light, err := tierModel("EXOMECHA_TIER_LIGHT", agent.Model{Name: "opus", Effort: "low"})
-	if err != nil {
-		return err
+	if c.light, err = tierModel("EXOMECHA_TIER_LIGHT", c.light); err != nil {
+		return config{}, err
 	}
-	normal, err := tierModel("EXOMECHA_TIER_NORMAL", agent.Model{Name: "opus", Effort: "high"})
-	if err != nil {
-		return err
+	if c.normal, err = tierModel("EXOMECHA_TIER_NORMAL", c.normal); err != nil {
+		return config{}, err
 	}
-	heavy, err := tierModel("EXOMECHA_TIER_HEAVY", agent.Model{Name: "opus", Effort: "xhigh"})
+	if c.heavy, err = tierModel("EXOMECHA_TIER_HEAVY", c.heavy); err != nil {
+		return config{}, err
+	}
+	return c, nil
+}
+
+func run() error {
+	c, err := configFromEnv()
 	if err != nil {
 		return err
 	}
@@ -77,6 +108,11 @@ func run() error {
 	// undone instead of cut off.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
+	return serve(ctx, c)
+}
+
+// serve runs exomecha until ctx is done.
+func serve(ctx context.Context, c config) error {
 	ctx = github.WaitForRateLimit(ctx)
 
 	if _, err := exec.LookPath("sbx"); err != nil {
@@ -94,7 +130,7 @@ func run() error {
 	for _, t := range []struct {
 		env   string
 		model agent.Model
-	}{{"EXOMECHA_TIER_LIGHT", light}, {"EXOMECHA_TIER_NORMAL", normal}, {"EXOMECHA_TIER_HEAVY", heavy}} {
+	}{{"EXOMECHA_TIER_LIGHT", c.light}, {"EXOMECHA_TIER_NORMAL", c.normal}, {"EXOMECHA_TIER_HEAVY", c.heavy}} {
 		if checked[t.model.Name] {
 			continue
 		}
@@ -104,7 +140,13 @@ func run() error {
 		}
 	}
 
-	gh, err := github.New(owner, name, token)
+	var gh *github.Client
+	var err error
+	if c.apiURL != "" {
+		gh, err = github.NewAt(c.apiURL, c.owner, c.name, c.token)
+	} else {
+		gh, err = github.New(c.owner, c.name, c.token)
+	}
 	if err != nil {
 		return err
 	}
@@ -112,24 +154,33 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("read the token's GitHub user: %w", err)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	root := c.root
+	if root == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		root = filepath.Join(home, ".exomecha", c.owner, c.name)
 	}
-	root := filepath.Join(home, ".exomecha", owner, name)
-	g := git.New(root, owner, name, base, token)
+	g := git.New(root, c.owner, c.name, c.base, c.token)
+	if c.gitURL != "" {
+		g = git.NewAt(root, c.gitURL, c.base, c.token)
+	}
 	deps := worker.Deps{
 		GitHub:        gh,
 		Git:           g,
 		Sandboxes:     sbx,
-		Environment:   template.New(g, sbx, owner, name),
+		Environment:   template.New(g, sbx, c.owner, c.name),
 		SandboxDir:    filepath.Join(root, "sandboxes"),
-		SandboxPrefix: sandbox.Prefix(owner, name),
-		ProjectLimit:  projectLimit,
-		ReadLimit:     readLimit,
+		SandboxPrefix: sandbox.Prefix(c.owner, c.name),
+		ProjectLimit:  c.projectLimit,
+		ReadLimit:     c.readLimit,
 		GitName:       author,
 		GitEmail:      email,
-		Models:        map[label.Tier]agent.Model{label.Light: light, label.Normal: normal, label.Heavy: heavy},
+		Models:        map[label.Tier]agent.Model{label.Light: c.light, label.Normal: c.normal, label.Heavy: c.heavy},
+		Interval:      c.interval,
+		CIGrace:       c.ciGrace,
+		StallAfter:    c.stallAfter,
 	}
 
 	created, err := gh.EnsureLabels(ctx)
@@ -140,20 +191,27 @@ func run() error {
 		slog.Info("created label", "label", l)
 	}
 
-	slog.Info("exomecha started", "repo", repo, "base", base, "five_hour_limit", fiveHour, "weekly_limit", weekly,
-		"sandbox_limit", projectLimit, "read_sandbox_limit", readLimit,
-		"tier_light", light, "tier_normal", normal, "tier_heavy", heavy)
-	gate := &worker.Gate{Check: agent.Claude{}.Usage, FiveHour: fiveHour, Weekly: weekly}
+	slog.Info("exomecha started", "repo", c.owner+"/"+c.name, "base", c.base, "five_hour_limit", c.fiveHour,
+		"weekly_limit", c.weekly, "sandbox_limit", c.projectLimit, "read_sandbox_limit", c.readLimit,
+		"tier_light", c.light, "tier_normal", c.normal, "tier_heavy", c.heavy)
+	check := agent.Claude{}.Usage
+	if c.usage != nil {
+		check = c.usage
+	}
+	gate := &worker.Gate{Check: check, FiveHour: c.fiveHour, Weekly: c.weekly}
+	if c.started != nil {
+		c.started()
+	}
 	worker.Run(ctx, deps, gate)
 	slog.Info("exomecha stopped")
 	return nil
 }
 
 // usageLimit reads a percentage of a Claude plan limit, at which exomecha stops starting new work.
-func usageLimit(name string, fallback int) (float64, error) {
+func usageLimit(name string, fallback float64) (float64, error) {
 	v := os.Getenv(name)
 	if v == "" {
-		return float64(fallback) / 100, nil
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n < 1 || n > 100 {
