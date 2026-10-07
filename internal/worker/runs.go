@@ -607,6 +607,27 @@ func (r *runs) sh(ctx context.Context, ro role, n int, script string, args ...st
 	return string(out), err
 }
 
+func (r *runs) changes(ctx context.Context, name string) (string, error) {
+	out, err := r.git(ctx, name, repoDir, "status", "--porcelain")
+	// Not TrimSpace: a line for an unstaged change starts with a space.
+	return strings.TrimRight(out, "\n"), err
+}
+
+// splitStatus reads the output of a script that ends with `echo $?`: what came before, and the
+// exit status the echo printed.
+func splitStatus(out string) (output string, code int, err error) {
+	text := strings.TrimRight(out, "\n")
+	output, last := "", text
+	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
+		output, last = text[:i], text[i+1:]
+	}
+	code, err = strconv.Atoi(last)
+	if err != nil {
+		return "", 0, fmt.Errorf("read the exit status: %q", last)
+	}
+	return output, code, nil
+}
+
 // take brings the commit the run left checked out into the shared clone, for the worker to push.
 // ok is false when the run went to stuck or starts over instead, and err is set only when a step
 // failed. said is what the AI said about its work, for a stuck comment.

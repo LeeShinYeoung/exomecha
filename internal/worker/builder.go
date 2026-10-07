@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -183,11 +182,11 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		return err
 	}
 	if head == in.Head {
-		changes, err := b.runs.sh(ctx, builderRole, n, "git status --porcelain")
+		changes, err := b.runs.changes(ctx, b.runs.name(builderRole, n))
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(changes) != "" {
+		if changes != "" {
 			return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes.\n\n"+out.Summary)
 		}
 		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).\n\n"+out.Summary)

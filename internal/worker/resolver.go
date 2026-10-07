@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
@@ -203,18 +202,13 @@ func (r *resolver) unfinished(ctx context.Context, n int, head string, in inputs
 // conflicted files for claude's input. problem is set when git refused the merge without a conflict.
 func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, note, problem string, err error) {
 	// The exit status comes back on stdout, apart from sbx's own failures.
-	out, err := r.sh(ctx, ro, n, `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, r.Git.BaseRef())
+	out, err := r.sh(ctx, ro, n, `git merge --no-commit --no-ff "$1" 2>&1; echo $?`, r.Git.BaseRef())
 	if err != nil {
 		return nil, "", "", err
 	}
-	text := strings.TrimRight(out, "\n")
-	output, last := "", text
-	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
-		output, last = text[:i], text[i+1:]
-	}
-	code, err := strconv.Atoi(strings.TrimPrefix(last, "exit "))
+	output, code, err := splitStatus(out)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("read the merge's exit status: %q", last)
+		return nil, "", "", fmt.Errorf("merge: %w", err)
 	}
 	if code != 0 {
 		// -z keeps non-ASCII file names as they are instead of quoting them.
