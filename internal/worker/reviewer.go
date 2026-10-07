@@ -189,7 +189,7 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) er
 		if err != nil {
 			return spec{}, err
 		}
-		comments, err := issueComments(ctx, r.GitHub, n)
+		input, err := prdInput(ctx, r.GitHub, prd)
 		if err != nil {
 			return spec{}, err
 		}
@@ -198,7 +198,7 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) er
 			return spec{}, err
 		}
 		ref := r.Git.BaseRef()
-		input := prdText(prd) + comments + onPR +
+		input += onPR +
 			fmt.Sprintf("## Base branch\n\n`%s`. See this PR's changes with `git diff %s...HEAD`.\n", ref, ref)
 		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
 	})

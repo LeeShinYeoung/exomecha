@@ -231,30 +231,21 @@ func prompt(name string) string {
 	return string(b)
 }
 
-// exomecha's own comments go in marked as its questions, because a person's answer often makes
-// sense only next to the question. Comments from people who cannot write to the repository are
-// left out so outsiders cannot steer the AI.
-func issueComments(ctx context.Context, gh *github.Client, n int) (string, error) {
-	comments, err := gh.Comments(ctx, n)
+// prdInput is the PRD and its comments, the start of every run's input. exomecha's own comments go
+// in marked as its questions, because a person's answer often makes sense only next to the
+// question.
+func prdInput(ctx context.Context, gh *github.Client, prd github.Issue) (string, error) {
+	comments, err := gh.Comments(ctx, prd.Number)
 	if err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	for _, c := range comments {
-		if !c.Trusted {
-			continue
-		}
-		from := "person"
-		if c.Exomecha {
-			from = "exomecha"
-		}
-		fmt.Fprintf(&b, "### %s (%s)\n\n%s\n\n", c.CreatedAt.Local().Format(time.DateTime), from, strings.TrimSpace(c.Body))
+	text := fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n", prd.Number, prd.Title, strings.TrimSpace(prd.Body))
+	entries := commentEntries(comments, true)
+	if entries == "" {
+		return text, nil
 	}
-	if b.Len() == 0 {
-		return "", nil
-	}
-	return "## Comments\n\nOldest first. A person's comments add to or correct the body. If one conflicts with the body, follow the latest comment from a person. " +
-		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + b.String(), nil
+	return text + "## Comments\n\nOldest first. A person's comments add to or correct the body. If one conflicts with the body, follow the latest comment from a person. " +
+		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + entries, nil
 }
 
 // A person may answer on the PR instead of on the PRD. exomecha's reviews are left out: builder gets
@@ -264,29 +255,34 @@ func prComments(ctx context.Context, gh *github.Client, pr int) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	var b strings.Builder
-	for _, c := range comments {
-		if !c.Trusted || c.Exomecha {
-			continue
-		}
-		where := ""
-		if c.Path != "" {
-			where = ", on " + c.Path
-		}
-		if c.Line > 0 {
-			where += fmt.Sprintf(" line %d", c.Line)
-		}
-		fmt.Fprintf(&b, "### %s (person%s)\n\n%s\n\n", c.CreatedAt.Local().Format(time.DateTime), where, strings.TrimSpace(c.Body))
-	}
-	if b.Len() == 0 {
+	entries := commentEntries(comments, false)
+	if entries == "" {
 		return "", nil
 	}
 	return "## Comments on the PR\n\nOldest first: a person's comments on the conversation, in reviews, and on lines of the diff. They add to or correct the body like a person's comments on the PRD. " +
-		"Commits after a comment may already have done what it asks.\n\n" + b.String(), nil
+		"Commits after a comment may already have done what it asks.\n\n" + entries, nil
 }
 
-func prdText(t github.Issue) string {
-	return fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n", t.Number, t.Title, strings.TrimSpace(t.Body))
+// Comments from people who cannot write to the repository are left out so outsiders cannot steer the AI.
+func commentEntries(comments []github.Comment, withExomecha bool) string {
+	var b strings.Builder
+	for _, c := range comments {
+		if !c.Trusted || (c.Exomecha && !withExomecha) {
+			continue
+		}
+		from := "person"
+		if c.Exomecha {
+			from = "exomecha"
+		}
+		if c.Path != "" {
+			from += ", on " + c.Path
+		}
+		if c.Line > 0 {
+			from += fmt.Sprintf(" line %d", c.Line)
+		}
+		fmt.Fprintf(&b, "### %s (%s)\n\n%s\n\n", c.CreatedAt.Local().Format(time.DateTime), from, strings.TrimSpace(c.Body))
+	}
+	return b.String()
 }
 
 func branchName(n int) string {

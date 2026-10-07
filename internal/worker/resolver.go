@@ -130,11 +130,11 @@ func (r *resolver) start(ctx context.Context, prd github.Issue) error {
 		return err
 	}
 	return r.runs.start(ctx, resolverRole, n, func(ctx context.Context) (spec, error) {
-		comments, err := issueComments(ctx, r.GitHub, n)
+		input, err := prdInput(ctx, r.GitHub, prd)
 		if err != nil {
 			return spec{}, err
 		}
-		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: prdText(prd) + comments}, nil
+		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: input}, nil
 	})
 }
 

@@ -129,11 +129,11 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		comments, err := issueComments(ctx, b.GitHub, n)
+		input, err := prdInput(ctx, b.GitHub, prd)
 		if err != nil {
 			return spec{}, err
 		}
-		s := spec{branch: branch, base: base, head: base, remote: remote, input: prdText(prd) + comments,
+		s := spec{branch: branch, base: base, head: base, remote: remote, input: input,
 			tier: label.TierOf(prd.Labels)}
 		if !hasPR {
 			return s, nil
