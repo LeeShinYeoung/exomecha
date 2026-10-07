@@ -5,7 +5,15 @@ import (
 	"testing"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 )
+
+func TestMain(m *testing.M) {
+	if e2eOn() {
+		setUpE2E()
+	}
+	gittest.Main(m)
+}
 
 var envNames = []string{
 	"EXOMECHA_REPO", "EXOMECHA_BASE_BRANCH", "EXOMECHA_GITHUB_TOKEN",
