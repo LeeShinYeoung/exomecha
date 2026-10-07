@@ -43,7 +43,6 @@ func (e *env) open(s spec) string {
 	return problem
 }
 
-// startedModel returns the model and effort of the sandbox's first claude start.
 func (e *env) startedModel(name string) agent.Model {
 	e.t.Helper()
 	starts := e.sbx.box(name).starts

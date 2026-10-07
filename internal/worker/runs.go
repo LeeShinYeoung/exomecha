@@ -104,7 +104,6 @@ const (
 	stale                // an approved PRD whose PR conflicts
 )
 
-// role is what runs needs to know about the worker a run belongs to.
 type role struct {
 	name   string
 	schema string
@@ -403,7 +402,6 @@ func why(s state) string {
 	return s.String()
 }
 
-// spec is what a worker puts into a run.
 type spec struct {
 	branch string // checked out in the run's repository, and set to head
 	base   string // the base branch commit
@@ -559,7 +557,6 @@ func (r *runs) send(ctx context.Context, ro role, n int, s spec) error {
 	return err
 }
 
-// launch starts claude on input and records in once it runs.
 func (r *runs) launch(ctx context.Context, ro role, n int, model agent.Model, input string, in inputs) error {
 	name := r.name(ro, n)
 	ctl := r.ctl(name)
@@ -598,7 +595,6 @@ func needsPerson(prd int, err error) (string, error) {
 	return "", err
 }
 
-// git runs git in the sandbox, in dir if it is not empty.
 func (r *runs) git(ctx context.Context, name, dir string, args ...string) (string, error) {
 	out, err := r.Sandboxes.Exec(ctx, name, dir, nil, append([]string{"git"}, args...)...)
 	return string(out), err
@@ -705,7 +701,6 @@ func (r *runs) outcome(name string) (res json.RawMessage, failure, detail string
 	return res, "", "", false
 }
 
-// tail returns the end of a file in the sandbox's directory, for the log.
 func (r *runs) tail(name, file string) string {
 	f, err := openCtl(r.ctl(name), file)
 	if err != nil {

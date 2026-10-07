@@ -174,9 +174,8 @@ func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 
 // fakeWorker picks fixed numbers, and its Handle returns the error the test set for the number.
 type fakeWorker struct {
-	picks []int
-	errs  map[int]error
-	// handling runs in every Handle, if set.
+	picks    []int
+	errs     map[int]error
 	handling func()
 
 	mu      sync.Mutex

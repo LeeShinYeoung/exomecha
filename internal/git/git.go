@@ -28,7 +28,6 @@ func New(root, owner, repo, base, token string) *Git {
 	return NewAt(root, fmt.Sprintf("https://github.com/%s/%s.git", owner, repo), base, token)
 }
 
-// NewAt clones from url instead of GitHub, e.g. a local repository in tests.
 func NewAt(root, url, base, token string) *Git {
 	auth := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 	return &Git{

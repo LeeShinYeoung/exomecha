@@ -162,7 +162,6 @@ func usageLimit(name string, fallback int) (float64, error) {
 	return float64(n) / 100, nil
 }
 
-// tierModel reads the model and effort of one tier.
 func tierModel(name string, fallback agent.Model) (agent.Model, error) {
 	v := os.Getenv(name)
 	if v == "" {
@@ -175,7 +174,6 @@ func tierModel(name string, fallback agent.Model) (agent.Model, error) {
 	return m, nil
 }
 
-// limit reads how many sandboxes of one kind may exist at once.
 func limit(name string, fallback int) (int, error) {
 	v := os.Getenv(name)
 	if v == "" {

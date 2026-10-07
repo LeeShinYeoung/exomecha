@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// Usage is how much of the Claude plan's limits is used, as claude reports it.
 type Usage struct {
 	Known    bool // false when claude reports no plan limits, e.g. when logged in with an API key
 	Rejected bool // claude already refuses new work until a limit resets

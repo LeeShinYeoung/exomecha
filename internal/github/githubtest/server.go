@@ -714,7 +714,6 @@ func (s *Server) AddPendingReview(n int, body string) {
 	s.pulls[n].Reviews = append(s.pulls[n].Reviews, Review{Body: body, Association: associationOwner, At: s.now()})
 }
 
-// AddPullComment comments on PR n's conversation.
 func (s *Server) AddPullComment(n int, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

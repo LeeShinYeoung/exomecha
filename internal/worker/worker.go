@@ -33,7 +33,6 @@ type Deps struct {
 	GitHub *github.Client
 	Git    *git.Git
 
-	// Every worker runs claude in sandboxes.
 	Sandboxes   Sandboxes
 	Environment Environment
 	// SandboxDir holds one directory per run, shared with the run's sandbox.
