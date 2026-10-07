@@ -260,7 +260,8 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 
 func TestResolverNothingToMerge(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	// The script fails if setup runs, which it must not with nothing to merge.
+	e := newEnv(t, setupRepo("exit 1\n"))
 	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
 	head := gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})
 	pr := e.gh.AddPull(branchName(prd), "main")

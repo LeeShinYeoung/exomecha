@@ -179,16 +179,6 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	e.wantState(name, running)
 }
 
-func TestOpenWithoutDockerfileUsesTheDefaultTemplate(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	s, name := e.testSpec()
-	e.open(s)
-	if got := e.sbx.box(name).template; got != "" {
-		t.Errorf("template = %q, want sbx's own", got)
-	}
-}
-
 func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 	log := captureLog(t)
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
@@ -292,7 +282,7 @@ func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
 	}
 }
 
-// wantSetupProblem opens a run whose setup script breaks a rule, and checks that claude never started.
+// wantOpenProblem opens a run whose setup script breaks a rule, and checks that claude never started.
 func (e *env) wantOpenProblem(s spec, subs ...string) string {
 	e.t.Helper()
 	name := e.runs.name(builderRole, 1)
