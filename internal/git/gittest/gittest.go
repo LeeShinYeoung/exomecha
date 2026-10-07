@@ -1,6 +1,7 @@
 package gittest
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,17 +9,23 @@ import (
 	"testing"
 )
 
-// Setup points git at a throwaway global config, so tests never pick up the user's own
-// settings (signing, hooks) and always have a commit identity.
-func Setup(t *testing.T) {
-	t.Helper()
-	cfg := filepath.Join(t.TempDir(), "gitconfig")
+// Main runs a package's tests with git pointed at a throwaway global config, so tests never pick
+// up the user's own settings (signing, hooks) and always have a commit identity. It sets the
+// environment once for the whole process, since a test that calls t.Setenv cannot run in parallel.
+func Main(m *testing.M) {
+	dir, err := os.MkdirTemp("", "gittest-")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	cfg := filepath.Join(dir, "gitconfig")
 	const content = "[user]\n\tname = exomecha test\n\temail = test@example.com\n"
 	if err := os.WriteFile(cfg, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
+		log.Fatal(err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	os.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	m.Run()
 }
 
 func Run(t *testing.T, dir string, args ...string) string {

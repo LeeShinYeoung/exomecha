@@ -55,6 +55,7 @@ func (f *fakeUsage) wantChecks(t *testing.T, want int) {
 }
 
 func TestGateReusesReadingForThreeMinutes(t *testing.T) {
+	t.Parallel()
 	f := newFakeUsage()
 	f.wantOpen(t, true)
 	f.clock = f.clock.Add(usageFresh - time.Second)
@@ -67,6 +68,7 @@ func TestGateReusesReadingForThreeMinutes(t *testing.T) {
 }
 
 func TestGateChecksAgainAfterReset(t *testing.T) {
+	t.Parallel()
 	f := newFakeUsage()
 	f.usage.FiveHour = agent.Window{Used: 0.95, ResetsAt: f.clock.Add(time.Minute)}
 	f.wantOpen(t, false)
@@ -78,6 +80,7 @@ func TestGateChecksAgainAfterReset(t *testing.T) {
 }
 
 func TestGateWaitsForResetWhileClosed(t *testing.T) {
+	t.Parallel()
 	f := newFakeUsage()
 	f.usage.FiveHour = agent.Window{Used: 0.95, ResetsAt: f.clock.Add(2 * time.Hour)}
 	f.wantOpen(t, false)
@@ -92,6 +95,7 @@ func TestGateWaitsForResetWhileClosed(t *testing.T) {
 }
 
 func TestGateLimits(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name             string
 		fiveHour, weekly float64
@@ -104,6 +108,7 @@ func TestGateLimits(t *testing.T) {
 		{"claude refuses", 0.1, 0.1, true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := newFakeUsage()
 			f.usage.FiveHour.Used, f.usage.Weekly.Used, f.usage.Rejected = c.fiveHour, c.weekly, c.rejected
 			f.wantOpen(t, c.open)
@@ -112,12 +117,14 @@ func TestGateLimits(t *testing.T) {
 }
 
 func TestGateOpenWhenUsageUnknown(t *testing.T) {
+	t.Parallel()
 	f := newFakeUsage()
 	f.usage = agent.Usage{}
 	f.wantOpen(t, true)
 }
 
 func TestGateCheckError(t *testing.T) {
+	t.Parallel()
 	f := newFakeUsage()
 	f.err = errors.New("claude crashed")
 	if open, err := f.gate.Open(t.Context()); err == nil || open {
@@ -128,6 +135,7 @@ func TestGateCheckError(t *testing.T) {
 // A run ended at the limit, so the reading missed it. The next start reads again, and the gate
 // then stays closed until the reset.
 func TestGateReadsAgainWhenStale(t *testing.T) {
+	t.Parallel()
 	f := newFakeUsage()
 	f.wantOpen(t, true)
 	f.usage.FiveHour.Used = 0.95
@@ -142,6 +150,7 @@ func TestGateReadsAgainWhenStale(t *testing.T) {
 
 // Only a start reads usage, so a step that starts nothing spends none of it.
 func TestUsageIsReadOnlyForAStart(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	f := newFakeUsage()
 	e.runs.gate = f.gate
@@ -163,6 +172,7 @@ func TestUsageIsReadOnlyForAStart(t *testing.T) {
 
 // Over the limit no run starts, a project run or a reader's. A step without claude still goes on.
 func TestNoRunStartsOverTheLimit(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	f := newFakeUsage()
 	f.usage.FiveHour.Used = 0.95

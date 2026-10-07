@@ -217,6 +217,7 @@ func actionNames(r row) []string {
 }
 
 func TestTables(t *testing.T) {
+	t.Parallel()
 	for _, cells := range []func(*testing.T) tableWorker{builderCells, resolverCells, reviewerCells} {
 		w := cells(t)
 		if len(w.table) != len(w.want) {
@@ -230,6 +231,7 @@ func TestTables(t *testing.T) {
 			}
 			for s, a := range row {
 				t.Run(fmt.Sprintf("%s/%s/%s", w.role.name, placeNames[p], state(s)), func(t *testing.T) {
+					t.Parallel()
 					testCell(t, cells(t), p, state(s), a)
 				})
 			}

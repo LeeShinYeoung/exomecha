@@ -10,6 +10,7 @@ import (
 
 // Opening a FIFO for reading waits for a writer. The AI must not be able to freeze exomecha that way.
 func TestOutcomeDoesNotOpenAFIFO(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.runs.name(builderRole, 7)
 	e.writeCtl(name, "exit", "0\n")

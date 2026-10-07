@@ -85,6 +85,7 @@ func (e *env) wantAuthor(ref string) {
 }
 
 func TestBuilderPicks(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	blocker := e.gh.AddIssue("blocker", "", label.PRD, string(label.Ready))
 	waiting := e.gh.AddIssue("waiting", "", label.PRD, string(label.Ready))
@@ -108,6 +109,7 @@ func TestBuilderPicks(t *testing.T) {
 }
 
 func TestBuilderIgnoresOutsiderPRD(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.gh.AddOutsiderIssue("PRD from an outsider", "", label.PRD, string(label.Ready))
 	mine := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
@@ -120,6 +122,7 @@ func TestBuilderIgnoresOutsiderPRD(t *testing.T) {
 }
 
 func TestBuilderPlace(t *testing.T) {
+	t.Parallel()
 	status := func(ss ...label.Status) []string {
 		out := []string{label.PRD}
 		for _, s := range ss {
@@ -151,6 +154,7 @@ func TestBuilderPlace(t *testing.T) {
 }
 
 func TestBuilderPushesAndOpensPR(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("Add feature", "do it", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
@@ -212,6 +216,7 @@ func TestBuilderStuck(t *testing.T) {
 }
 
 func TestBuilderStuckWhenNothingChanged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("Already done", "", label.PRD, string(label.Ready))
 	e.step(prd)
@@ -226,6 +231,7 @@ func TestBuilderStuckWhenNothingChanged(t *testing.T) {
 }
 
 func TestBuilderStuckWhenChangesNotCommitted(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	e.step(prd)
@@ -240,6 +246,7 @@ func TestBuilderStuckWhenChangesNotCommitted(t *testing.T) {
 }
 
 func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
@@ -260,6 +267,7 @@ func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 }
 
 func TestBuilderContinuesExistingPR(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready), string(label.Heavy))
 	branch := branchName(prd)
@@ -308,6 +316,7 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 // A person sent an approved PRD back with a review on the PR. exomecha's approval is no change to
 // make.
 func TestBuilderLeavesOutTheApproval(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready))
 	branch := branchName(prd)
@@ -327,6 +336,7 @@ func TestBuilderLeavesOutTheApproval(t *testing.T) {
 }
 
 func TestBuilderRunsTheTasksTier(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		labels []string
 		want   label.Tier
@@ -345,6 +355,7 @@ func TestBuilderRunsTheTasksTier(t *testing.T) {
 }
 
 func TestBuilderRequeuesOnStartError(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	e.sbx.fail["start"] = errors.New("sbx exec: daemon not running")
@@ -361,6 +372,7 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 }
 
 func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.", detail: "step 3/5: a secret in the build output"})
@@ -375,6 +387,7 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 
 // The environment main.go wires in. A bad allowed-hosts line fails before any sbx call.
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
 	e.deps.Environment = template.New(e.deps.Git, nil, "owner", "repo")
 	e.runs = newRuns(e.deps, nil)
@@ -400,6 +413,7 @@ func (e *env) startedPRD() (int, string) {
 }
 
 func TestBuilderRunNotInAutoModeFails(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name := e.startedPRD()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
@@ -434,11 +448,13 @@ func TestBuilderFailedRunGoesStuck(t *testing.T) {
 }
 
 func TestBuilderResultInAnotherFormFails(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ name, result string }{
 		{"unknown result", `{"result": "maybe", "summary": "", "stuck_reason": ""}`},
 		{"not an object", `["done"]`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			prd, name := e.startedPRD()
 			e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), c.result)
@@ -458,6 +474,7 @@ func TestBuilderResultInAnotherFormFails(t *testing.T) {
 // The reading the start passed missed the limit the run hit. The next start reads usage again and
 // waits for the reset, instead of starting a run that would hit the limit too.
 func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	f := newFakeUsage()
 	e.runs.gate = f.gate
@@ -488,6 +505,7 @@ func TestBuilderUsageLimitEndStartsOverAfterTheReset(t *testing.T) {
 }
 
 func TestBuilderWaitsForAFreeSlot(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.sbx.add(e.runs.name(resolverRole, 99))
@@ -503,6 +521,7 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 
 // A template build takes minutes before the sandbox exists. The start must hold its slot all along.
 func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.envr.wait = make(chan chan struct{})
@@ -538,6 +557,7 @@ func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 
 // Over the usage limit, nothing new starts, and a run already going is still finished.
 func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	running, name := e.startedPRD()
 	e.runs.gate = &Gate{
@@ -562,6 +582,7 @@ func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 
 // A new builder remembers nothing, and still finishes a run a stopped exomecha left behind.
 func TestBuilderFinishesARunAfterRestart(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name := e.startedPRD()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
@@ -580,6 +601,7 @@ func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 }
 
 func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
@@ -604,6 +626,7 @@ func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 
 // After a push, a later step can fail. The next try must not take exomecha's own push for a change on GitHub.
 func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name := e.startedPRD()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
@@ -627,6 +650,7 @@ func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
 }
 
 func TestBuilderStuckWhenNoCommitIsCheckedOut(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name := e.startedPRD()
 	e.play(name, func(repo string) { gittest.Run(t, repo, "checkout", "-q", "--orphan", "empty") }, builderDone)

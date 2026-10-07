@@ -60,6 +60,7 @@ func (e *env) conflicted() (prd int, name, head string) {
 }
 
 func TestResolverPicks(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	conflicting, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	mergeable, _, _ := e.reviewPRD()
@@ -76,6 +77,7 @@ func TestResolverPicks(t *testing.T) {
 // The approval was for code that no longer merges, so the PRD goes back to review, where the
 // next round resolves it.
 func TestResolverSendsAnApprovedPRDThatConflictsBackToReview(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	e.gh.Relabel(prd, string(label.Review), string(label.Approved))
@@ -94,6 +96,7 @@ func TestResolverSendsAnApprovedPRDThatConflictsBackToReview(t *testing.T) {
 }
 
 func TestResolverLeavesAnApprovedPRDThatMerges(t *testing.T) {
+	t.Parallel()
 	for _, mergeable := range []*bool{new(true), nil} {
 		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 		prd, pr := e.approvedPRD()
@@ -109,6 +112,7 @@ func TestResolverLeavesAnApprovedPRDThatMerges(t *testing.T) {
 }
 
 func TestResolverPushesResolvedMerge(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, _ := e.conflicted()
 	repo := e.sbx.repo(name)
@@ -141,6 +145,7 @@ func TestResolverPushesResolvedMerge(t *testing.T) {
 }
 
 func TestResolverStuckWhenMarkersRemain(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, head := e.conflicted()
 	e.play(name, func(repo string) { commitMerge(t, repo) }, `{"result": "resolved", "reason": "done"}`)
@@ -155,6 +160,7 @@ func TestResolverStuckWhenMarkersRemain(t *testing.T) {
 }
 
 func TestResolverStuck(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, head := e.conflicted()
 	e.play(name, nil, `{"result": "stuck", "reason": "choose between A and B"}`)
@@ -169,6 +175,7 @@ func TestResolverStuck(t *testing.T) {
 }
 
 func TestResolverStuckWhenMergeNotCommitted(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, head := e.conflicted()
 	e.play(name, func(repo string) { writeFile(t, repo, "app.txt", "main\nfeature\n") }, resolverDone)
@@ -182,6 +189,7 @@ func TestResolverStuckWhenMergeNotCommitted(t *testing.T) {
 }
 
 func TestResolverStuckWhenTheResultLacksTheBase(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, _ := e.conflicted()
 	e.play(name, func(repo string) {
@@ -196,6 +204,7 @@ func TestResolverStuckWhenTheResultLacksTheBase(t *testing.T) {
 }
 
 func TestResolverCommitsCleanMergeThroughClaude(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, _, _ := e.conflictPRD(map[string]string{"other.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	e.resolve(prd)
@@ -230,6 +239,7 @@ func TestResolverStuckWhenTheMergeFailsWithoutAConflict(t *testing.T) {
 }
 
 func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	name := e.resolverBox(prd)
@@ -250,6 +260,7 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 }
 
 func TestResolverNothingToMerge(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
 	head := gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})
@@ -268,6 +279,7 @@ func TestResolverNothingToMerge(t *testing.T) {
 }
 
 func TestResolverWaitsForAFreeSlot(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.sbx.add(e.runs.name(builderRole, 99))
@@ -282,6 +294,7 @@ func TestResolverWaitsForAFreeSlot(t *testing.T) {
 }
 
 func TestResolverStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, _ := e.conflicted()
 	pushed := gittest.Commit(t, e.origin, branchName(prd), "", map[string]string{"other.txt": "a person's push\n"})
@@ -300,6 +313,7 @@ func TestResolverStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 }
 
 func TestResolverStuckWhenNoCommitIsCheckedOut(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, _ := e.conflicted()
 	e.play(name, func(repo string) {

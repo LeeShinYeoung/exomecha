@@ -26,6 +26,7 @@ type env struct {
 	t      *testing.T
 	gh     *githubtest.Server
 	origin string
+	clone  string // exomecha's shared clone, which every push to origin goes from
 	sbx    *fakeSandboxes
 	envr   *fakeEnvironment
 	clock  *clock
@@ -40,9 +41,10 @@ var testModels = map[label.Tier]agent.Model{
 	label.Heavy:  {Name: "heavy-model", Effort: "high"},
 }
 
+func TestMain(m *testing.M) { gittest.Main(m) }
+
 func newEnv(t *testing.T, files map[string]string) *env {
 	t.Helper()
-	gittest.Setup(t)
 	origin := gittest.NewOrigin(t, files)
 	s := githubtest.New(t)
 	s.HeadSHA = func(branch string) string { return gittest.Head(origin, branch) }
@@ -50,17 +52,19 @@ func newEnv(t *testing.T, files map[string]string) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gitRoot := t.TempDir()
 	e := &env{
 		t:      t,
 		gh:     s,
 		origin: origin,
+		clone:  filepath.Join(gitRoot, "repo"),
 		sbx:    newFakeSandboxes(t),
 		envr:   &fakeEnvironment{},
 		clock:  newClock(),
 	}
 	e.deps = Deps{
 		GitHub:        client,
-		Git:           git.NewAt(t.TempDir(), origin, "main", "token"),
+		Git:           git.NewAt(gitRoot, origin, "main", "token"),
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
@@ -138,6 +142,7 @@ func wantInts(t *testing.T, what string, got, want []int) {
 }
 
 func TestTrimClosingTags(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct{ in, want string }{
 		// The end of the reason on #130.
 		{"then the test can be re-run.</stuck_reason>\n</invoke>", "then the test can be re-run."},
@@ -222,6 +227,7 @@ func (r *rounds) run(ctx context.Context) {
 const early = 10 * time.Millisecond
 
 func TestRoundSkipsAnItemThatIsNotDue(t *testing.T) {
+	t.Parallel()
 	c := newClock()
 	w := &fakeWorker{picks: []int{1, 2}, errs: map[int]error{1: errors.New("sbx down")}}
 	r := newRounds(w, c)
@@ -238,6 +244,7 @@ func TestRoundSkipsAnItemThatIsNotDue(t *testing.T) {
 
 // A Handle that takes long does not push the next try back a round.
 func TestRoundWaitsFromTheRoundStart(t *testing.T) {
+	t.Parallel()
 	c := newClock()
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}, handling: func() { c.advance(10 * time.Second) }}
 	r := newRounds(w, c)
@@ -249,6 +256,7 @@ func TestRoundWaitsFromTheRoundStart(t *testing.T) {
 }
 
 func TestRoundDelaysDouble(t *testing.T) {
+	t.Parallel()
 	c := newClock()
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
 	r := newRounds(w, c)
@@ -271,6 +279,7 @@ func TestRoundDelaysDouble(t *testing.T) {
 }
 
 func TestRoundForgetsOnSuccess(t *testing.T) {
+	t.Parallel()
 	c := newClock()
 	fail := errors.New("sbx down")
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: fail}}
@@ -292,6 +301,7 @@ func TestRoundForgetsOnSuccess(t *testing.T) {
 }
 
 func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
+	t.Parallel()
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
 	r := newRounds(w, newClock())
 	r.run(t.Context())
@@ -303,6 +313,7 @@ func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
 }
 
 func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
+	t.Parallel()
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: context.Canceled}}
 	r := newRounds(w, newClock())
 	ctx, cancel := context.WithCancel(t.Context())
@@ -315,6 +326,7 @@ func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
 
 // Another worker holds the issue. That is no error, so the next round tries it at once.
 func TestRoundDoesNotStrikeALockedItem(t *testing.T) {
+	t.Parallel()
 	w := &fakeWorker{picks: []int{1}}
 	r := newRounds(w, newClock())
 	r.locks.lock(1)
@@ -327,6 +339,7 @@ func TestRoundDoesNotStrikeALockedItem(t *testing.T) {
 
 // An issue that fails in one worker is not held back in another.
 func TestRoundDelaysArePerWorker(t *testing.T) {
+	t.Parallel()
 	c := newClock()
 	failing := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
 	other := &fakeWorker{picks: []int{1}}
@@ -343,6 +356,7 @@ func TestRoundDelaysArePerWorker(t *testing.T) {
 
 // A real builder start that sbx fails waits a minute in the loop, then starts.
 func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
@@ -366,6 +380,7 @@ func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 
 // A real reviewer whose stuck comment GitHub fails waits a minute in the loop, then comments.
 func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _ := e.reviewPRD()
 	e.gh.ClosePull(pr)
@@ -393,15 +408,15 @@ const (
 	reviewsRoute  = "POST /repos/{owner}/{repo}/pulls/{n}/reviews"
 )
 
-// refusePushes makes every push to origin fail, as GitHub refusing it would, until it is called
-// with false.
+// refusePushes makes exomecha's pushes to origin fail, as GitHub refusing them would, until it is
+// called with false. It writes to the shared clone, since every test in the process shares the global config.
 func (e *env) refusePushes(refuse bool) {
 	e.t.Helper()
 	if refuse {
-		gittest.Run(e.t, "", "config", "--global", "url./nowhere.pushInsteadOf", e.origin)
+		gittest.Run(e.t, e.clone, "config", "url./nowhere.pushInsteadOf", e.origin)
 		return
 	}
-	gittest.Run(e.t, "", "config", "--global", "--unset", "url./nowhere.pushInsteadOf")
+	gittest.Run(e.t, e.clone, "config", "--unset", "url./nowhere.pushInsteadOf")
 }
 
 // fault makes one of exomecha's own steps fail until heal.
@@ -436,6 +451,7 @@ var pushFault = fault{
 // When one of exomecha's own steps fails, Handle returns the error and leaves the issue's labels,
 // its comments and its run as they were, so the loop's next try takes the same step again.
 func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
+	t.Parallel()
 	builderHandle := func(e *env, n int) error { return e.builder().Handle(e.t.Context(), n) }
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
@@ -577,6 +593,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		}},
 	} {
 		t.Run(c.worker+"/"+c.step, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			n, name := c.arrange(e)
 			statuses, comments, run := e.statuses(n), len(e.gh.Issue(n).Comments), e.state(name)

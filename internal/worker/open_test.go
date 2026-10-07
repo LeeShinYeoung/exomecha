@@ -70,6 +70,7 @@ func (e *env) readCtl(name, file string) string {
 }
 
 func TestOpenStartsClaudeInASandbox(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.envr.ref = "docker.io/library/exomecha-owner-repo:0123456789ab"
 	e.envr.hosts = []string{"registry.npmjs.org", "*.pypi.org"}
@@ -135,6 +136,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 
 // A reader's run does not run the project, so none of the project's environment goes in.
 func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
 	e.envr.err = errors.New("read the project's environment")
 	e.sbx.fail["allow"] = errors.New("allow hosts")
@@ -179,6 +181,7 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 }
 
 func TestOpenWithoutDockerfileUsesTheDefaultTemplate(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	s, name := e.testSpec()
 	e.open(s)
@@ -203,6 +206,7 @@ func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 }
 
 func TestOpenRunsTheRolesTier(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		ro   role
 		tier label.Tier // the spec's
@@ -218,6 +222,7 @@ func TestOpenRunsTheRolesTier(t *testing.T) {
 			name += " with " + string(c.tier)
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			s, _ := e.testSpec()
 			if !c.ro.project {
@@ -235,6 +240,7 @@ func TestOpenRunsTheRolesTier(t *testing.T) {
 }
 
 func TestOpenWithoutAModelCreatesNoSandbox(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	delete(e.runs.Models, label.Normal)
 	s, name := e.testSpec()
@@ -247,6 +253,7 @@ func TestOpenWithoutAModelCreatesNoSandbox(t *testing.T) {
 }
 
 func TestOpenEnvironmentError(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.envr.err = errors.New("sbx template ls: daemon not running")
 	s, _ := e.testSpec()
@@ -256,6 +263,7 @@ func TestOpenEnvironmentError(t *testing.T) {
 }
 
 func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.sbx.add(e.deps.SandboxPrefix + "9-resolver")
@@ -269,6 +277,7 @@ func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
 }
 
 func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
 	s, name := e.testSpec()
 
@@ -310,12 +319,14 @@ func TestSetupFailure(t *testing.T) {
 }
 
 func TestSetupUsesPipefail(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("false | true\n"))
 	s, _ := e.testSpec()
 	e.wantOpenProblem(s, "did not end cleanly (exit status 1)")
 }
 
 func TestSetupTimesOut(t *testing.T) {
+	t.Parallel()
 	// 124 is what timeout exits with when it stops the script.
 	e := newEnv(t, setupRepo("exit 124\n"))
 	s, _ := e.testSpec()
@@ -331,12 +342,14 @@ func TestSetupLeavesChanges(t *testing.T) {
 }
 
 func TestSetupCommits(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("git commit -q --allow-empty -m 'from setup'\n"))
 	s, _ := e.testSpec()
 	e.wantOpenProblem(s, "changed the working copy")
 }
 
 func TestSetupGetsNoGitAuth(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("env > "+setupMarker+"\n"))
 	s, name := e.testSpec()
 	e.open(s)
@@ -352,6 +365,7 @@ func TestSetupGetsNoGitAuth(t *testing.T) {
 
 // A service the script starts keeps its output open. setup must still return, and the service may stay.
 func TestSetupMayLeaveAServiceRunning(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("sleep 5 &\necho started\n"))
 	s, name := e.testSpec()
 	begin := time.Now()
@@ -369,6 +383,7 @@ func TestSetupMayLeaveAServiceRunning(t *testing.T) {
 // The script and the .gitignore entry it relies on reach the base branch after the PR branch
 // started. Fixing the base branch cannot help that branch, so the problem must say to merge.
 func TestSetupOnABranchOlderThanTheScript(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	old := gittest.Commit(t, e.origin, branchName(1), "main", map[string]string{"feature.txt": "first\n"})
 	gittest.Commit(t, e.origin, "main", "", setupRepo("echo ran > "+setupMarker+"\n"))
