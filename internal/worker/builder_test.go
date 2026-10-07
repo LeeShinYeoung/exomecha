@@ -21,7 +21,6 @@ const builderDone = `{"result": "done", "summary": "did it", "stuck_reason": ""}
 
 func (e *env) builder() *builder { return &builder{e.deps, e.runs} }
 
-// step runs one builder round for the PRD and fails the test on an error.
 func (e *env) step(n int) {
 	e.t.Helper()
 	if err := e.builder().Handle(e.t.Context(), n); err != nil {
@@ -56,7 +55,6 @@ func commit(t *testing.T, message string, files map[string]string) func(string) 
 	}
 }
 
-// wantRemoved checks that the sandbox and its directory are gone.
 func (e *env) wantRemoved(name string) {
 	e.t.Helper()
 	if e.sbx.exists(name) {
@@ -67,7 +65,6 @@ func (e *env) wantRemoved(name string) {
 	}
 }
 
-// wantKept checks that the failed run's file was kept for a person to read.
 func (e *env) wantKept(name, file string) {
 	e.t.Helper()
 	if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name, file)); err != nil {
@@ -402,7 +399,6 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	e.wantRemoved(e.builderBox(prd))
 }
 
-// startedPRD starts a builder run for a new ready PRD and returns the PRD and its sandbox.
 func (e *env) startedPRD() (int, string) {
 	e.t.Helper()
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))

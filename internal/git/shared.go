@@ -63,7 +63,6 @@ func (g *Git) Show(ctx context.Context, commit, path string) (content string, ok
 	return content, true, nil
 }
 
-// ConflictMarkers returns the files among files that still hold a conflict marker in commit.
 func (g *Git) ConflictMarkers(ctx context.Context, commit string, files []string) ([]string, error) {
 	var left []string
 	for _, name := range files {
@@ -122,7 +121,6 @@ func (g *Git) FetchFrom(ctx context.Context, url, name string) (string, error) {
 	return commit, err
 }
 
-// DropRef deletes what FetchFrom kept for name.
 func (g *Git) DropRef(ctx context.Context, name string) error {
 	_, err := g.run(ctx, g.repoDir(), "update-ref", "-d", "refs/exomecha/"+name)
 	return err

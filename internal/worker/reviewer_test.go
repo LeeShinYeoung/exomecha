@@ -18,7 +18,6 @@ const approve = `{"verdict": "approve", "body": "fine"}`
 
 func (e *env) reviewer() *reviewer { return &reviewer{e.deps, e.runs} }
 
-// review runs one reviewer round for the PRD and fails the test on an error.
 func (e *env) review(n int) {
 	e.t.Helper()
 	if err := e.reviewer().Handle(e.t.Context(), n); err != nil {
@@ -309,7 +308,6 @@ func TestReviewerStuckWhenAnApprovedPRIsClosedByHand(t *testing.T) {
 	wantStuckComment(t, e.lastComment(prd), "closed without being merged", label.Ready)
 }
 
-// wantFinished checks that the PRD is closed as completed, with no status and no comment.
 func (e *env) wantFinished(prd int) {
 	e.t.Helper()
 	if got := e.gh.Issue(prd); got.Open || got.StateReason != "completed" {
@@ -407,7 +405,6 @@ func (e *env) approving() (prd, pr int, name string) {
 	return prd, pr, name
 }
 
-// wantResultKept checks that the finished review is still there to collect, with no new run started.
 func (e *env) wantResultKept(prd, pr int, name string) {
 	e.t.Helper()
 	e.wantState(name, finished)

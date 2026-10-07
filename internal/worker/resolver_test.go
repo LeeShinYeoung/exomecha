@@ -25,7 +25,6 @@ func (e *env) conflictPRD(feature, main map[string]string) (prd, pr int, head st
 
 func (e *env) resolver() *resolver { return &resolver{e.deps, e.runs} }
 
-// resolve runs one resolver round for the PRD and fails the test on an error.
 func (e *env) resolve(n int) {
 	e.t.Helper()
 	if err := e.resolver().Handle(e.t.Context(), n); err != nil {

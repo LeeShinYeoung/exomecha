@@ -65,8 +65,8 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	}
 	var picked []int
 	for _, t := range approved {
-		// An approved PRD whose PR conflicts is resolver's, and grabbing it every minute starved
-		// resolver as below. reviewer has nothing to do for one whose PR is still open anyway.
+		// An approved PRD whose PR conflicts is resolver's. reviewer has nothing to do for one whose
+		// PR is still open anyway.
 		_, open, err := r.GitHub.OpenPR(ctx, branchName(t.Number))
 		if err != nil {
 			return nil, err

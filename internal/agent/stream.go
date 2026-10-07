@@ -72,7 +72,6 @@ func ReadStream(r io.Reader) (Stream, error) {
 	}
 }
 
-// Result returns the structured output the run ended with.
 func (s Stream) Result() (json.RawMessage, error) {
 	switch {
 	case !s.ended:

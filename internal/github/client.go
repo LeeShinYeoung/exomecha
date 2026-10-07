@@ -20,7 +20,6 @@ func New(owner, repo, token string) (*Client, error) {
 	return newClient(owner, repo, gh.WithAuthToken(token))
 }
 
-// NewAt talks to the API at apiURL instead of GitHub, e.g. a fake server in tests.
 func NewAt(apiURL, owner, repo, token string) (*Client, error) {
 	return newClient(owner, repo, gh.WithAuthToken(token), gh.WithURLs(&apiURL, nil))
 }

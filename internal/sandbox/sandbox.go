@@ -24,7 +24,6 @@ type Box struct {
 
 func (b Box) Running() bool { return b.Status == "running" }
 
-// CLI is the sbx command on this machine.
 type CLI struct{}
 
 func (CLI) List(ctx context.Context) ([]Box, error) {
@@ -246,7 +245,6 @@ func Name(prefix string, issue int, role string) string {
 // A leading zero would give a second name for the same issue, which Name never builds back.
 var runName = regexp.MustCompile(`^([1-9][0-9]*)-([a-z]+)$`)
 
-// Parse reads a name Name built with prefix.
 func Parse(prefix, name string) (issue int, role string, ok bool) {
 	rest, found := strings.CutPrefix(name, prefix)
 	if !found || prefix == "" {
