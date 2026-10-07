@@ -65,36 +65,6 @@ var shoutPRD = prdText{"Add a --shout flag to greet.sh", `## To do
 - tests/greet_test.sh
 `}
 
-var farewellPRD = prdText{"Add farewell.sh", `## To do
-
-Add a script ` + "`farewell.sh`" + ` that prints ` + "`Goodbye, world!`" + `, or ` + "`Goodbye, Ada!`" + ` for ` + "`sh farewell.sh Ada`" + `.
-
-## Acceptance criteria
-
-- The two commands print exactly those lines.
-- ` + "`tests/farewell_test.sh`" + ` tests both, and ` + "`sh test.sh`" + ` prints ` + "`ok`" + `.
-
-## Files
-
-- farewell.sh (new)
-- tests/farewell_test.sh (new)
-`}
-
-var helpPRD = prdText{"Add --help to greet.sh", `## To do
-
-` + "`sh greet.sh --help`" + ` prints exactly one line, ` + "`usage: greet.sh [--shout] [name]`" + `, and nothing else. This builds on the ` + "`--shout`" + ` flag, which must already be on main.
-
-## Acceptance criteria
-
-- The command prints exactly that line.
-- ` + "`tests/greet_test.sh`" + ` tests it, and ` + "`sh test.sh`" + ` prints ` + "`ok`" + `.
-
-## Files
-
-- greet.sh
-- tests/greet_test.sh
-`}
-
 // officialPRD cannot be done without a decision only a person can make.
 var officialPRD = prdText{"Print the team's official greeting", `## To do
 
@@ -168,40 +138,3 @@ echo "$greeting, $name!"
 `,
 	"CLAUDE.md": claudeMD + "- Decided: greet.sh takes no flags, ever. Every argument is part of the name. Do not add flags such as --shout.\n",
 }
-
-var farewellDone = map[string]string{
-	"farewell.sh": "#!/bin/sh\n# Says goodbye.\nname=${1:-world}\necho \"Goodbye, $name!\"\n",
-	"tests/farewell_test.sh": `#!/bin/sh
-set -e
-fail() { echo "FAIL: $1" >&2; exit 1; }
-[ "$(sh farewell.sh)" = "Goodbye, world!" ] || fail "no argument"
-[ "$(sh farewell.sh Ada)" = "Goodbye, Ada!" ] || fail "a name"
-`,
-}
-
-// mainFunction rewrites greet.sh once more, still printing the same, so a branch that merged
-// mainRefactor conflicts again.
-var mainFunction = map[string]string{
-	"greet.sh": `#!/bin/sh
-# Prints a greeting to standard output.
-greet() {
-	printf '%s, %s!\n' "$1" "$2"
-}
-greet Hello "${1:-world}"
-`,
-}
-
-var wavePRD = prdText{"Add wave.sh", `## To do
-
-Add a script ` + "`wave.sh`" + ` that prints ` + "`*waves at world*`" + `, or ` + "`*waves at Ada*`" + ` for ` + "`sh wave.sh Ada`" + `.
-
-## Acceptance criteria
-
-- The two commands print exactly those lines.
-- ` + "`tests/wave_test.sh`" + ` tests both, and ` + "`sh test.sh`" + ` prints ` + "`ok`" + `.
-
-## Files
-
-- wave.sh (new)
-- tests/wave_test.sh (new)
-`}

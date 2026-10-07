@@ -1,7 +1,6 @@
 package worker
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -240,7 +239,7 @@ func (r *runs) quiet(name string) (bool, error) {
 		r.seen[name] = progress{size: size, mod: mod, at: now}
 		return false, nil
 	}
-	return now.Sub(p.at) >= r.stallTime(), nil
+	return now.Sub(p.at) >= stallAfter, nil
 }
 
 // pick returns picked and every issue that has a sandbox or a directory for ro, in ascending order.
@@ -301,8 +300,6 @@ func (r *runs) step(ctx context.Context, ro role, n int, row row,
 	return nil
 }
 
-func (r *runs) stallTime() time.Duration { return cmp.Or(r.StallAfter, stallAfter) }
-
 // why says what happened to a run in state s, for the comment on a failure or the log of a restart.
 func (r *runs) why(s state) string {
 	switch s {
@@ -312,7 +309,7 @@ func (r *runs) why(s state) string {
 		// Only a start holds the issue's lock while preparing, so this one was cut off.
 		return "its start was cut off"
 	case stalled:
-		return fmt.Sprintf("claude's output did not change for %d minutes", int(r.stallTime().Minutes()))
+		return fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes()))
 	case dead:
 		return "the sandbox stopped while claude was running"
 	case gone:

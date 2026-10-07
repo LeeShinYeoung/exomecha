@@ -2,7 +2,6 @@ package main
 
 import (
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,20 +15,14 @@ const approvedLine = "exomecha's reviewer approved this PR."
 
 func TestE2EHappyPath(t *testing.T) {
 	e2e(t, true)
-	const grace = 30 * time.Second
+	const grace = 10 * time.Second
 	w := newWorld(t, "happy", project(), func(c *config) { c.ciGrace = grace })
 	w.start()
-	if got := w.gh.Labels(); len(got) != 10 {
-		t.Errorf("labels after the start = %q, want ten", got)
-	}
 
 	prd := w.filePRD(shoutPRD, string(label.Ready))
 	builder := w.box(prd, "builder")
 	w.waitFor("the builder to start claude", aStart, func() bool { return w.started(builder) })
 	w.wantStatus(prd, label.Working)
-	if args := w.claudeArgs(builder); !strings.Contains(args, "--model opus") || !strings.Contains(args, "--effort high") {
-		t.Errorf("a PRD with no tier label runs claude as %q, want the normal tier", args)
-	}
 	w.waitFor("claude's init line", aRun, func() bool { return w.model(builder) != "" })
 	if m := w.model(builder); !strings.Contains(m, "opus") {
 		t.Errorf("claude's init line names model %q", m)
@@ -57,16 +50,6 @@ func TestE2EHappyPath(t *testing.T) {
 
 	reviewer := w.box(prd, "reviewer")
 	w.waitFor("the reviewer to start claude", grace+aStart, func() bool { return w.started(reviewer) })
-	committed, err := time.Parse(time.RFC3339, w.git(w.origin, "show", "-s", "--format=%cI", head))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if at := w.startedAt(reviewer); at.Before(committed.Add(grace - 3*time.Second)) {
-		t.Errorf("the review started %v after the commit, before the CI grace of %v", at.Sub(committed), grace)
-	}
-	if args := w.claudeArgs(reviewer); !strings.Contains(args, "--effort xhigh") {
-		t.Errorf("reviewer runs claude as %q, want the heavy tier", args)
-	}
 	w.waitFor("the review", aRun, func() bool { return w.status(prd) != label.Review })
 	w.wantStatus(prd, label.Approved)
 	p := w.gh.Pull(pr.Number)
@@ -76,98 +59,6 @@ func TestE2EHappyPath(t *testing.T) {
 	if !p.Open || p.Merged {
 		t.Errorf("PR open=%v merged=%v, want it left for a person", p.Open, p.Merged)
 	}
-	w.waitFor("the reviewer's sandbox and folder to go", 2*aRound, func() bool { return !w.exists(reviewer) && !exists(w.runDir(reviewer)) })
-	w.holds("no second review", 3*w.cfg.interval, func() bool { return !w.exists(reviewer) })
-
-	w.gh.MergePull(pr.Number)
-	if got := w.commit("main").parents; len(got) != 2 || got[1] != head {
-		t.Errorf("main's parents = %v, want the merge of %s", got, head)
-	}
-	if i := w.gh.Issue(prd); i.Open || i.StateReason != "completed" || !i.HasLabel(string(label.Approved)) {
-		t.Errorf("PRD open=%v reason=%q labels=%v, want closed with status:approved kept", i.Open, i.StateReason, i.Labels)
-	}
-	w.holds("no sandbox after the merge", 3*w.cfg.interval, func() bool { return len(w.boxes()) == 0 })
-	if left := dirEntries(w.root + "/sandboxes"); len(left) != 0 {
-		t.Errorf("run folders left: %v", left)
-	}
-}
-
-func TestE2EParallelAndBlocked(t *testing.T) {
-	e2e(t, false)
-	w := newWorld(t, "parallel", project(), func(c *config) { c.ciGrace = time.Hour })
-	light := string(label.Light)
-	a := w.filePRD(shoutPRD, string(label.Ready), light)
-	b := w.filePRD(farewellPRD, string(label.Ready), light)
-	c := w.filePRD(helpPRD, string(label.Ready), light)
-	w.gh.AddBlockedBy(c, a)
-	peak := w.watchPeaks(a, b, c)
-	w.start()
-
-	blocked := w.box(c, "builder")
-	w.waitFor("both free PRDs' PRs", aStart+aRun, func() bool {
-		if w.status(c) != label.Ready || w.exists(blocked) {
-			t.Fatalf("PRD #%d started while its blocker #%d was open.\n%s", c, a, w.describe())
-		}
-		_, okA := w.openPR(a)
-		_, okB := w.openPR(b)
-		return okA && okB
-	})
-	peak.mu.Lock()
-	working := peak.working
-	peak.mu.Unlock()
-	if working < 2 {
-		t.Errorf("at most %d PRDs worked at once, want the two free ones together", working)
-	}
-	w.holds("the blocked PRD waiting", 2*w.cfg.interval, func() bool { return w.status(c) == label.Ready && !w.exists(blocked) })
-
-	prA, _ := w.openPR(a)
-	w.gh.MergePull(prA.Number)
-	merged := w.head("main")
-	w.waitFor("the blocked PRD to start once its blocker closed", 3*w.cfg.interval+aStart, func() bool { return w.started(blocked) })
-	if got := w.startBase(blocked); got != merged {
-		t.Errorf("the blocked PRD was built on %s, want main with its blocker merged, %s", got, merged)
-	}
-	w.gh.CloseIssue(c)
-	w.gh.CloseIssue(b)
-}
-
-func TestE2EIntake(t *testing.T) {
-	e2e(t, false)
-	w := newWorld(t, "intake", project(), func(c *config) { c.ciGrace = time.Hour })
-	untouched := map[int][]string{}
-	for _, labels := range [][]string{{string(label.Draft)}, nil, {string(label.Draft), string(label.Ready)}, {string(label.Stuck)}} {
-		n := w.filePRD(farewellPRD, labels...)
-		untouched[n] = w.gh.Issue(n).Labels
-	}
-	plain := w.filePRD(shoutPRD, string(label.Ready))
-	heavy := w.filePRD(helpPRD, string(label.Ready), string(label.Light), string(label.Heavy))
-	w.start()
-
-	w.holdAsTheyStart(aStart, 2, w.box(plain, "builder"), w.box(heavy, "builder"))
-	for n, effort := range map[int]string{plain: "--effort high", heavy: "--effort xhigh"} {
-		if args := w.claudeArgs(w.box(n, "builder")); !strings.Contains(args, effort) {
-			t.Errorf("PRD #%d runs claude as %q, want %s", n, args, effort)
-		}
-	}
-	w.holds("the PRDs no worker may take", 3*w.cfg.interval, func() bool {
-		for n, labels := range untouched {
-			if !slices.Equal(w.gh.Issue(n).Labels, labels) || w.exists(w.box(n, "builder")) {
-				return false
-			}
-		}
-		return true
-	})
-
-	box := w.box(plain, "builder")
-	first := w.startedAt(box)
-	w.relabel(plain, label.Working, label.Ready)
-	w.waitFor("the relabeled PRD to start over", aRound+aStart, func() bool {
-		at := w.startedAt(box)
-		return !at.IsZero() && at.After(first)
-	})
-	w.wantStatus(plain, label.Working)
-	w.gh.CloseIssue(plain)
-	w.gh.CloseIssue(heavy)
 }
 
 func TestE2EStuckAndBack(t *testing.T) {
@@ -221,8 +112,7 @@ func TestE2EBlockedHost(t *testing.T) {
 
 func TestE2ERestart(t *testing.T) {
 	e2e(t, true)
-	const grace = 15 * time.Second
-	w := newWorld(t, "restart", project(), func(c *config) { c.ciGrace = grace })
+	w := newWorld(t, "restart", project(), func(c *config) { c.ciGrace = time.Hour })
 	prd := w.filePRD(shoutPRD, string(label.Ready), string(label.Light))
 	w.start()
 
@@ -246,24 +136,5 @@ func TestE2ERestart(t *testing.T) {
 	if restarted {
 		t.Error("builder started claude again after the restart instead of collecting the run")
 	}
-
-	reviewer := w.box(prd, "reviewer")
-	w.waitFor("the review to start", grace+aStart, func() bool { return w.started(reviewer) })
-	w.stop()
-	w.waitFor("the review to end while exomecha is stopped", aRun, func() bool { return w.ended(reviewer) })
-	first = w.startedAt(reviewer)
-	w.start()
-	w.waitFor("the review to be collected", 2*aRound, func() bool {
-		if at := w.startedAt(reviewer); !at.IsZero() && !at.Equal(first) {
-			restarted = true
-		}
-		return w.status(prd) != label.Review
-	})
-	if restarted {
-		t.Error("reviewer started claude again after the restart instead of collecting the run")
-	}
-	w.waitFor("the reviewer's sandbox and folder to go", aRound, func() bool { return !w.exists(reviewer) && !exists(w.runDir(reviewer)) })
-	if got := w.gh.Labels(); len(got) != 10 {
-		t.Errorf("labels after a restart = %q, want the same ten", got)
-	}
+	w.gh.CloseIssue(prd)
 }

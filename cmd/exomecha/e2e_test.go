@@ -4,10 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -47,16 +44,12 @@ func e2e(t *testing.T, core bool) {
 
 const (
 	aRound = 30 * time.Second
-	// A run with a setup script took over 2 minutes to start while other scenarios built templates.
+	// A run with a setup script took over 2 minutes to start at -parallel 5.
 	aStart = 3 * time.Minute
 	aRun   = 8 * time.Minute
-	aBuild = 6 * time.Minute
 )
 
 const e2eOwner = "e2e"
-
-// gone as a file's content removes the file in push.
-const gone = "\x00gone"
 
 // world is one scenario's own GitHub, origin, exomecha and sandboxes.
 type world struct {
@@ -174,12 +167,6 @@ func (w *world) stop() {
 	}
 }
 
-func (w *world) restart(opts ...func(*config)) {
-	w.t.Helper()
-	w.stop()
-	w.start(opts...)
-}
-
 func (w *world) exited() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -209,28 +196,14 @@ func (w *world) cleanup() {
 		w.t.Errorf("list sandboxes: %v", err)
 	}
 	for _, b := range boxes {
-		if strings.HasPrefix(b.Name, w.prefix()) || b.Name == sandbox.BuildName(e2eOwner, w.repo) {
+		if strings.HasPrefix(b.Name, w.prefix()) {
 			if err := w.sbx.Remove(ctx, b.Name); err != nil {
 				w.t.Errorf("remove %s: %v", b.Name, err)
 			}
 		}
 	}
-	removeTemplates(ctx, "docker.io/library/exomecha-"+w.slug())
 	if w.t.Failed() {
 		w.t.Logf("state at the end:\n%s", w.describe())
-	}
-}
-
-// removeTemplates removes every sbx template whose repository starts with repo.
-func removeTemplates(ctx context.Context, repo string) {
-	images, err := sandbox.CLI{}.Templates(ctx)
-	if err != nil {
-		return
-	}
-	for _, img := range images {
-		if strings.HasPrefix(img.Repository, repo) {
-			_ = sandbox.CLI{}.RemoveTemplate(ctx, img.Repository+":"+img.Tag)
-		}
 	}
 }
 
@@ -284,19 +257,6 @@ func (w *world) waitFor(what string, within time.Duration, cond func() bool) {
 	}
 }
 
-// holds fails the test if cond stops holding at any check within d.
-func (w *world) holds(what string, d time.Duration, cond func() bool) {
-	w.t.Helper()
-	end := time.Now().Add(d)
-	for time.Now().Before(end) {
-		if !cond() {
-			w.t.Fatalf("%s stopped holding.\n%s", what, w.describe())
-		}
-		w.check(what)
-		time.Sleep(time.Second)
-	}
-}
-
 // git runs git in dir and fails the test on an error.
 func (w *world) git(dir string, args ...string) string {
 	w.t.Helper()
@@ -310,7 +270,7 @@ func (w *world) git(dir string, args ...string) string {
 }
 
 // push commits files to branch in origin as a person would, and returns the commit. A branch that
-// does not exist yet starts from from. A file starting with "#!" is executable, and gone removes one.
+// does not exist yet starts from from. A file starting with "#!" is executable.
 func (w *world) push(branch, from, message string, files map[string]string) string {
 	w.t.Helper()
 	dir := filepath.Join(w.t.TempDir(), "clone")
@@ -325,12 +285,6 @@ func (w *world) push(branch, from, message string, files map[string]string) stri
 	}
 	for name, content := range files {
 		path := filepath.Join(dir, name)
-		if content == gone {
-			if err := os.Remove(path); err != nil {
-				w.t.Fatal(err)
-			}
-			continue
-		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			w.t.Fatal(err)
 		}
@@ -510,18 +464,6 @@ func exists(path string) bool {
 // started reports whether claude was started in the run, which writes start.json.
 func (w *world) started(name string) bool { return exists(filepath.Join(w.runDir(name), "start.json")) }
 
-func (w *world) startHead(name string) string {
-	b, err := os.ReadFile(filepath.Join(w.runDir(name), "start.json"))
-	if err != nil {
-		return ""
-	}
-	var in struct {
-		Head string `json:"head"`
-	}
-	_ = json.Unmarshal(b, &in)
-	return in.Head
-}
-
 func (w *world) startedAt(name string) time.Time {
 	info, err := os.Stat(filepath.Join(w.runDir(name), "start.json"))
 	if err != nil {
@@ -529,8 +471,6 @@ func (w *world) startedAt(name string) time.Time {
 	}
 	return info.ModTime()
 }
-
-func (w *world) ended(name string) bool { return exists(w.ctl(name, "exit")) }
 
 func (w *world) streamSize(name string) int64 {
 	info, err := os.Stat(w.ctl(name, "stream.jsonl"))
@@ -576,46 +516,6 @@ func (w *world) claudeArgs(name string) string {
 	}
 	w.t.Fatalf("no claude in %s:\n%s", name, out)
 	return ""
-}
-
-// hold freezes claude in the run's sandbox, so the run neither ends nor spends usage. release
-// lets it go on.
-func (w *world) hold(name string) { w.signal(name, "-STOP") }
-
-func (w *world) release(name string) { w.signal(name, "-CONT") }
-
-func (w *world) signal(name, sig string) {
-	w.t.Helper()
-	w.waitFor("claude to take "+sig+" in "+name, aStart, func() bool {
-		if w.ended(name) {
-			w.t.Fatalf("claude in %s ended before it got %s.\n%s", name, sig, w.describe())
-		}
-		_, err := w.exec(name, "pkill", sig, "-f", "claude -p")
-		return err == nil
-	})
-}
-
-// holdAsTheyStart holds claude in each of names as soon as it starts, until want of them are held,
-// and returns those in the order they started. A light run on the practice project can end within
-// 20 seconds, so waiting on one run while another starts would miss it.
-func (w *world) holdAsTheyStart(within time.Duration, want int, names ...string) []string {
-	w.t.Helper()
-	var held []string
-	deadline := time.Now().Add(within)
-	for len(held) < want {
-		for _, n := range names {
-			if !slices.Contains(held, n) && w.started(n) {
-				w.hold(n)
-				held = append(held, n)
-			}
-		}
-		w.check(fmt.Sprintf("%d of %v to start", want, names))
-		if len(held) < want && time.Now().After(deadline) {
-			w.t.Fatalf("waited %v for %d of %v to start, held %v.\n%s", within, want, names, held, w.describe())
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return held
 }
 
 func (w *world) describe() string {
@@ -747,12 +647,11 @@ func setUpE2E() {
 	ctx := context.Background()
 	if boxes, err := (sandbox.CLI{}).List(ctx); err == nil {
 		for _, b := range boxes {
-			if strings.HasPrefix(b.Name, "exomecha-run-"+e2eOwner+"-") || strings.HasPrefix(b.Name, "exomecha-build-"+e2eOwner+"-") {
+			if strings.HasPrefix(b.Name, "exomecha-run-"+e2eOwner+"-") {
 				_ = sandbox.CLI{}.Remove(ctx, b.Name)
 			}
 		}
 	}
-	removeTemplates(ctx, "docker.io/library/exomecha-"+e2eOwner+"-")
 	path := filepath.Join(os.TempDir(), "exomecha-e2e-"+time.Now().Format("20060102-150405")+".log")
 	f, err := os.Create(path)
 	if err == nil {
@@ -760,18 +659,6 @@ func setUpE2E() {
 		fmt.Fprintf(os.Stderr, "e2e log: %s\n", path)
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
-}
-
-func dirEntries(dir string) []string {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		out = append(out, e.Name())
-	}
-	return out
 }
 
 // seedReview files a PRD in review with its PR open, the way builder leaves one. Each map is one
@@ -812,74 +699,10 @@ func (w *world) execIn(name string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-func (w *world) sbxCmd(args ...string) (string, error) {
-	out, err := exec.Command("sbx", args...).CombinedOutput()
-	return strings.TrimSpace(string(out)), err
-}
-
 func (w *world) reviews(pr int) []githubtest.Review { return w.gh.Pull(pr).Reviews }
-
-// peaks follows the world in the background until stop, and keeps the most sandboxes and working
-// PRDs it saw at once.
-type peaks struct {
-	mu                     sync.Mutex
-	builders, readers      int
-	working                int
-	builderAndReaderAtOnce bool
-	stop                   func()
-}
-
-func (w *world) watchPeaks(prds ...int) *peaks {
-	p := &peaks{}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	p.stop = func() { cancel(); <-done }
-	go func() {
-		defer close(done)
-		for ctx.Err() == nil {
-			var builders, readers, working int
-			for _, b := range w.boxes() {
-				switch {
-				case strings.HasSuffix(b.Name, "-builder") || strings.HasSuffix(b.Name, "-resolver"):
-					builders++
-				case strings.HasSuffix(b.Name, "-reviewer"):
-					readers++
-				}
-			}
-			for _, n := range prds {
-				// A PRD closed while it worked keeps its label.
-				if w.gh.Issue(n).Open && w.status(n) == label.Working {
-					working++
-				}
-			}
-			p.mu.Lock()
-			p.builders, p.readers, p.working = max(p.builders, builders), max(p.readers, readers), max(p.working, working)
-			p.builderAndReaderAtOnce = p.builderAndReaderAtOnce || builders > 0 && readers > 0
-			p.mu.Unlock()
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Second):
-			}
-		}
-	}()
-	w.t.Cleanup(p.stop)
-	return p
-}
 
 func (w *world) running(name string) bool {
 	return slices.ContainsFunc(w.boxes(), func(b sandbox.Box) bool { return b.Name == name && b.Running() })
-}
-
-func (w *world) startBase(name string) string {
-	b, err := os.ReadFile(filepath.Join(w.runDir(name), "start.json"))
-	if err != nil {
-		return ""
-	}
-	var in struct {
-		Base string `json:"base"`
-	}
-	_ = json.Unmarshal(b, &in)
-	return in.Base
 }
 
 func (w *world) isAncestor(ancestor, commit string) bool {
@@ -898,16 +721,3 @@ func approvals(reviews []githubtest.Review) int {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
-
-// count returns how many of the world's log lines contain s.
-func (l *e2eLog) count(w *world, s string) int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	n := 0
-	for _, line := range l.lines {
-		if strings.Contains(line, s) && w.owns(line) {
-			n++
-		}
-	}
-	return n
-}

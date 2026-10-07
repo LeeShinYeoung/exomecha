@@ -38,10 +38,10 @@ type config struct {
 	projectLimit, readLimit  int
 	light, normal, heavy     agent.Model
 
-	apiURL, gitURL, root          string // empty: GitHub's API, github.com, ~/.exomecha/<owner>/<name>
-	interval, ciGrace, stallAfter time.Duration
-	usage                         func(context.Context) (agent.Usage, error) // nil: claude's own reading
-	started                       func()                                     // called just before the workers start
+	apiURL, gitURL, root string // empty: GitHub's API, github.com, ~/.exomecha/<owner>/<name>
+	interval, ciGrace    time.Duration
+	usage                func(context.Context) (agent.Usage, error) // nil: claude's own reading
+	started              func()                                     // called just before the workers start
 }
 
 func defaults() config {
@@ -180,7 +180,6 @@ func serve(ctx context.Context, c config) error {
 		Models:        map[label.Tier]agent.Model{label.Light: c.light, label.Normal: c.normal, label.Heavy: c.heavy},
 		Interval:      c.interval,
 		CIGrace:       c.ciGrace,
-		StallAfter:    c.stallAfter,
 	}
 
 	created, err := gh.EnsureLabels(ctx)
