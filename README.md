@@ -1,6 +1,6 @@
 # exomecha
 
-exomecha watches the labels on a repository's GitHub issues. Three workers build each PRD, review and merge its PR, and resolve merge conflicts. Every worker runs claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person only makes the decisions up front (three skills) and answers when a PRD is blocked.
+exomecha watches the labels on a repository's GitHub issues. Three workers build each PRD, review its PR, and resolve merge conflicts. Every worker runs claude in a Docker Sandboxes (sbx) sandbox of its own for each run, and only builder's and resolver's get the project's environment. A person makes the decisions up front (three skills), merges each PR the AI approved, and answers when a PRD is blocked.
 
 ```
 [person] /exomecha:draft-prd          → a draft: an issue labeled prd and status:draft (the problem, what is known, ideas not yet decided), which no worker takes
@@ -8,8 +8,9 @@ exomecha watches the labels on a repository's GitHub issues. Three workers build
 [person] /exomecha:complete-prd       → PRDs of one PR each (all decisions, a decision ledger, acceptance criteria, test scenarios, a tier label), from the conversation or from drafts, each Blocked by any earlier one it needs → status:ready
 
 [builder]   ready, all blockers closed → working → code in a sandbox and PR → status:review. A PRD with no status or status:draft is left alone
-[reviewer]  review → check CI → AI review → ready if something needs fixing, otherwise merge → PRD closed
-[resolver]  review with a conflicting PR → merge the base branch and resolve in a sandbox → stays in review (stuck if it can't)
+[reviewer]  review → check CI → AI review → ready if something needs fixing, otherwise an approval on the PR → status:approved
+[person]    approved → merge the PR → PRD closed. Or ask for changes on the PR or the PRD → status:ready
+[resolver]  review with a conflicting PR → merge the base branch and resolve in a sandbox → stays in review (stuck if it can't). approved with a conflicting PR → back to review first
 Any worker blocked by the PRD itself → status:stuck + a comment with the reason → a person closes it, or answers and sets ready
 ```
 
@@ -18,7 +19,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 1. Create a fine-grained token with access to the target repository only (Repository access → Only select repositories). It needs:
    - Issues: read and write
    - Pull requests: read and write
-   - Contents: read and write (push and merge)
+   - Contents: read and write (push)
    - Actions: read (CI results)
 2. Install the plugin on the machine that runs exomecha. In Claude Code:
    ```
@@ -56,7 +57,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
      ```
      set -a; source <project>.env; set +a; exomecha
      ```
-   - exomecha creates any of the nine labels that are missing when it starts.
+   - exomecha creates any of the ten labels that are missing when it starts.
 
 ## Notes
 
@@ -74,10 +75,19 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 - exomecha's own git commands (clone, fetch, push, and moving code in and out of sandboxes) run none of the project's git hooks. The AI commits in a repository exomecha creates inside the sandbox, so the project's git hooks run there only if setup turns them on. A repository that uses Git LFS is not supported.
 - The AI in builder and resolver makes the commits, following the project's commit message rules and commit checks (in CLAUDE.md, or enforced by a check). Without rules, a commit looks like `feat: add greeting` with `PRD: #12` as its last line.
 - Those commits have the token owner as author: the GitHub profile name (or the login when it has none) and the address `<id>+<login>@users.noreply.github.com`. exomecha sets them in the sandbox's repository before `.exomecha/setup.sh` runs, so the script can change them.
-- The token owner is both the PR author and the reviewer, so a "require approval" protection rule on the base branch blocks the automatic merge. The PRD then goes to stuck with GitHub's message.
+- The token owner is the author of every PR, so exomecha's reviews are COMMENT reviews. When the token is your own, GitHub does not let you approve these PRs or request changes on them either, and a "require approval" protection rule on the base branch blocks your merge.
 - exomecha only acts on issues, comments and reviews written by the repository's owners, members and collaborators. On a public repository, anything an outsider writes is ignored. GitHub may report a member who keeps their organization membership private as an outsider, so their comments can be left out.
 - exomecha checks GitHub every minute. A check whose answer has not changed uses a conditional request, which GitHub does not count against the API rate limit. If the limit still runs out, exomecha waits until it resets.
-- GitHub links a PR to its PRD (and closes the PRD on merge) only when the PR targets the repository's default branch. With another base branch the link does not show, and exomecha still closes the PRD itself.
+- GitHub links a PR to its PRD (and closes the PRD on merge) only when the PR targets the repository's default branch. A PRD GitHub closes keeps `status:approved`, since exomecha reads only open issues. With another base branch the link does not show, and exomecha closes the PRD itself after the merge.
+
+## When a PRD is approved (status:approved)
+
+reviewer's approval on the PR says what the PR changes and what the AI checked. The PR is yours to merge.
+
+- If it is right, merge the PR on GitHub. The PRD closes.
+- If something needs changing, write it on the PR (a review, comments on lines, or the conversation) or on the PRD, then relabel the PRD `status:ready`. builder reads both and continues on the same PR, and reviewer reviews it again. A review on the PR must be a "Comment" when the token is your own.
+- If the PR comes to conflict with the base branch while it waits, resolver sends the PRD back to `status:review` and resolves it, and reviewer approves it again.
+- If the work is not wanted, close the PRD first, then its PR. A PR closed while its PRD is still open sends the PRD to stuck.
 
 ## When a PRD is blocked (status:stuck)
 
@@ -92,7 +102,6 @@ The worker's comment says why it is blocked and what needs deciding.
 - When `.exomecha/setup.sh` failed, there is nothing to answer. The script's output is in exomecha's log. Fix the script on the base branch, or merge the base branch into the PRD's branch if the comment says the branch is behind. Then relabel the PRD the way the comment says.
 - When `.exomecha/Dockerfile` failed to build or ran over 30 minutes, or `.exomecha/allowed-hosts` has a bad line, there is nothing to answer either. The build output is only in exomecha's log. Fix the file on the base branch, then relabel the PRD the way the comment says.
 - When resolver's merge of the base branch failed without a conflict (for example, a git setting from `.exomecha/setup.sh` refused it), there is nothing to answer either. git's output is only in exomecha's log. Fix what it reports, then relabel the PRD the way the comment says.
-- When GitHub refused to merge a PR the AI approved, the comment quotes GitHub's message. A rule of the base branch, such as a required approval, is the usual cause. Merge the PR yourself, or change the rule and relabel the PRD the way the comment says.
 - When the AI's run fails (the sandbox stopped or went away, claude's output did not change for 15 minutes, or claude ended without a usable result), the PRD goes to stuck at once, and the comment says why. There is nothing to answer. The details are in exomecha's log, and the failed run's files are in `~/.exomecha/<owner>/<repo>/sandboxes/failed/`. To try again, relabel the PRD the way the comment says.
 - A run that ended at the Claude usage limit is not a failure, and starts again once the limit resets. Other failures in exomecha's own steps (sbx, git, GitHub) do not send the PRD to stuck either. exomecha tries the step again after 1, 2, 4, 8 and 16 minutes, then every 30 minutes until it works.
 

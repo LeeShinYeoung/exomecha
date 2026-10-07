@@ -13,7 +13,7 @@ The first takes about 2 minutes. The second runs builder, resolver and reviewer,
 
 ## Setup
 
-1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule. No GitHub Actions workflow on `main` at the start.
+1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule, since the token owner cannot approve its own PRs. No GitHub Actions workflow on `main` at the start.
 2. A fine-grained token for that repository only: Issues read and write, Pull requests read and write, Contents read and write, Actions read.
 3. sbx set up as in the README: signed in to Docker, the balanced network policy, the Claude login, and no global `github` secret. This machine's own claude login, with the same account, is only for the usage check.
 4. Install exomecha and fill `<name>.env` (see the README). Run exomecha in its own terminal and keep the log in view:
@@ -41,8 +41,8 @@ reviewer's runs on a small practice project often end in under a minute. To hold
 
 ### 1. Labels
 
-- Start exomecha. `gh label list -R $R` shows the nine labels.
-- Stop and start it again. Still nine, and no error in the log.
+- Start exomecha. `gh label list -R $R` shows the ten labels.
+- Stop and start it again. Still ten, and no error in the log.
 
 ### 2. Skills
 
@@ -60,20 +60,21 @@ In the practice repository, in Claude Code:
 - A draft filed with `/exomecha:draft-prd` keeps `status:draft`, and a PRD filed by hand with only `prd` keeps no status. No sandbox shows in `sbx ls` for them.
 - A PRD labeled both `status:draft` and `status:ready` keeps both, and builder does not start it.
 - A PRD filed by hand with `prd`, `status:ready` and no tier label goes `status:working`, and builder's "started claude in a sandbox" line shows `tier:normal`.
-- Of the PRDs from the split in scenario 2, the one that is Blocked by another stays `status:ready` until that one closes.
+- Of the PRDs from the split in scenario 2, the one that is Blocked by another stays `status:ready` until that one closes, after you merge its PR.
 - A PRD that already has another status, such as `status:stuck`, keeps it.
 
 ### 4. Parallel builds and order
 
 - Stop exomecha. File two PRDs that touch different files, and a third that is Blocked by the first.
 - Start exomecha. The first two PRDs are `status:working` at the same time and each gets its own PR.
-- The third PRD stays `status:ready` until the first one closes.
+- The third PRD stays `status:ready` until you merge the first one's PR and the first one closes.
 
-### 5. Review, merge, and close
+### 5. Review, approval, and merge
 
 - With no CI, reviewer waits five minutes after the PR's last commit, then reviews.
-- Within a minute after that, `sbx ls` shows `exomecha-run-<slug>-<prd>-reviewer`. Within a minute after its claude ends, the sandbox is gone and the review or the merge follows.
-- On approve: the PR is merged with a merge commit, the PRD closes as completed with no status label.
+- Within a minute after that, `sbx ls` shows `exomecha-run-<slug>-<prd>-reviewer`. Within a minute after its claude ends, the sandbox is gone and the review or the approval follows.
+- On approve: the PR gets a COMMENT review from exomecha that starts with `exomecha's reviewer approved this PR.` and summarizes the PR, and the PRD goes `status:approved`. The PR is not merged, and no reviewer sandbox for the PRD shows in `sbx ls` again.
+- Merge the PR on GitHub. The PRD closes as completed. When the PR targets the repository's default branch, GitHub closes it at the merge and `status:approved` stays on the closed PRD. Otherwise reviewer closes it within a minute and removes the status.
 
 ### 6. Sent back by review
 
@@ -119,18 +120,18 @@ In the practice repository, in Claude Code:
 
 - When a PRD reaches `status:review`, stop exomecha and push a commit to `main` that changes the same lines its PR changes.
 - Start exomecha. Once GitHub marks the PR as conflicting, resolver merges `main` into the branch, resolves it, and pushes. The PRD stays `status:review`, and reviewer reviews it again. reviewer never picks the PRD while its PR is conflicting, so `sbx ls` shows no `exomecha-run-<slug>-<prd>-reviewer` until resolver has pushed.
-- Repeat, but push the commit to `main` while the PRD's reviewer sandbox shows in `sbx ls`. The PR is not merged. Within a minute of GitHub marking the PR as conflicting, the reviewer sandbox and its folder are gone, and resolver takes the PRD as above.
+- Repeat, but push the commit to `main` while the PRD's reviewer sandbox shows in `sbx ls`. The PRD does not go `status:approved`. Within a minute of GitHub marking the PR as conflicting, the reviewer sandbox and its folder are gone, and resolver takes the PRD as above.
 - Repeat with a commit on `main` that contradicts the PR (for example, it explicitly refuses the feature the PR adds). resolver sends the PRD to `status:stuck` and asks which side wins. Answer in a comment and relabel it `status:review`. resolver merges again and settles the conflict the way you answered. builder is not involved.
 
 ### 10. Restart
 
 - While a PRD is `status:working`, stop exomecha with Ctrl-C. The PRD stays `status:working`, and `sbx ls` still shows its sandbox. Start exomecha again. Once claude finishes, exomecha collects the run and the PR opens.
 - Repeat, but kill exomecha hard (`kill -9 <pid>`) instead. Same result.
-- Stop exomecha while a PRD's reviewer sandbox shows in `sbx ls`. Start it again. exomecha collects the run without starting claude again: the review or the merge follows. This holds when claude ended while exomecha was stopped too, since the run's folder keeps the result.
+- Stop exomecha while a PRD's reviewer sandbox shows in `sbx ls`. Start it again. exomecha collects the run without starting claude again: the review or the approval follows. This holds when claude ended while exomecha was stopped too, since the run's folder keeps the result.
 
 ### 11. PR closed by hand
 
-- While a PRD is in `status:review`, close its PR on GitHub without merging it.
+- While a PRD is in `status:review`, close its PR on GitHub without merging it. Repeat with a PRD in `status:approved`.
 - reviewer sends the PRD to `status:stuck` and says the PR was closed without being merged. Close the PRD if the work is not wanted, or relabel it `status:ready` and builder opens a new PR.
 
 ### 12. Commit checks
@@ -147,7 +148,7 @@ In the practice repository, in Claude Code:
 
 - Stop exomecha while a PRD's reviewer sandbox shows in `sbx ls`. Line up a `status:ready` PRD with no open blockers and a PRD in `status:review` whose CI failed (as in scenario 7).
 - Start exomecha with `EXOMECHA_FIVE_HOUR_LIMIT=1`. The log says once that usage is over the limit. No new sandbox shows in `sbx ls`, and the ready PRD stays `status:ready`.
-- The running review is still collected: the PR is merged, or the PRD goes `status:ready` with a review.
+- The running review is still collected: the PRD goes `status:approved`, or `status:ready` with a review.
 - The PRD whose CI failed still gets a review listing the failed run and goes `status:ready`, since that needs no claude.
 - Restart exomecha without the setting. Within a minute the ready PRDs' builder sandboxes show in `sbx ls`.
 
@@ -164,7 +165,7 @@ In the practice repository, in Claude Code:
 - File a PRD. `sbx ls` shows `<sandbox>`. While claude works, `stream.jsonl` in the sandbox's folder under `~/.exomecha/<owner>/<repo>/sandboxes/` grows.
 - After the PR opens, the sandbox is gone from `sbx ls`, and its folder is gone too.
 - The PR's commits have the token owner as author, with the address `<id>+<login>@users.noreply.github.com`.
-- Follow one PRD from filing to merge, and a conflict as in scenario 9. Each of the three workers shows its own sandbox in `sbx ls` while its claude works, and the sandbox's folder has a growing `stream.jsonl` too. builder's and resolver's sandboxes go away once their result is pushed. reviewer's go away within a minute after claude ends, even when exomecha cannot collect the result yet, and their folders once it does.
+- Follow one PRD from filing to approval, and a conflict as in scenario 9. Each of the three workers shows its own sandbox in `sbx ls` while its claude works, and the sandbox's folder has a growing `stream.jsonl` too. builder's and resolver's sandboxes go away once their result is pushed. reviewer's go away within a minute after claude ends, even when exomecha cannot collect the result yet, and their folders once it does.
 - Afterwards `sbx ls` shows no sandbox of the project, and `~/.exomecha/<owner>/<repo>/sandboxes/` holds only `failed`, if a run failed.
 
 ### 16. Inside a PRD's sandbox
@@ -238,14 +239,14 @@ With `.exomecha/Dockerfile`, `.exomecha/setup.sh` and `.exomecha/allowed-hosts` 
 ### 27. Push during review
 
 - Hold a PRD's reviewer sandbox. Push a commit to the PRD's branch that keeps the PR correct, for example one that adds a line to its README. Then let claude go on.
-- The PR is not merged and gets no review from that run. Five minutes after the new commit (the wait for CI), the log says the run starts over because the PR branch changed during the review, and its folder is gone.
-- Within a minute a new reviewer sandbox shows. On approve, the PR is merged with the commit you pushed.
+- The PR gets no review from that run, and the PRD stays `status:review`. Five minutes after the new commit (the wait for CI), the log says the run starts over because the PR branch changed during the review, and its folder is gone.
+- Within a minute a new reviewer sandbox shows, and its review covers the commit you pushed.
 
-### 28. Merge refused by a rule
+### 28. Approved PR conflicts
 
-- Add a branch protection rule for `main` that requires one approving review, and check "Do not allow bypassing the above settings". Otherwise the token owner, an admin of the repository, can merge past it.
-- Let a PRD reach `status:review` with a PR the AI approves. GitHub refuses the merge, and the PRD goes `status:stuck`. The comment quotes GitHub's message, such as `At least 1 approving review is required by reviewers with write access.`, and says to merge the PR yourself or change the rule. `sbx ls` shows no reviewer sandbox for the PRD, and its folder is gone.
-- Remove the rule and relabel the PRD `status:review`. reviewer reviews the PR again in a new sandbox and merges it, and the PRD closes as completed.
+- Let a PRD reach `status:approved`. Push a commit to `main` that changes the same lines its PR changes.
+- Once GitHub marks the PR as conflicting, resolver moves the PRD to `status:review` within a minute. A minute later resolver merges `main` into the branch as in scenario 9. reviewer reviews it again, and the PRD goes `status:approved` with a new approval on the PR.
+- A PRD in `status:approved` whose PR does not conflict keeps its status, and `sbx ls` shows no sandbox for it.
 
 ### 29. Model tiers
 
@@ -255,3 +256,10 @@ With `.exomecha/Dockerfile`, `.exomecha/setup.sh` and `.exomecha/allowed-hosts` 
 - Give a ready PRD both `tier:light` and `tier:heavy`. Its builder's "started claude in a sandbox" line shows `tier:heavy`.
 - Start exomecha with `EXOMECHA_TIER_HEAVY=opus`. It refuses to start and names `EXOMECHA_TIER_HEAVY`.
 - Start exomecha with `EXOMECHA_TIER_LIGHT=haiku:low`. It refuses to start and says `EXOMECHA_TIER_LIGHT` and that claude does not run haiku in auto permission mode. With `EXOMECHA_TIER_LIGHT=opsu:low` it refuses too, with claude's message about the model.
+
+### 30. Sent back by a person
+
+- Let a PRD reach `status:approved`. On its PR, leave a review with "Comment" that asks for a change, and a comment on one line of the diff. Relabel the PRD `status:ready`.
+- builder takes it again. The run's `input.md` has both under "Comments on the PR", the line comment with its file and line, and no "Last review". builder pushes to the same PR. No second PR appears.
+- reviewer's next run has the same comments in its `input.md`, and the PRD goes `status:approved` again.
+- Comments on the PR from an account that cannot write to the repository are in neither input.

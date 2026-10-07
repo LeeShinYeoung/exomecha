@@ -66,7 +66,7 @@ The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and 
 
 ## Steps
 
-1. Find the base branch: the branch exomecha merges PRs into. If you don't know it, ask the person.
+1. Find the base branch: the branch exomecha's PRs target. If you don't know it, ask the person.
 2. Read how the project is installed and checked: CLAUDE.md, the README and setup docs, package manifests and lockfiles, CI workflows, compose files, example config files, and `.gitignore`. A CI workflow is usually the most exact record of a setup from scratch.
 3. Work out:
    - what to install once per template: system packages, runtimes, the pinned package manager, browsers (Dockerfile)
