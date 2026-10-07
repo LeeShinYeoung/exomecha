@@ -129,12 +129,7 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, Comment{
-			Body:      withoutMarker(cm.GetBody()),
-			CreatedAt: cm.GetCreatedAt().Time,
-			Exomecha:  byExomecha(cm.GetBody()),
-			Trusted:   trusted(cm.GetAuthorAssociation()),
-		})
+		out = append(out, commentFrom(cm.GetBody(), cm.GetAuthorAssociation(), cm.GetCreatedAt().Time))
 	}
 	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return out, nil
@@ -142,9 +137,22 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 
 func (c *Client) AddComment(ctx context.Context, number int, body string) error {
 	_, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, number, gh.IssueCommentRequest{
-		Body: Marker + "\n" + body,
+		Body: withMarker(body),
 	})
 	return err
+}
+
+func commentFrom(body, association string, at time.Time) Comment {
+	return Comment{
+		Body:      withoutMarker(body),
+		CreatedAt: at,
+		Exomecha:  byExomecha(body),
+		Trusted:   trusted(association),
+	}
+}
+
+func withMarker(body string) string {
+	return Marker + "\n" + body
 }
 
 func byExomecha(body string) bool {
