@@ -65,15 +65,19 @@ func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
 	computing, pr, _ := e.reviewPRD()
 	e.gh.SetMergeable(pr, nil)
 	conflicting, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
-	approved, _ := e.approvedPRD()
+	e.approvedPRD()
 	approvedConflicting, apr := e.approvedPRD()
 	e.gh.SetMergeable(apr, new(false))
+	approvedMerged, mpr := e.approvedPRD()
+	e.gh.MergePull(mpr)
+	approvedClosed, cpr := e.approvedPRD()
+	e.gh.ClosePull(cpr)
 
 	picked, err := e.reviewer().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantInts(t, "reviewer Pick", picked, []int{mergeable, computing, approved, approvedConflicting})
+	wantInts(t, "reviewer Pick", picked, []int{mergeable, computing, approvedMerged, approvedClosed})
 
 	picked, err = e.resolver().Pick(t.Context())
 	if err != nil {

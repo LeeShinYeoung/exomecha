@@ -52,8 +52,8 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Pick returns the PRDs in review whose PR does not conflict, every approved PRD, and every PRD that
-// has a reviewer run.
+// Pick returns the PRDs in review whose PR does not conflict, the approved PRDs whose PR is no
+// longer open, and every PRD that has a reviewer run.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
@@ -65,7 +65,15 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	}
 	var picked []int
 	for _, t := range approved {
-		picked = append(picked, t.Number)
+		// An approved PRD whose PR conflicts is resolver's, and grabbing it every minute starved
+		// resolver as below. reviewer has nothing to do for one whose PR is still open anyway.
+		_, open, err := r.GitHub.OpenPR(ctx, branchName(t.Number))
+		if err != nil {
+			return nil, err
+		}
+		if !open {
+			picked = append(picked, t.Number)
+		}
 	}
 	for _, t := range prds {
 		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same PRD
