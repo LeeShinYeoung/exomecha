@@ -180,14 +180,14 @@ func TestReviewerWaitsForCIToAppear(t *testing.T) {
 func TestReviewerWaitsForTheGivenCIGrace(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.deps.CIGrace = 30 * time.Second
+	e.deps.CIGrace = 30 * time.Minute
 	prd, pr, sha := e.reviewPRD()
-	e.gh.SetCommitTime(sha, time.Now().Add(-10*time.Second))
+	e.gh.SetCommitTime(sha, time.Now().Add(-10*time.Minute))
 
 	e.review(prd)
 	e.wantUntouched(prd, pr)
 
-	e.gh.SetCommitTime(sha, time.Now().Add(-time.Minute))
+	e.gh.SetCommitTime(sha, time.Now().Add(-time.Hour))
 	e.review(prd)
 	e.wantState(e.reviewerBox(prd), running)
 }
