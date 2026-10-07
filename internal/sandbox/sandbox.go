@@ -129,6 +129,8 @@ type Template struct {
 	Tag        string `json:"tag"`
 }
 
+func (t Template) Ref() string { return t.Repository + ":" + t.Tag }
+
 func (CLI) Templates(ctx context.Context) ([]Template, error) {
 	out, err := run(ctx, "template", "ls", "--json")
 	if err != nil {
