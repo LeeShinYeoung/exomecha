@@ -277,6 +277,30 @@ func TestRoundDelaysDouble(t *testing.T) {
 	}
 }
 
+func TestRoundDelaysStartAtTheInterval(t *testing.T) {
+	t.Parallel()
+	const every = 5 * time.Second
+	c := newClock()
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
+	r := newRounds(w, c)
+	r.delays.first = every
+	r.run(t.Context())
+	w.took()
+
+	for _, wait := range []time.Duration{1, 2, 4} {
+		c.advance(wait*every - every)
+		r.run(t.Context())
+		if got := w.took(); len(got) != 0 {
+			t.Fatalf("tried again before %v passed", wait*every)
+		}
+		c.advance(every - early)
+		r.run(t.Context())
+		if got := w.took(); len(got) != 1 {
+			t.Fatalf("not tried again after %v", wait*every)
+		}
+	}
+}
+
 func TestRoundForgetsOnSuccess(t *testing.T) {
 	t.Parallel()
 	c := newClock()

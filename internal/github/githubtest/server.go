@@ -44,6 +44,9 @@ type Server struct {
 	fails   map[string]int // route to the status it answers with
 	closes  map[int]int    // PR to the issue its merge closes
 	written int            // comments and reviews so far, which sets the time of the next one
+
+	// Set by Live.
+	origin, defaultBranch string
 }
 
 type Issue struct {
@@ -264,7 +267,7 @@ func (s *Server) pullJSON(p *Pull) any {
 		"body":      p.Body,
 		"head":      map[string]string{"ref": p.Head, "sha": s.head(p)},
 		"base":      map[string]string{"ref": p.Base},
-		"mergeable": p.Mergeable,
+		"mergeable": s.mergeable(p),
 		"merged":    p.Merged,
 	}
 	if p.Merged {
@@ -580,6 +583,9 @@ func (s *Server) listRuns(r *http.Request) (int, any) {
 func (s *Server) getCommit(r *http.Request) (int, any) {
 	sha := r.PathValue("sha")
 	at, ok := s.times[sha]
+	if !ok && s.origin != "" {
+		at, ok = s.commitTime(sha)
+	}
 	if !ok {
 		at = time.Now().Add(-time.Hour)
 	}
@@ -687,9 +693,16 @@ func (s *Server) MergePull(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.pulls[n]
+	if s.origin != "" {
+		s.merge(p)
+	}
 	p.Open = false
 	p.Merged = true
+	closes := s.linked(p)
 	if i, ok := s.closes[n]; ok {
+		closes = append(closes, i)
+	}
+	for _, i := range closes {
 		s.issues[i].Open = false
 		s.issues[i].StateReason = "completed"
 	}
@@ -760,7 +773,8 @@ func (s *Server) SetRuns(sha string, runs ...Run) {
 	s.runs[sha] = runs
 }
 
-// SetCommitTime sets when a commit was made. Commits without a set time are an hour old.
+// SetCommitTime sets when a commit was made. Commits without a set time are an hour old, or as
+// old as their committer date under Live.
 func (s *Server) SetCommitTime(sha string, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

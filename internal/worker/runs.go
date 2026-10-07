@@ -262,7 +262,7 @@ func (r *runs) quiet(name string) (bool, error) {
 		r.seen[name] = progress{size: size, mod: mod, at: now}
 		return false, nil
 	}
-	return now.Sub(p.at) >= stallAfter, nil
+	return now.Sub(p.at) >= r.stallTime(), nil
 }
 
 // pick returns picked and every issue that has a sandbox or a directory for ro, in ascending order.
@@ -375,17 +375,19 @@ func (r *runs) step(ctx context.Context, ro role, n int, row row,
 	case harvest:
 		return collect(ctx, run)
 	case fail:
-		return r.failed(ctx, ro, n, why(run.state), "")
+		return r.failed(ctx, ro, n, r.why(run.state), "")
 	case drop:
 		return r.drop(ctx, ro, n)
 	case restart:
-		return r.restart(ctx, ro, n, why(run.state))
+		return r.restart(ctx, ro, n, r.why(run.state))
 	}
 	return nil
 }
 
+func (r *runs) stallTime() time.Duration { return cmp.Or(r.StallAfter, stallAfter) }
+
 // why says what happened to a run in state s, for the comment on a failure or the log of a restart.
-func why(s state) string {
+func (r *runs) why(s state) string {
 	switch s {
 	case none:
 		return "the issue had no run"
@@ -393,7 +395,7 @@ func why(s state) string {
 		// Only a start holds the issue's lock while preparing, so this one was cut off.
 		return "its start was cut off"
 	case stalled:
-		return fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes()))
+		return fmt.Sprintf("claude's output did not change for %d minutes", int(r.stallTime().Minutes()))
 	case dead:
 		return "the sandbox stopped while claude was running"
 	case gone:

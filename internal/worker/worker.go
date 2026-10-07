@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"fmt"
@@ -47,6 +48,10 @@ type Deps struct {
 	GitEmail string
 	// Models has a model for every tier.
 	Models map[label.Tier]agent.Model
+	// Zero takes the default. Only the e2e tests shorten them.
+	Interval   time.Duration // between two checks of a worker, and the first wait after an error
+	CIGrace    time.Duration
+	StallAfter time.Duration
 }
 
 type Sandboxes interface {
@@ -87,18 +92,19 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 		&reviewer{d, runs},
 		&resolver{d, runs},
 	}
+	every := cmp.Or(d.Interval, interval)
 	var wg sync.WaitGroup
 	for _, w := range workers {
-		wg.Go(func() { loop(ctx, w, l) })
+		wg.Go(func() { loop(ctx, w, l, every) })
 	}
 	wg.Wait()
 }
 
-func loop(ctx context.Context, w Worker, l *locks) {
+func loop(ctx context.Context, w Worker, l *locks, every time.Duration) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	d := &delays{now: time.Now, items: map[int]delay{}}
-	tick := time.NewTicker(interval)
+	d := &delays{now: time.Now, first: every, items: map[int]delay{}}
+	tick := time.NewTicker(every)
 	defer tick.Stop()
 	for {
 		round(ctx, w, l, d, &wg)
@@ -147,6 +153,7 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 // It lives in memory only, and a restart tries every issue at once.
 type delays struct {
 	now   func() time.Time
+	first time.Duration // the wait after one error. Zero is minBackoff.
 	mu    sync.Mutex
 	items map[int]delay
 }
@@ -170,7 +177,7 @@ func (d *delays) strike(n int, from time.Time) {
 	defer d.mu.Unlock()
 	it := d.items[n]
 	it.strikes++
-	it.next = from.Add(min(maxBackoff, minBackoff<<min(it.strikes-1, 10)))
+	it.next = from.Add(min(maxBackoff, cmp.Or(d.first, minBackoff)<<min(it.strikes-1, 10)))
 	d.items[n] = it
 }
 
