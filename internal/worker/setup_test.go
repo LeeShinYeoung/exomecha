@@ -149,13 +149,12 @@ func TestBuilderStuckOnBranchOlderThanSetup(t *testing.T) {
 }
 
 func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
-	started := filepath.Join(t.TempDir(), "started")
-	t.Setenv("SETUP_STARTED", started)
-	e := newEnv(t, setupRepo("touch \"$SETUP_STARTED\"\nexec sleep 10\n"))
+	t.Parallel()
+	e := newEnv(t, setupRepo("touch "+setupMarker+"\nexec sleep 10\n"))
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	cancelWhenExists(ctx, cancel, started)
+	cancelWhenExists(ctx, cancel, filepath.Join(e.sbx.repo(e.builderBox(prd)), setupMarker))
 
 	if err := e.builder().Handle(ctx, prd); err == nil {
 		t.Fatal("Handle returned nil for a setup interrupted by shutdown")
