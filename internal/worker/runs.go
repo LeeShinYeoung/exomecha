@@ -98,9 +98,10 @@ const (
 	working              // a PRD builder is working on
 	clean                // a PRD in review whose PR does not conflict, or that has no PR
 	waiting              // a PRD in review whose PR GitHub or CI has not checked yet
-	merged               // a PRD in review whose PR was merged
-	closed               // a PRD in review whose PR was closed without a merge
+	merged               // a PRD in review or approved whose PR was merged
+	closed               // a PRD in review or approved whose PR was closed without a merge
 	failing              // a PRD in review whose PR's CI failed
+	stale                // an approved PRD whose PR conflicts
 )
 
 // role is what runs needs to know about the worker a run belongs to.

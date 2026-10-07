@@ -46,19 +46,24 @@ type resolver struct {
 
 func (*resolver) Name() string { return resolverRole.name }
 
-// Pick returns the PRDs in review whose PR conflicts, and every PRD that has a resolver sandbox.
+// Pick returns the PRDs in review or approved whose PR conflicts, and every PRD that has a resolver
+// sandbox.
 func (r *resolver) Pick(ctx context.Context) ([]int, error) {
-	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
+	review, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
+	if err != nil {
+		return nil, err
+	}
+	approved, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Approved))
 	if err != nil {
 		return nil, err
 	}
 	var picked []int
-	for _, t := range prds {
+	for _, t := range append(review, approved...) {
 		p, err := r.place(ctx, t)
 		if err != nil {
 			return nil, err
 		}
-		if p == ready {
+		if p == ready || p == stale {
 			picked = append(picked, t.Number)
 		}
 	}
@@ -74,20 +79,36 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
+	if p == stale {
+		// Resolving changes the code the approval was for, so the PRD goes back to review, where
+		// the next check resolves it as any other.
+		if err := r.GitHub.SetStatus(ctx, n, label.Approved, label.Review); err != nil {
+			return err
+		}
+		slog.Info("approved PR conflicts, back to review", "prd", n)
+		return nil
+	}
 	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
 		func(ctx context.Context) error { return r.start(ctx, prd) },
 		func(ctx context.Context, run run) error { return r.collect(ctx, n, run.in) })
 }
 
 func (r *resolver) place(ctx context.Context, prd github.Issue) (place, error) {
-	if !holds(prd, label.PRD, label.Review) {
+	approved := holds(prd, label.PRD, label.Approved)
+	if !approved && !holds(prd, label.PRD, label.Review) {
 		return away, nil
 	}
 	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
 	if err != nil {
 		return away, err
 	}
-	if ok && pr.Mergeable != nil && !*pr.Mergeable {
+	conflicts := ok && pr.Mergeable != nil && !*pr.Mergeable
+	switch {
+	case approved && conflicts:
+		return stale, nil
+	case approved:
+		return away, nil
+	case conflicts:
 		return ready, nil
 	}
 	return clean, nil

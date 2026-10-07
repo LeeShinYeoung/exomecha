@@ -20,5 +20,5 @@ The current directory is a working copy of the PR branch. Look at this PR's chan
 ## Result
 
 - `verdict`: `approve` if nothing needs fixing, `changes` if something does
-- `body`: for changes, what to fix, where, and why, written so it can be fixed from this text alone. For approve, a short summary.
+- `body`: for changes, what to fix, where, and why, written so it can be fixed from this text alone. For approve, a short summary for the person who reviews and merges the PR: what it changes and what you checked. Approving does not merge the PR.
 - Write `body` in the same language as the PRD.

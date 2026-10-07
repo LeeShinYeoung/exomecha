@@ -73,6 +73,41 @@ func TestResolverPicks(t *testing.T) {
 	wantInts(t, "Pick", picked, []int{conflicting, mergeable})
 }
 
+// The approval was for code that no longer merges, so the PRD goes back to review, where the
+// next round resolves it.
+func TestResolverSendsAnApprovedPRDThatConflictsBackToReview(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	e.gh.Relabel(prd, string(label.Review), string(label.Approved))
+
+	e.resolve(prd)
+
+	e.wantStatus(prd, label.Review)
+	if e.sbx.exists(e.resolverBox(prd)) {
+		t.Error("a run started in the same round")
+	}
+	if n := len(e.gh.Issue(prd).Comments); n != 0 {
+		t.Errorf("%d comments, want none", n)
+	}
+	e.resolve(prd)
+	e.wantState(e.resolverBox(prd), running)
+}
+
+func TestResolverLeavesAnApprovedPRDThatMerges(t *testing.T) {
+	for _, mergeable := range []*bool{new(true), nil} {
+		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+		prd, pr := e.approvedPRD()
+		e.gh.SetMergeable(pr, mergeable)
+
+		e.resolve(prd)
+
+		e.wantStatus(prd, label.Approved)
+		if e.sbx.exists(e.resolverBox(prd)) {
+			t.Error("a run started")
+		}
+	}
+}
+
 func TestResolverPushesResolvedMerge(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name, _ := e.conflicted()
