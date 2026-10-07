@@ -439,16 +439,14 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	}
 	// Undo the start even when shutdown cancelled ctx.
 	cleanup := context.WithoutCancel(ctx)
-	if rerr := r.remove(cleanup, name, false); rerr != nil {
-		return errors.Join(err, rerr)
-	}
 	if problem != "" {
+		if err := r.remove(cleanup, name, false); err != nil {
+			return err
+		}
 		return toStuck(cleanup, r.GitHub, n, ro.from, ro.back, problem)
 	}
-	if ro.ready != label.None {
-		if rerr := r.GitHub.SetStatus(cleanup, n, ro.from, ro.ready); rerr != nil {
-			return errors.Join(err, rerr)
-		}
+	if rerr := r.restart(cleanup, ro, n, err.Error()); rerr != nil {
+		return errors.Join(err, rerr)
 	}
 	if errors.Is(err, errNoSlot) {
 		return nil
