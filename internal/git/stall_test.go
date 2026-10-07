@@ -11,7 +11,6 @@ import (
 )
 
 func TestCloneGivesUpOnStalledServer(t *testing.T) {
-	gittest.Setup(t)
 	lowSpeedTime = "2"
 	t.Cleanup(func() { lowSpeedTime = "30" })
 
@@ -47,7 +46,6 @@ func TestCloneGivesUpOnStalledServer(t *testing.T) {
 }
 
 func TestFetchFromGivesUpOnAHungSandbox(t *testing.T) {
-	gittest.Setup(t)
 	sandboxTransferTimeout = time.Second
 	t.Cleanup(func() { sandboxTransferTimeout = 5 * time.Minute })
 	origin := gittest.NewOrigin(t, map[string]string{"README.md": "hello\n"})

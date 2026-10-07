@@ -14,9 +14,10 @@ type fixture struct {
 	origin string
 }
 
+func TestMain(m *testing.M) { gittest.Main(m) }
+
 func setup(t *testing.T, files map[string]string) fixture {
 	t.Helper()
-	gittest.Setup(t)
 	origin := gittest.NewOrigin(t, files)
 	root := t.TempDir()
 	return fixture{git: git.NewAt(root, origin, "main", "token"), root: root, origin: origin}

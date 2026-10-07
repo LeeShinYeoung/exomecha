@@ -21,6 +21,7 @@ func setupRepo(script string) map[string]string {
 	return map[string]string{"app.txt": "v1\n", ".gitignore": setupMarker + "\n", setupScript: script}
 }
 
+// captureLog swaps the process-wide logger, so a test that calls it must not run in parallel.
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
@@ -50,6 +51,7 @@ func cancelWhenExists(ctx context.Context, cancel context.CancelFunc, path strin
 // The workers that only read the code run in a sandbox without the setup script, so a broken
 // script must not get in their way.
 func TestReadersDoNotRunSetup(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		role role
 		// start starts the worker's run and returns its issue.
@@ -61,6 +63,7 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 		}},
 	} {
 		t.Run(c.role.name, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t, setupRepo("exit 1\n"))
 			name := e.runs.name(c.role, c.start(e))
 
@@ -74,6 +77,7 @@ func TestReadersDoNotRunSetup(t *testing.T) {
 }
 
 func TestBuilderRunsSetupBeforeClaude(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
 	prd, name := e.startedPRD()
 	b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker))
@@ -109,6 +113,7 @@ func TestBuilderStuckWhenSetupFails(t *testing.T) {
 }
 
 func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("echo base > "+setupMarker+"\n"))
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
@@ -127,6 +132,7 @@ func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 }
 
 func TestBuilderStuckOnBranchOlderThanSetup(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
@@ -163,6 +169,7 @@ func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
 }
 
 func TestResolverRunsSetupBeforeMerge(t *testing.T) {
+	t.Parallel()
 	// The first line fails if the merge has already started.
 	script := "test ! -e \"$(git rev-parse --git-path MERGE_HEAD)\"\necho ran > " + setupMarker + "\n"
 	e := newEnv(t, setupRepo(script))
@@ -181,6 +188,7 @@ func TestResolverRunsSetupBeforeMerge(t *testing.T) {
 }
 
 func TestResolverStuckWhenSetupFails(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("exit 1\n"))
 	prd, _, head := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
@@ -195,6 +203,7 @@ func TestResolverStuckWhenSetupFails(t *testing.T) {
 }
 
 func TestResolverSkipsSetupWhenNothingToMerge(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, setupRepo("exit 1\n"))
 	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
 	gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})

@@ -60,6 +60,7 @@ func (e *env) wantUntouched(prd, pr int) {
 }
 
 func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	mergeable, _, _ := e.reviewPRD()
 	computing, pr, _ := e.reviewPRD()
@@ -87,6 +88,7 @@ func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
 }
 
 func TestReviewerPicksEveryPRDWithARun(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	conflicting, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	e.sbx.add(e.reviewerBox(conflicting))
@@ -100,6 +102,7 @@ func TestReviewerPicksEveryPRDWithARun(t *testing.T) {
 }
 
 func TestReviewerStuckWhenPRClosedByHand(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _ := e.reviewPRD()
 	e.gh.ClosePull(pr)
@@ -114,6 +117,7 @@ func TestReviewerStuckWhenPRClosedByHand(t *testing.T) {
 }
 
 func TestReviewerWaitsForMergeable(t *testing.T) {
+	t.Parallel()
 	for _, mergeable := range []*bool{nil, new(false)} {
 		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 		prd, pr, _ := e.reviewPRD()
@@ -125,6 +129,7 @@ func TestReviewerWaitsForMergeable(t *testing.T) {
 }
 
 func TestReviewerWaitsForRunningCI(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, sha := e.reviewPRD()
 	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "in_progress"})
@@ -134,6 +139,7 @@ func TestReviewerWaitsForRunningCI(t *testing.T) {
 }
 
 func TestReviewerRequeuesOnFailedCI(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, sha := e.reviewPRD()
 	e.gh.SetRuns(sha,
@@ -159,6 +165,7 @@ func TestReviewerRequeuesOnFailedCI(t *testing.T) {
 }
 
 func TestReviewerWaitsForCIToAppear(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, sha := e.reviewPRD()
 	e.gh.SetCommitTime(sha, time.Now().Add(-time.Minute))
@@ -172,6 +179,7 @@ func TestReviewerWaitsForCIToAppear(t *testing.T) {
 }
 
 func TestReviewerApproveLeavesThePRToAPerson(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, sha := e.reviewPRD()
 	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "success"})
@@ -218,6 +226,7 @@ func (e *env) wantApproved(prd, pr int) {
 }
 
 func TestReviewerReadsAPersonsCommentsOnThePR(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _ := e.reviewPRD()
 	e.gh.AddLineComment(pr, "feature.txt", 1, "keep it short")
@@ -240,6 +249,7 @@ func (e *env) approvedPRD() (prd, pr int) {
 }
 
 func TestReviewerLeavesAnApprovedPRDWhileItsPRIsOpen(t *testing.T) {
+	t.Parallel()
 	for _, mergeable := range []*bool{new(true), nil, new(false)} {
 		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 		prd, pr := e.approvedPRD()
@@ -259,6 +269,7 @@ func TestReviewerLeavesAnApprovedPRDWhileItsPRIsOpen(t *testing.T) {
 
 // A PR whose base is not the default branch leaves its PRD open when a person merges it.
 func TestReviewerFinishesAnApprovedPRDOnceAPersonMerges(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr := e.approvedPRD()
 	e.gh.MergePull(pr)
@@ -270,6 +281,7 @@ func TestReviewerFinishesAnApprovedPRDOnceAPersonMerges(t *testing.T) {
 
 // Closing the PRD failed after a person merged. The next try closes it.
 func TestReviewerFinishesAnApprovedPRDWhoseCloseFailed(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr := e.approvedPRD()
 	e.gh.MergePull(pr)
@@ -286,6 +298,7 @@ func TestReviewerFinishesAnApprovedPRDWhoseCloseFailed(t *testing.T) {
 }
 
 func TestReviewerStuckWhenAnApprovedPRIsClosedByHand(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr := e.approvedPRD()
 	e.gh.ClosePull(pr)
@@ -309,6 +322,7 @@ func (e *env) wantFinished(prd int) {
 }
 
 func TestReviewerChangesRequeues(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _, name := e.reviewing()
 	e.play(name, nil, `{"verdict": "changes", "body": "rename the function"}`)
@@ -328,6 +342,7 @@ func TestReviewerChangesRequeues(t *testing.T) {
 
 // The review was of a head that is no longer the PR's. The next round reviews the new head.
 func TestReviewerDiscardsWhenThePRMoved(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _, name := e.reviewing()
 	pushed := gittest.Commit(t, e.origin, branchName(prd), "", map[string]string{"other.txt": "a person's push\n"})
@@ -350,6 +365,7 @@ func TestReviewerDiscardsWhenThePRMoved(t *testing.T) {
 }
 
 func TestReviewerFailedRunGoesStuckBackToReview(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _, name := e.reviewing()
 	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
@@ -368,6 +384,7 @@ func TestReviewerFailedRunGoesStuckBackToReview(t *testing.T) {
 }
 
 func TestReviewerUnknownVerdictFails(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _, name := e.reviewing()
 	e.play(name, nil, `{"verdict": "maybe", "body": ""}`)
@@ -408,6 +425,7 @@ const closeRoute = "PATCH /repos/{owner}/{repo}/issues/{n}"
 // The approval is on the PR and the status change failed. The next try moves the PRD without
 // another review.
 func TestReviewerApprovalRetriesTheStatusWithoutANewReview(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, name := e.approving()
 	e.gh.Fail(labelsRoute, http.StatusBadGateway)
@@ -429,6 +447,7 @@ func TestReviewerApprovalRetriesTheStatusWithoutANewReview(t *testing.T) {
 // A finished review gives its slot back at once, and a new exomecha still collects it from the
 // run's directory.
 func TestReviewerFinishesARunAfterRestart(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _, name := e.reviewing()
 	e.play(name, nil, approve)
@@ -454,6 +473,7 @@ func TestReviewerFinishesARunAfterRestart(t *testing.T) {
 
 // Over the usage limit, no review starts, and a review already going is still collected.
 func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	running, pr, _, name := e.reviewing()
 	e.runs.gate = &Gate{

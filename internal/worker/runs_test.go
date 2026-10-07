@@ -39,6 +39,7 @@ func (e *env) writeCtl(name, file, content string) {
 }
 
 func TestRunStates(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.runs.name(builderRole, 7)
 
@@ -75,6 +76,7 @@ func TestRunStates(t *testing.T) {
 
 // A restarted exomecha has seen nothing yet, so the 15 minutes start over.
 func TestStallStartsOverForNewRuns(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.runs.name(builderRole, 7)
 	e.sbx.add(name)
@@ -93,6 +95,7 @@ func TestStallStartsOverForNewRuns(t *testing.T) {
 }
 
 func TestOutcome(t *testing.T) {
+	t.Parallel()
 	const init = `{"type":"system","subtype":"init","permissionMode":"auto"}` + "\n"
 	for _, c := range []struct {
 		name    string
@@ -113,6 +116,7 @@ func TestOutcome(t *testing.T) {
 			`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit"}` + "\n", "", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			name := e.runs.name(builderRole, 7)
 			e.writeCtl(name, "exit", c.exit+"\n")
@@ -130,8 +134,10 @@ func TestOutcome(t *testing.T) {
 
 // The AI can replace any file in the shared directory. A link to a file of this machine must not be read.
 func TestOutcomeDoesNotFollowLinks(t *testing.T) {
+	t.Parallel()
 	for _, file := range []string{"exit", "stream.jsonl"} {
 		t.Run(file, func(t *testing.T) {
+			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			name := e.runs.name(builderRole, 7)
 			outside := filepath.Join(t.TempDir(), "outside")
@@ -157,6 +163,7 @@ func TestOutcomeDoesNotFollowLinks(t *testing.T) {
 }
 
 func TestTailKeepsABoundedValidEnd(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.runs.name(builderRole, 7)
 	// Three bytes per character and eight here, so the cut at tailLimit lands inside a character.
@@ -169,6 +176,7 @@ func TestTailKeepsABoundedValidEnd(t *testing.T) {
 }
 
 func TestPick(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	for _, dir := range []string{prefix + "3-builder", prefix + "4-resolver", "failed"} {
@@ -195,6 +203,7 @@ func (e *env) wantReserve(ro role, n int, want bool) {
 }
 
 func TestSlotsCountEveryPRDSandbox(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
@@ -208,6 +217,7 @@ func TestSlotsCountEveryPRDSandbox(t *testing.T) {
 
 // owner/repo-v2's sandboxes start with owner/repo's prefix too, and must not take owner/repo's slots.
 func TestSlotsCountOnlyThisRepository(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.sbx.add(e.deps.SandboxPrefix + "1-builder")
 	e.sbx.add(e.deps.SandboxPrefix + "v2-3-builder")
@@ -216,6 +226,7 @@ func TestSlotsCountOnlyThisRepository(t *testing.T) {
 }
 
 func TestSlotsCountEachKindApart(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit, e.runs.ReadLimit = 1, 1
 	e.sbx.add(e.runs.name(builderRole, 1))
@@ -230,6 +241,7 @@ func TestSlotsCountEachKindApart(t *testing.T) {
 }
 
 func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	first, second := e.runs.name(builderRole, 1), e.runs.name(resolverRole, 2)
 	e.wantReserve(builderRole, 1, true)
@@ -251,6 +263,7 @@ func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
 // A reader's result is all in its directory, so a finished reader run needs no sandbox. A project
 // run's commits are only in its sandbox.
 func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	reader, project := e.runs.name(reviewerRole, 7), e.runs.name(builderRole, 7)
 	for _, name := range []string{reader, project} {
@@ -268,6 +281,7 @@ func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
 }
 
 func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ReadLimit = 1
 	reader, project := e.runs.name(reviewerRole, 7), e.runs.name(builderRole, 8)

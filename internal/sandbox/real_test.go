@@ -14,6 +14,8 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
+func TestMain(m *testing.M) { gittest.Main(m) }
+
 // TestRealSandbox runs the whole round trip against the sbx on this machine: create, send code
 // in, run a detached command that commits, fetch the commit out, remove. It needs sbx signed in
 // and takes about 15 seconds, so it runs only with EXOMECHA_TEST_SBX=1.
@@ -21,7 +23,6 @@ func TestRealSandbox(t *testing.T) {
 	if os.Getenv("EXOMECHA_TEST_SBX") != "1" {
 		t.Skip("set EXOMECHA_TEST_SBX=1 to run against the real sbx")
 	}
-	gittest.Setup(t)
 	sbx := sandbox.CLI{}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
