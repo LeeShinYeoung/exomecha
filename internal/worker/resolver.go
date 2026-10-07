@@ -121,7 +121,7 @@ func (r *resolver) start(ctx context.Context, prd github.Issue) error {
 		return err
 	}
 	branch := branchName(n)
-	head, ok, err := r.Git.Rev(ctx, "origin/"+branch)
+	head, ok, err := r.Git.Rev(ctx, r.Git.RemoteRef(branch))
 	if err != nil || !ok {
 		return err
 	}

@@ -121,7 +121,7 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		remote, hasRemote, err := b.Git.Rev(ctx, "origin/"+branch)
+		remote, hasRemote, err := b.Git.Rev(ctx, b.Git.RemoteRef(branch))
 		if err != nil {
 			return spec{}, err
 		}

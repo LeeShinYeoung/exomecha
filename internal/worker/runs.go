@@ -627,7 +627,7 @@ func (r *runs) take(ctx context.Context, ro role, n int, in inputs, said string)
 	if err := r.Git.Sync(ctx); err != nil {
 		return "", false, err
 	}
-	remote, _, err := r.Git.Rev(ctx, "origin/"+branchName(n))
+	remote, _, err := r.Git.Rev(ctx, r.Git.RemoteRef(branchName(n)))
 	if err != nil {
 		return "", false, err
 	}
