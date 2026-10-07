@@ -1,18 +1,25 @@
 {
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "enabledPlugins": {
+    "humanizer@humanizer": true,
+    "ponytail@ponytail": true
+  },
   "extraKnownMarketplaces": {
     "humanizer": {
       "source": {
         "source": "github",
         "repo": "blader/humanizer"
       }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
     }
-  },
-  "enabledPlugins": {
-    "humanizer@humanizer": true
-  },
-  "attribution": {
-    "commit": "",
-    "pr": "",
-    "sessionUrl": false
   }
 }
