@@ -8,6 +8,7 @@ Each scenario has its own fake GitHub, repository, sandboxes and template, so th
 
 - sbx set up as in the README: signed in to Docker, the balanced network policy, the Claude login, and no global `github` secret.
 - This machine's claude login, with the same account. exomecha checks the models and reads the plan usage with it.
+- git 2.38 or later. The fake GitHub works out whether a PR merges with `git merge-tree --write-tree`, which older git does not have.
 - Do not run two suites at once. A run starts by removing the sandboxes and templates named `e2e` that an earlier run left behind.
 
 ## Run

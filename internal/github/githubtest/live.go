@@ -29,11 +29,30 @@ func (s *Server) Live(origin, defaultBranch string) {
 
 func (s *Server) git(args ...string) (string, error) {
 	out, err := exec.Command("git", append([]string{"-C", s.origin}, args...)...).Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		err = fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(exit.Stderr)))
+	}
 	return strings.TrimSpace(string(out)), err
 }
 
+// out starts with the merged tree, and lists the conflicts when clean is false. err is a failure
+// of git itself.
+func (s *Server) trialMerge(base, head string) (out string, clean bool, err error) {
+	out, err = s.git("merge-tree", "--write-tree", base, head)
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return out, true, nil
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return out, false, nil
+	}
+	return "", false, err
+}
+
 // mergeable is what GitHub would answer for p: nil while it does not know, which under Live is
-// only when a branch is missing. A value set with SetMergeable wins.
+// only when a branch is missing. A value set with SetMergeable wins. Any other git failure fails
+// the test, or a worker would wait on the nil forever.
 func (s *Server) mergeable(p *Pull) *bool {
 	if s.origin == "" || !p.Open || p.Mergeable != nil {
 		return p.Mergeable
@@ -46,12 +65,11 @@ func (s *Server) mergeable(p *Pull) *bool {
 	if err != nil {
 		return nil
 	}
-	_, err = s.git("merge-tree", "--write-tree", base, head)
-	var exit *exec.ExitError
-	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
+	_, clean, err := s.trialMerge(base, head)
+	if err != nil {
+		s.t.Errorf("githubtest: trial merge of PR #%d: %v", p.Number, err)
 		return nil
 	}
-	clean := err == nil
 	return &clean
 }
 
@@ -66,8 +84,11 @@ func (s *Server) merge(p *Pull) {
 	if err != nil {
 		s.t.Fatalf("githubtest: merge PR #%d: no head %s", p.Number, p.Head)
 	}
-	out, err := s.git("merge-tree", "--write-tree", base, head)
+	out, clean, err := s.trialMerge(base, head)
 	if err != nil {
+		s.t.Fatalf("githubtest: merge PR #%d: %v", p.Number, err)
+	}
+	if !clean {
 		s.t.Fatalf("githubtest: PR #%d conflicts with %s and cannot be merged: %s", p.Number, p.Base, out)
 	}
 	tree, _, _ := strings.Cut(out, "\n")
