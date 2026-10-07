@@ -15,10 +15,7 @@ const labelsRoute = "PUT /repos/{owner}/{repo}/issues/{n}/labels"
 // worker leaves an issue with two statuses alone.
 func TestSetStatus(t *testing.T) {
 	s := githubtest.New(t)
-	client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := clientOf(t, s)
 	n := s.AddIssue("PRD", "", label.PRD, "priority", string(label.Ready))
 	want := func(labels ...string) {
 		t.Helper()

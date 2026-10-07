@@ -11,10 +11,7 @@ const closeRoute = "PATCH /repos/{owner}/{repo}/issues/{n}"
 
 func TestCloseRefused(t *testing.T) {
 	s := githubtest.New(t)
-	client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := clientOf(t, s)
 	s.Fail(closeRoute, http.StatusUnprocessableEntity)
 
 	open := s.AddIssue("PRD", "")

@@ -75,9 +75,13 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		GitEmail:      "4242+owner@users.noreply.github.com",
 		Models:        maps.Clone(testModels),
 	}
+	e.newRuns()
+	return e
+}
+
+func (e *env) newRuns() {
 	e.runs = newRuns(e.deps, nil)
 	e.runs.now = e.clock.now
-	return e
 }
 
 func writeFile(t *testing.T, dir, name, content string) {

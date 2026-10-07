@@ -87,8 +87,7 @@ func TestStallStartsOverForNewRuns(t *testing.T) {
 	e.wantState(name, running)
 	e.clock.advance(time.Hour)
 
-	e.runs = newRuns(e.deps, nil)
-	e.runs.now = e.clock.now
+	e.newRuns()
 	e.wantState(name, running)
 	e.clock.advance(stallAfter)
 	e.wantState(name, stalled)

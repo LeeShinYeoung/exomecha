@@ -13,6 +13,15 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 )
 
+func clientOf(t *testing.T, s *githubtest.Server) *Client {
+	t.Helper()
+	c, err := NewAt(s.URL, s.Owner, s.Repo, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestRequestGivesUpOnStalledServer(t *testing.T) {
 	old := requestTimeout
 	requestTimeout = time.Second
@@ -47,10 +56,7 @@ func TestIdentity(t *testing.T) {
 	} {
 		s := githubtest.New(t)
 		s.UserName = c.profile
-		client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
-		if err != nil {
-			t.Fatal(err)
-		}
+		client := clientOf(t, s)
 		name, email, err := client.Identity(t.Context())
 		if err != nil || name != c.name || email != "4242+owner@users.noreply.github.com" {
 			t.Errorf("profile name %q: Identity = %q, %q, %v", c.profile, name, email, err)

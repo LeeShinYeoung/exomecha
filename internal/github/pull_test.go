@@ -10,10 +10,7 @@ import (
 
 func TestMerged(t *testing.T) {
 	s := githubtest.New(t)
-	client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := clientOf(t, s)
 	const branch = "exomecha/prd-1"
 	want := func(what string, merged bool) {
 		t.Helper()
@@ -34,10 +31,7 @@ func TestMerged(t *testing.T) {
 
 func TestLatestReview(t *testing.T) {
 	s := githubtest.New(t)
-	client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := clientOf(t, s)
 	pr := s.AddPull("exomecha/prd-1", "main")
 	want := func(what, review string) {
 		t.Helper()
@@ -65,10 +59,7 @@ func TestLatestReview(t *testing.T) {
 
 func TestPRComments(t *testing.T) {
 	s := githubtest.New(t)
-	client, err := NewAt(s.URL, s.Owner, s.Repo, "token")
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := clientOf(t, s)
 	pr := s.AddPull("exomecha/prd-1", "main")
 	s.AddLineComment(pr, "hello.go", 12, "rename this")
 	s.AddReview(pr, "")
