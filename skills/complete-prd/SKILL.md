@@ -58,12 +58,23 @@ exomecha builds each PRD as one PR and reviews it without a person, and a person
          ```
          gh issue edit <draft number> --title "<title>" --body-file <body file>
          ```
-    2. For each PRD it is blocked by, attach the blocker. Blockers are attached by **issue ID**, not issue number.
+    2. Explain the plan with an artifact. Publish it with the Artifact tool, following this instruction from the /eli5 skill as is:
+
+       > Explain like I'm someone who knows nothing about this topic, using a HTML artifact with big pictures and few words.
+       >
+       > Topic: how things work now (ASIS) and how they will work once this PRD is built (TOBE), from the text under its heading
+
+       Then comment only its URL on the issue. Do this before the labels, since builder reads the comments only when it starts.
+       ```
+       gh issue comment <PRD number> --body "<artifact URL>"
+       ```
+       Without the Artifact tool, skip this and tell the person.
+    3. For each PRD it is blocked by, attach the blocker. Blockers are attached by **issue ID**, not issue number.
        ```
        BLOCKER_ID=$(gh api repos/{owner}/{repo}/issues/<blocker number> --jq .id)
        gh api --method POST repos/{owner}/{repo}/issues/<PRD number>/dependencies/blocked_by -F issue_id="$BLOCKER_ID"
        ```
-    3. Add the labels last. exomecha takes a PRD as soon as it has `status:ready`, so its blockers must already be attached.
+    4. Add the labels last. exomecha takes a PRD as soon as it has `status:ready`, so its blockers must already be attached.
        - A new PRD:
          ```
          gh issue edit <PRD number> --add-label status:ready --add-label tier:<tier>
