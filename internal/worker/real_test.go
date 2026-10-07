@@ -210,7 +210,7 @@ func TestRealResolverRun(t *testing.T) {
 }
 
 // TestRealReviewerRun is TestRealBuilderRun for reviewer: a PR that adds hello.txt, reviewed in a
-// sandbox from sbx's default template and merged with the head the run reviewed.
+// sandbox from sbx's default template and approved for a person to merge.
 func TestRealReviewerRun(t *testing.T) {
 	if os.Getenv("EXOMECHA_TEST_SBX") != "1" || os.Getenv("EXOMECHA_TEST_CLAUDE") != "1" {
 		t.Skip("set EXOMECHA_TEST_SBX=1 and EXOMECHA_TEST_CLAUDE=1 to run claude in a real sandbox")
@@ -225,7 +225,7 @@ func TestRealReviewerRun(t *testing.T) {
 		"## To do\n\nCreate a file `hello.txt` at the repository root whose only line is `hello`.\n\n"+
 			"## Acceptance criteria\n\n- `hello.txt` exists at the root and holds exactly the line `hello`.\n",
 		label.PRD, string(label.Review))
-	head := gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"hello.txt": "hello\n"})
+	gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"hello.txt": "hello\n"})
 	pr := e.gh.AddPull(branchName(prd), "main")
 	e.gh.SetMergeable(pr, new(true))
 	name := e.reviewerBox(prd)
@@ -246,7 +246,7 @@ func TestRealReviewerRun(t *testing.T) {
 			t.Fatal(err)
 		}
 		status := e.statuses(prd)
-		if e.gh.Pull(pr).Merged || len(status) != 1 || status[0] != string(label.Review) {
+		if len(status) != 1 || status[0] != string(label.Review) {
 			break
 		}
 		select {
@@ -256,29 +256,30 @@ func TestRealReviewerRun(t *testing.T) {
 		}
 	}
 
-	p := e.gh.Pull(pr)
-	if !p.Merged {
+	if status := e.statuses(prd); len(status) != 1 || status[0] != string(label.Approved) {
 		var reviews []string
-		for _, r := range p.Reviews {
+		for _, r := range e.gh.Pull(pr).Reviews {
 			reviews = append(reviews, r.Body)
 		}
-		t.Fatalf("PR not merged: status %q, reviews %q, comments %q", e.statuses(prd), reviews, e.gh.Issue(prd).Comments)
+		t.Fatalf("PRD not approved: status %q, reviews %q, comments %q", status, reviews, e.gh.Issue(prd).Comments)
 	}
 	wantOpus(t, model)
-	if p.MergedSHA != head {
-		t.Errorf("merged %s, want the reviewed head %s", p.MergedSHA, head)
+	p := e.gh.Pull(pr)
+	if p.Merged || !p.Open {
+		t.Errorf("PR merged=%v open=%v, want it open for a person", p.Merged, p.Open)
 	}
-	if i := e.gh.Issue(prd); i.Open || i.StateReason != "completed" {
-		t.Errorf("PRD open=%v reason=%q, want closed as completed", i.Open, i.StateReason)
+	if len(p.Reviews) != 1 || !strings.Contains(p.Reviews[0].Body, "exomecha's reviewer approved this PR.") {
+		t.Errorf("reviews = %+v, want exomecha's approval", p.Reviews)
+	} else {
+		t.Logf("approval: %q", p.Reviews[0].Body)
 	}
-	e.wantStatus(prd, label.None)
 	if _, err := os.Lstat(e.runs.dir(name)); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("run directory left after the merge: %v", err)
+		t.Errorf("run directory left after the approval: %v", err)
 	}
 	if boxes, err := sbx.List(t.Context()); err == nil {
 		for _, b := range boxes {
 			if b.Name == name {
-				t.Errorf("sandbox %s left after the merge", name)
+				t.Errorf("sandbox %s left after the approval", name)
 			}
 		}
 	}

@@ -14,6 +14,7 @@ func All() []Def {
 		{string(Ready), "B98300"},
 		{string(Working), "D9692A"},
 		{string(Review), "2D955A"},
+		{string(Approved), "6E56CF"},
 		{string(Stuck), "CC3D38"},
 		{string(Light), "9AA5B1"},
 		{string(Normal), "6B7785"},

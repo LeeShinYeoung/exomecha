@@ -547,14 +547,33 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.wantStatus(n, label.Ready)
 			e.wantRemoved(name)
 		}},
-		{"reviewer", "approve's Merge", func(e *env) (int, string) {
-			prd, _, name := e.approved()
+		{"reviewer", "approve's AddApproval", func(e *env) (int, string) {
+			prd, _, name := e.approving()
 			return prd, name
-		}, githubFault(mergeRoute), reviewerHandle, func(e *env, n int, name string) {
-			if !e.gh.Pulls()[0].Merged {
-				e.t.Error("PR not merged")
-			}
+		}, githubFault(reviewsRoute), reviewerHandle, func(e *env, n int, name string) {
+			e.wantApproved(n, e.gh.Pulls()[0].Number)
 			e.wantRemoved(name)
+		}},
+		{"reviewer", "approve's SetStatus", func(e *env) (int, string) {
+			prd, _, name := e.approving()
+			return prd, name
+		}, githubFault(labelsRoute), reviewerHandle, func(e *env, n int, name string) {
+			e.wantApproved(n, e.gh.Pulls()[0].Number)
+			e.wantRemoved(name)
+		}},
+		{"reviewer", "an approved PRD's close", func(e *env) (int, string) {
+			prd, pr := e.approvedPRD()
+			e.gh.MergePull(pr)
+			return prd, e.reviewerBox(prd)
+		}, githubFault(closeRoute), reviewerHandle, func(e *env, n int, name string) {
+			e.wantFinished(n)
+		}},
+		{"resolver", "stale's SetStatus", func(e *env) (int, string) {
+			prd, pr := e.approvedPRD()
+			e.gh.SetMergeable(pr, new(false))
+			return prd, e.resolverBox(prd)
+		}, githubFault(labelsRoute), resolverHandle, func(e *env, n int, name string) {
+			e.wantStatus(n, label.Review)
 		}},
 	} {
 		t.Run(c.worker+"/"+c.step, func(t *testing.T) {

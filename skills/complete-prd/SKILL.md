@@ -5,7 +5,7 @@ description: Write a PRD (a plan with every decision made) from this conversatio
 
 # Complete a PRD
 
-exomecha builds each PRD as one PR, then reviews and merges it without a person. builder sees only the PRD's body and its comments. Anything the PRD leaves out is missing when the code gets written. **Make every decision here.** After this, a person only answers when a PRD is blocked (`status:stuck`).
+exomecha builds each PRD as one PR and reviews it without a person, and a person merges the PR once the AI approves it. builder sees only the PRD's body and its comments. Anything the PRD leaves out is missing when the code gets written. **Make every decision here.** After this, a person only merges the approved PR and answers when a PRD is blocked (`status:stuck`).
 
 ## Rules
 
@@ -21,7 +21,7 @@ exomecha builds each PRD as one PR, then reviews and merges it without a person.
 1. Find what to complete. The person may give one or more draft numbers, or none.
    - With draft numbers, read each one: `gh issue view <number> --comments`. Each draft becomes its own PRD unless the person merges them.
    - Without a number, this conversation is the source, and the PRD is a new issue.
-2. For each draft, re-check it against the latest base branch, the branch exomecha merges PRs into. If you don't know it, ask the person. Run `git fetch origin <base>`, then read `origin/<base>` with `git log`, `git show`, and `git grep`.
+2. For each draft, re-check it against the latest base branch, the branch exomecha's PRs target. If you don't know it, ask the person. Run `git fetch origin <base>`, then read `origin/<base>` with `git log`, `git show`, and `git grep`.
    - Has the related code changed since the draft was recorded?
    - Is it already fixed? If so, ask the person whether to close the draft instead.
    - Were the guesses in the investigation notes right?

@@ -267,7 +267,10 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	pr := e.gh.AddPull(branch, "main")
 	e.gh.AddReview(pr, github.Marker+"\nplease rename X")
 	e.gh.AddReview(pr, "a person's review")
+	e.gh.AddLineComment(pr, "feature.txt", 1, "a person's comment on a line")
+	e.gh.AddPullComment(pr, "a person's comment on the PR")
 	e.gh.AddOutsiderReview(pr, github.Marker+"\nan outsider posing as exomecha")
+	e.gh.AddOutsiderReview(pr, "an outsider's review")
 	e.gh.AddComment(prd, github.Marker+"\na question exomecha asked")
 	e.gh.AddComment(prd, "a person's answer")
 	e.gh.AddOutsiderComment(prd, "an outsider's instruction")
@@ -278,10 +281,15 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 		t.Fatalf("sandbox repository is not on the PR branch: %q, %v", b, err)
 	}
 	input := e.readCtl(name, "input.md")
-	wantContains(t, "claude input", input, "PRD body", "## Existing PR", "please rename X",
-		"(exomecha)\n\na question exomecha asked", "(person)\n\na person's answer")
-	wantNotContains(t, "claude input", input, github.Marker, "a person's review",
-		"an outsider posing as exomecha", "an outsider's instruction")
+	wantContains(t, "claude input", input, "PRD body", "## Existing PR", "## Last review", "please rename X",
+		"(exomecha)\n\na question exomecha asked", "(person)\n\na person's answer",
+		"## Comments on the PR", "(person)\n\na person's review", "(person, on feature.txt line 1)\n\na person's comment on a line",
+		"(person)\n\na person's comment on the PR")
+	wantNotContains(t, "claude input", input, github.Marker,
+		"an outsider posing as exomecha", "an outsider's instruction", "an outsider's review")
+	if strings.Count(input, "please rename X") != 1 {
+		t.Error("exomecha's review is in the input more than once")
+	}
 	if got := e.startedModel(name); got != testModels[label.Heavy] {
 		t.Errorf("the run for the review got %v, want the PRD's tier %v", got, testModels[label.Heavy])
 	}
@@ -295,6 +303,27 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want the existing one only", n)
 	}
+}
+
+// A person sent an approved PRD back with a review on the PR. exomecha's approval is no change to
+// make.
+func TestBuilderLeavesOutTheApproval(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready))
+	branch := branchName(prd)
+	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
+	pr := e.gh.AddPull(branch, "main")
+	e.gh.AddReview(pr, github.Marker+"\nplease rename X")
+	if err := e.deps.GitHub.AddApproval(t.Context(), pr, "renames X"); err != nil {
+		t.Fatal(err)
+	}
+	e.gh.AddReview(pr, "use a shorter name")
+
+	e.step(prd)
+
+	input := e.readCtl(e.builderBox(prd), "input.md")
+	wantContains(t, "claude input", input, "(person)\n\nuse a shorter name")
+	wantNotContains(t, "claude input", input, "## Last review", "please rename X", "renames X")
 }
 
 func TestBuilderRunsTheTasksTier(t *testing.T) {

@@ -2,10 +2,8 @@ package worker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
@@ -54,13 +52,29 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Pick returns the PRDs in review whose PR does not conflict, and every PRD that has a reviewer run.
+// Pick returns the PRDs in review whose PR does not conflict, the approved PRDs whose PR is no
+// longer open, and every PRD that has a reviewer run.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
 		return nil, err
 	}
+	approved, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Approved))
+	if err != nil {
+		return nil, err
+	}
 	var picked []int
+	for _, t := range approved {
+		// An approved PRD whose PR conflicts is resolver's, and grabbing it every minute starved
+		// resolver as below. reviewer has nothing to do for one whose PR is still open anyway.
+		_, open, err := r.GitHub.OpenPR(ctx, branchName(t.Number))
+		if err != nil {
+			return nil, err
+		}
+		if !open {
+			picked = append(picked, t.Number)
+		}
+	}
 	for _, t := range prds {
 		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same PRD
 		// at the same moment every minute, which starved resolver.
@@ -99,7 +113,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
-		return toStuck(ctx, r.GitHub, n, label.Review, label.Ready,
+		return toStuck(ctx, r.GitHub, n, prd.Status(), label.Ready,
 			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
 	case failing:
 		var b strings.Builder
@@ -117,7 +131,8 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 
 // look finds the PRD's place, with its open PR, and the CI runs that failed when the place is failing.
 func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR, []github.Run, error) {
-	if !holds(prd, label.PRD, label.Review) {
+	approved := holds(prd, label.PRD, label.Approved)
+	if !approved && !holds(prd, label.PRD, label.Review) {
 		return away, github.PR{}, nil, nil
 	}
 	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
@@ -125,8 +140,8 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR
 	case err != nil:
 		return away, pr, nil, err
 	case !ok:
-		// A PR can be merged with its PRD still in review, since exomecha closes the PRD after
-		// the merge and that can fail.
+		// GitHub closes the PRD on the merge only when the PR targets the default branch, so
+		// exomecha closes it otherwise.
 		done, err := r.GitHub.Merged(ctx, branchName(prd.Number))
 		switch {
 		case err != nil:
@@ -135,6 +150,9 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR
 			return merged, pr, nil, nil
 		}
 		return closed, pr, nil, nil
+	// The PR waits for a person to merge it. A conflict is resolver's.
+	case approved:
+		return away, pr, nil, nil
 	// GitHub is still computing whether the PR merges.
 	case pr.Mergeable == nil:
 		return waiting, pr, nil, nil
@@ -175,8 +193,12 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) er
 		if err != nil {
 			return spec{}, err
 		}
+		onPR, err := prComments(ctx, r.GitHub, pr.Number)
+		if err != nil {
+			return spec{}, err
+		}
 		ref := r.Git.BaseRef()
-		input := prdText(prd) + comments +
+		input := prdText(prd) + comments + onPR +
 			fmt.Sprintf("## Base branch\n\n`%s`. See this PR's changes with `git diff %s...HEAD`.\n", ref, ref)
 		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
 	})
@@ -200,50 +222,21 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		}
 		slog.Info("requeued with review comments", "prd", n, "pr", pr.Number)
 	case "approve":
-		// With the head the run reviewed, GitHub refuses the merge if anything was pushed since.
-		err := r.GitHub.Merge(ctx, pr.Number, in.Head)
-		var refused *github.MergeRefused
-		switch {
-		case errors.As(err, &refused) && refused.Status == http.StatusConflict:
-			return r.runs.restart(ctx, reviewerRole, n, "the PR branch changed before the merge")
-		case errors.As(err, &refused):
-			return r.refused(ctx, n, pr.Number, refused.Message)
-		case err != nil:
-			// The result stays, so the next try merges without another review.
+		if err := r.GitHub.AddApproval(ctx, pr.Number, out.Body); err != nil {
 			return err
 		}
-		if err := r.finish(ctx, n); err != nil {
+		if err := r.GitHub.SetStatus(ctx, n, label.Review, label.Approved); err != nil {
 			return err
 		}
-		slog.Info("merged and closed PRD", "prd", n, "pr", pr.Number)
+		slog.Info("approved, for a person to merge", "prd", n, "pr", pr.Number)
 	default:
 		return r.runs.failed(ctx, reviewerRole, n, badResult, fmt.Sprintf("verdict %q", out.Verdict))
 	}
 	return r.runs.done(ctx, reviewerRole, n)
 }
 
-// refused handles a merge GitHub refused for what the PR is. GitHub says the same for a conflict
-// and for a rule of the base branch, so the PR tells them apart.
-func (r *reviewer) refused(ctx context.Context, n, number int, message string) error {
-	pr, err := r.GitHub.PR(ctx, number)
-	if err != nil {
-		return err
-	}
-	switch {
-	case pr.Mergeable == nil:
-		// The result stays until GitHub knows which it is.
-		return fmt.Errorf("GitHub refused to merge PR #%d before it knew whether the PR conflicts: %s", number, message)
-	case !*pr.Mergeable:
-		// The next round finds the PR conflicted and drops the run, and resolver takes the PRD.
-		return nil
-	}
-	return r.runs.stuck(ctx, reviewerRole, n, fmt.Sprintf("The AI approved PR #%d, but GitHub refused to merge it: %s\n\n"+
-		"A rule of the base branch may need something exomecha cannot give, such as an approving review from someone else. "+
-		"Merge the PR yourself, or change the rule and relabel this issue as below.", number, message))
-}
-
-// finish closes the PRD as completed and then clears its status. A PRD left open in review
-// comes back to merged, and one closed with its status is left alone by every worker.
+// finish closes the PRD as completed and then clears its status. A PRD left open comes back to
+// merged, and one closed with its status is left alone by every worker.
 func (r *reviewer) finish(ctx context.Context, n int) error {
 	if err := r.GitHub.Close(ctx, n, github.Completed); err != nil {
 		return err

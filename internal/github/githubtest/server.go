@@ -40,15 +40,10 @@ type Server struct {
 	runs   map[string][]Run
 	times  map[string]time.Time
 
-	routes   map[string]bool
-	fails    map[string]int // route to the status it answers with
-	refusals map[int]refusal
-	closes   map[int]int // PR to the issue its merge closes
-}
-
-type refusal struct {
-	message   string
-	mergeable *bool
+	routes  map[string]bool
+	fails   map[string]int // route to the status it answers with
+	closes  map[int]int    // PR to the issue its merge closes
+	written int            // comments and reviews so far, which sets the time of the next one
 }
 
 type Issue struct {
@@ -67,6 +62,7 @@ type Issue struct {
 type Comment struct {
 	Body        string
 	Association string
+	At          time.Time
 }
 
 // exomecha writes with the repository owner's token, so what it creates comes back as OWNER.
@@ -80,23 +76,33 @@ func (i Issue) HasLabel(name string) bool {
 }
 
 type Pull struct {
-	Number      int
-	Head        string
-	Base        string
-	Title       string
-	Body        string
-	Open        bool
-	Mergeable   *bool
-	Reviews     []Review
-	Merged      bool
-	MergeMethod string
-	MergedSHA   string
+	Number    int
+	Head      string
+	Base      string
+	Title     string
+	Body      string
+	Open      bool
+	Mergeable *bool
+	Reviews   []Review
+	Merged    bool
+	// Comments are on the conversation, LineComments on lines of the diff.
+	Comments     []Comment
+	LineComments []LineComment
 }
 
 type Review struct {
 	Body        string
-	Event       string
+	Event       string // empty for a review not submitted yet
 	Association string
+	At          time.Time
+}
+
+type LineComment struct {
+	Path        string
+	Line        int
+	Body        string
+	Association string
+	At          time.Time
 }
 
 type Run struct {
@@ -118,10 +124,9 @@ func New(t *testing.T) *Server {
 		runs:   map[string][]Run{},
 		times:  map[string]time.Time{},
 
-		routes:   map[string]bool{},
-		fails:    map[string]int{},
-		refusals: map[int]refusal{},
-		closes:   map[int]int{},
+		routes: map[string]bool{},
+		fails:  map[string]int{},
+		closes: map[int]int{},
 	}
 	mux := http.NewServeMux()
 	const repo = "/repos/{owner}/{repo}"
@@ -141,7 +146,7 @@ func New(t *testing.T) *Server {
 	s.route(mux, "GET "+repo+"/pulls/{n}", s.getPull)
 	s.route(mux, "GET "+repo+"/pulls/{n}/reviews", s.listReviews)
 	s.route(mux, "POST "+repo+"/pulls/{n}/reviews", s.createReview)
-	s.route(mux, "PUT "+repo+"/pulls/{n}/merge", s.merge)
+	s.route(mux, "GET "+repo+"/pulls/{n}/comments", s.listLineComments)
 	s.route(mux, "GET "+repo+"/actions/runs", s.listRuns)
 	s.route(mux, "GET "+repo+"/git/commits/{sha}", s.getCommit)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -340,25 +345,42 @@ func (s *Server) updateIssue(r *http.Request) (int, any) {
 	return http.StatusOK, issueJSON(i)
 }
 
-// Comments get one minute apart, starting at a fixed time, so their order is stable.
+// Comments and reviews get one minute apart, starting at a fixed time, so their order is stable
+// across all of them.
 var commentEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func (s *Server) now() time.Time {
+	s.written++
+	return commentEpoch.Add(time.Duration(s.written) * time.Minute)
+}
 
 func commentJSON(k int, c Comment) any {
 	return map[string]any{
 		"id":                 k + 1,
 		"body":               c.Body,
-		"created_at":         commentEpoch.Add(time.Duration(k) * time.Minute).Format(time.RFC3339),
+		"created_at":         c.At.Format(time.RFC3339),
 		"author_association": c.Association,
 	}
 }
 
+// A PR is an issue too, so its conversation comments come from the issues API.
+func (s *Server) commentsOf(r *http.Request) *[]Comment {
+	if i := s.pathIssue(r); i != nil {
+		return &i.Comments
+	}
+	if p := s.pathPull(r); p != nil {
+		return &p.Comments
+	}
+	return nil
+}
+
 func (s *Server) listComments(r *http.Request) (int, any) {
-	i := s.pathIssue(r)
-	if i == nil {
+	comments := s.commentsOf(r)
+	if comments == nil {
 		return notFound()
 	}
 	out := []any{}
-	for k, c := range i.Comments {
+	for k, c := range *comments {
 		out = append(out, commentJSON(k, c))
 	}
 	return http.StatusOK, out
@@ -375,7 +397,7 @@ func (s *Server) createComment(r *http.Request) (int, any) {
 	if !s.decode(r, &req) {
 		return http.StatusBadRequest, message("bad body")
 	}
-	i.Comments = append(i.Comments, Comment{Body: req.Body, Association: associationOwner})
+	i.Comments = append(i.Comments, Comment{Body: req.Body, Association: associationOwner, At: s.now()})
 	return http.StatusCreated, commentJSON(len(i.Comments)-1, i.Comments[len(i.Comments)-1])
 }
 
@@ -484,7 +506,12 @@ func (s *Server) getPull(r *http.Request) (int, any) {
 }
 
 func reviewJSON(k int, rv Review) any {
-	return map[string]any{"id": k + 1, "body": rv.Body, "state": "COMMENTED", "author_association": rv.Association}
+	m := map[string]any{"id": k + 1, "body": rv.Body, "state": "PENDING", "author_association": rv.Association}
+	if rv.Event != "" {
+		m["state"] = "COMMENTED"
+		m["submitted_at"] = rv.At.Format(time.RFC3339)
+	}
+	return m
 }
 
 func (s *Server) listReviews(r *http.Request) (int, any) {
@@ -511,42 +538,30 @@ func (s *Server) createReview(r *http.Request) (int, any) {
 	if !s.decode(r, &req) {
 		return http.StatusBadRequest, message("bad body")
 	}
-	p.Reviews = append(p.Reviews, Review{Body: req.Body, Event: req.Event, Association: associationOwner})
+	p.Reviews = append(p.Reviews, Review{Body: req.Body, Event: req.Event, Association: associationOwner, At: s.now()})
 	return http.StatusOK, reviewJSON(len(p.Reviews)-1, p.Reviews[len(p.Reviews)-1])
 }
 
-func (s *Server) merge(r *http.Request) (int, any) {
+func (s *Server) listLineComments(r *http.Request) (int, any) {
 	p := s.pathPull(r)
 	if p == nil {
 		return notFound()
 	}
-	var req struct {
-		MergeMethod string `json:"merge_method"`
-		SHA         string `json:"sha"`
+	out := []any{}
+	for k, c := range p.LineComments {
+		m := map[string]any{
+			"id":                 k + 1,
+			"path":               c.Path,
+			"body":               c.Body,
+			"created_at":         c.At.Format(time.RFC3339),
+			"author_association": c.Association,
+		}
+		if c.Line > 0 {
+			m["line"] = c.Line
+		}
+		out = append(out, m)
 	}
-	if !s.decode(r, &req) {
-		return http.StatusBadRequest, message("bad body")
-	}
-	if !p.Open {
-		return http.StatusMethodNotAllowed, message("Pull Request is not mergeable")
-	}
-	if rf, ok := s.refusals[p.Number]; ok {
-		delete(s.refusals, p.Number)
-		p.Mergeable = rf.mergeable
-		return http.StatusMethodNotAllowed, message(rf.message)
-	}
-	if req.SHA != "" && req.SHA != s.head(p) {
-		return http.StatusConflict, message("Head branch was modified. Review and try the merge again.")
-	}
-	p.Open = false
-	p.Merged = true
-	p.MergeMethod = req.MergeMethod
-	p.MergedSHA = req.SHA
-	if n, ok := s.closes[p.Number]; ok {
-		s.issues[n].Open = false
-		s.issues[n].StateReason = "completed"
-	}
-	return http.StatusOK, map[string]any{"merged": true, "sha": "merge-commit", "message": "Pull Request successfully merged"}
+	return http.StatusOK, out
 }
 
 func (s *Server) listRuns(r *http.Request) (int, any) {
@@ -572,7 +587,7 @@ func (s *Server) getCommit(r *http.Request) (int, any) {
 }
 
 // Fail makes every request to route answer status, until Fail(route, 0). route is a pattern as New
-// registers it, such as "PUT /repos/{owner}/{repo}/pulls/{n}/merge".
+// registers it, such as "POST /repos/{owner}/{repo}/pulls/{n}/reviews".
 func (s *Server) Fail(route string, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -584,15 +599,6 @@ func (s *Server) Fail(route string, status int) {
 		return
 	}
 	s.fails[route] = status
-}
-
-// RefuseMerge makes GitHub refuse the next merge of PR n with 405 and message, the way it refuses
-// a PR that conflicts or that a rule of the base branch blocks. From then on, the PR's mergeable
-// is mergeable, as GitHub has worked it out again.
-func (s *Server) RefuseMerge(n int, message string, mergeable *bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.refusals[n] = refusal{message: message, mergeable: mergeable}
 }
 
 // CloseOnMerge makes the merge of PR pr close issue n as completed, the way GitHub closes the issue
@@ -620,13 +626,13 @@ func (s *Server) AddOutsiderIssue(title, body string, labels ...string) int {
 func (s *Server) AddComment(n int, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.issues[n].Comments = append(s.issues[n].Comments, Comment{Body: body, Association: associationOwner})
+	s.issues[n].Comments = append(s.issues[n].Comments, Comment{Body: body, Association: associationOwner, At: s.now()})
 }
 
 func (s *Server) AddOutsiderComment(n int, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.issues[n].Comments = append(s.issues[n].Comments, Comment{Body: body, Association: associationNone})
+	s.issues[n].Comments = append(s.issues[n].Comments, Comment{Body: body, Association: associationNone, At: s.now()})
 }
 
 func (s *Server) AddBlockedBy(n, blocker int) {
@@ -676,6 +682,19 @@ func (s *Server) ClosePull(n int) {
 	s.pulls[n].Open = false
 }
 
+// MergePull merges PR n, as a person does on GitHub.
+func (s *Server) MergePull(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pulls[n]
+	p.Open = false
+	p.Merged = true
+	if i, ok := s.closes[n]; ok {
+		s.issues[i].Open = false
+		s.issues[i].StateReason = "completed"
+	}
+}
+
 func (s *Server) SetMergeable(n int, mergeable *bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -685,13 +704,34 @@ func (s *Server) SetMergeable(n int, mergeable *bool) {
 func (s *Server) AddReview(n int, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pulls[n].Reviews = append(s.pulls[n].Reviews, Review{Body: body, Event: "COMMENT", Association: associationOwner})
+	s.pulls[n].Reviews = append(s.pulls[n].Reviews, Review{Body: body, Event: "COMMENT", Association: associationOwner, At: s.now()})
+}
+
+// AddPendingReview starts a review that is not submitted yet. GitHub lists it only to its author.
+func (s *Server) AddPendingReview(n int, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pulls[n].Reviews = append(s.pulls[n].Reviews, Review{Body: body, Association: associationOwner, At: s.now()})
+}
+
+// AddPullComment comments on PR n's conversation.
+func (s *Server) AddPullComment(n int, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pulls[n].Comments = append(s.pulls[n].Comments, Comment{Body: body, Association: associationOwner, At: s.now()})
+}
+
+// AddLineComment comments on a line of PR n's diff. Line 0 is a comment on the whole file.
+func (s *Server) AddLineComment(n int, path string, line int, body string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pulls[n].LineComments = append(s.pulls[n].LineComments, LineComment{Path: path, Line: line, Body: body, Association: associationOwner, At: s.now()})
 }
 
 func (s *Server) AddOutsiderReview(n int, body string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pulls[n].Reviews = append(s.pulls[n].Reviews, Review{Body: body, Event: "COMMENT", Association: associationNone})
+	s.pulls[n].Reviews = append(s.pulls[n].Reviews, Review{Body: body, Event: "COMMENT", Association: associationNone, At: s.now()})
 }
 
 func (s *Server) Pull(n int) Pull {
@@ -699,6 +739,8 @@ func (s *Server) Pull(n int) Pull {
 	defer s.mu.Unlock()
 	p := *s.pulls[n]
 	p.Reviews = slices.Clone(p.Reviews)
+	p.Comments = slices.Clone(p.Comments)
+	p.LineComments = slices.Clone(p.LineComments)
 	return p
 }
 

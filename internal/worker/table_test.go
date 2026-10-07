@@ -145,9 +145,7 @@ func reviewerCells(t *testing.T) tableWorker {
 			pr := e.gh.Pulls()[0].Number
 			switch p {
 			case merged:
-				if err := e.deps.GitHub.Merge(t.Context(), pr, ""); err != nil {
-					t.Fatal(err)
-				}
+				e.gh.MergePull(pr)
 			case closed:
 				e.gh.ClosePull(pr)
 			case failing:
@@ -156,8 +154,10 @@ func reviewerCells(t *testing.T) tableWorker {
 				e.gh.SetMergeable(pr, nil)
 			}
 		},
-		// A conflict is resolver's.
-		away: append(leave(label.Ready), func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) }),
+		// A conflict is resolver's, and an approved PRD waits for a person.
+		away: append(leave(label.Ready),
+			func(e *env, n int) { e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(false)) },
+			func(e *env, n int) { e.gh.Relabel(n, string(label.Review), string(label.Approved)) }),
 		settled: map[place]func(e *env, n int){
 			merged: func(e *env, n int) {
 				e.wantFinished(n)
@@ -188,12 +188,7 @@ func reviewerCells(t *testing.T) tableWorker {
 			e.play(name, nil, approve)
 		},
 		harvested: func(e *env, n int) {
-			if !e.gh.Pulls()[0].Merged {
-				t.Error("PR not merged")
-			}
-			if e.gh.Issue(n).Open {
-				t.Error("PRD still open")
-			}
+			e.wantApproved(n, e.gh.Pulls()[0].Number)
 		},
 	}
 }
@@ -210,7 +205,7 @@ func leave(to label.Status) []func(e *env, n int) {
 
 var placeNames = map[place]string{
 	away: "away", ready: "ready", working: "working", clean: "clean",
-	waiting: "waiting", merged: "merged", closed: "closed", failing: "failing",
+	waiting: "waiting", merged: "merged", closed: "closed", failing: "failing", stale: "stale",
 }
 
 func actionNames(r row) []string {

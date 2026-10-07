@@ -1,10 +1,9 @@
 package github
 
 import (
+	"cmp"
 	"context"
-	"errors"
-	"fmt"
-	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,6 +78,16 @@ func (c *Client) AddReview(ctx context.Context, number int, body string) error {
 	return err
 }
 
+// approval starts the review exomecha leaves when reviewer approves, so LatestReview can tell it
+// from a review that asks for changes.
+const approval = "exomecha's reviewer approved this PR. A person reviews and merges it."
+
+func (c *Client) AddApproval(ctx context.Context, number int, summary string) error {
+	return c.AddReview(ctx, number, approval+"\n\n"+summary)
+}
+
+// LatestReview returns exomecha's latest review, or "" when that review is an approval, since
+// whatever an earlier review asked for was done before it.
 func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 	var latest string
 	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, number, &gh.ListOptions{PerPage: 100}) {
@@ -90,44 +99,53 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 			latest = withoutMarker(body)
 		}
 	}
+	if strings.HasPrefix(latest, approval) {
+		return "", nil
+	}
 	return latest, nil
 }
 
-// MergeRefused is GitHub refusing a merge for what the PR is. Status 409 means the head is no longer
-// the sha asked for. Status 405 means the PR cannot be merged as it is, for a conflict or for a rule
-// of the base branch alike.
-type MergeRefused struct {
-	Status  int
-	Message string
-}
-
-func (e *MergeRefused) Error() string {
-	return fmt.Sprintf("GitHub refused the merge (%d): %s", e.Status, e.Message)
-}
-
-// Passing the reviewed head SHA makes GitHub refuse the merge if anything was pushed since the review.
-func (c *Client) Merge(ctx context.Context, number int, sha string) error {
-	res, _, err := c.api.PullRequests.Merge(ctx, c.owner, c.repo, number, "", &gh.PullRequestOptions{
-		MergeMethod: "merge",
-		SHA:         sha,
-	})
-	var e *gh.ErrorResponse
-	if errors.As(err, &e) && e.Response != nil {
-		// GitHub answers 405 with these to a merge that raced another merge or push, and a later
-		// try goes through.
-		raced := strings.HasPrefix(e.Message, "Base branch was modified") || strings.HasPrefix(e.Message, "Head branch was modified")
-		switch status := e.Response.StatusCode; {
-		case status == http.StatusConflict, status == http.StatusMethodNotAllowed && !raced:
-			return &MergeRefused{Status: status, Message: e.Message}
-		}
-	}
+// PRComments returns what was written on the PR, oldest first: comments on the conversation, the
+// bodies of reviews, and comments on lines of the diff.
+func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) {
+	// A PR's conversation is its issue's comments.
+	out, err := c.Comments(ctx, number)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !res.GetMerged() {
-		return fmt.Errorf("PR #%d not merged: %s", number, res.GetMessage())
+	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, number, &gh.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return nil, err
+		}
+		// The token owner's review that is not submitted yet is listed too. A review made only of
+		// comments on lines has no body, and those comments come below.
+		if r.GetState() == "PENDING" || strings.TrimSpace(r.GetBody()) == "" {
+			continue
+		}
+		out = append(out, Comment{
+			Body:      withoutMarker(r.GetBody()),
+			CreatedAt: r.GetSubmittedAt().Time,
+			Exomecha:  byExomecha(r.GetBody()),
+			Trusted:   trusted(r.GetAuthorAssociation()),
+		})
 	}
-	return nil
+	opts := &gh.PullRequestListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for cm, err := range c.api.PullRequests.ListCommentsIter(ctx, c.owner, c.repo, number, opts) {
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Comment{
+			Body:      withoutMarker(cm.GetBody()),
+			CreatedAt: cm.GetCreatedAt().Time,
+			Exomecha:  byExomecha(cm.GetBody()),
+			Trusted:   trusted(cm.GetAuthorAssociation()),
+			Path:      cm.GetPath(),
+			// line is empty once a later push takes the line out of the diff.
+			Line: cmp.Or(cm.GetLine(), cm.GetOriginalLine()),
+		})
+	}
+	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, nil
 }
 
 type CI int

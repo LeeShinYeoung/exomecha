@@ -65,18 +65,25 @@ func TestReviewerPickSkipsConflictingPRs(t *testing.T) {
 	computing, pr, _ := e.reviewPRD()
 	e.gh.SetMergeable(pr, nil)
 	conflicting, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	e.approvedPRD()
+	approvedConflicting, apr := e.approvedPRD()
+	e.gh.SetMergeable(apr, new(false))
+	approvedMerged, mpr := e.approvedPRD()
+	e.gh.MergePull(mpr)
+	approvedClosed, cpr := e.approvedPRD()
+	e.gh.ClosePull(cpr)
 
 	picked, err := e.reviewer().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantInts(t, "reviewer Pick", picked, []int{mergeable, computing})
+	wantInts(t, "reviewer Pick", picked, []int{mergeable, computing, approvedMerged, approvedClosed})
 
 	picked, err = e.resolver().Pick(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantInts(t, "resolver Pick", picked, []int{conflicting})
+	wantInts(t, "resolver Pick", picked, []int{conflicting, approvedConflicting})
 }
 
 func TestReviewerPicksEveryPRDWithARun(t *testing.T) {
@@ -164,7 +171,7 @@ func TestReviewerWaitsForCIToAppear(t *testing.T) {
 	e.wantState(e.reviewerBox(prd), running)
 }
 
-func TestReviewerApproveMerges(t *testing.T) {
+func TestReviewerApproveLeavesThePRToAPerson(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, sha := e.reviewPRD()
 	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "success"})
@@ -185,12 +192,108 @@ func TestReviewerApproveMerges(t *testing.T) {
 	e.play(name, nil, approve)
 	e.review(prd)
 
-	p := e.gh.Pull(pr)
-	if !p.Merged || p.MergeMethod != "merge" || p.MergedSHA != sha {
-		t.Errorf("PR merged=%v method=%q sha=%q, want merged with merge at the reviewed head %s", p.Merged, p.MergeMethod, p.MergedSHA, sha)
-	}
-	e.wantFinished(prd)
+	e.wantApproved(prd, pr)
 	e.wantRemoved(name)
+	if n := len(e.gh.Issue(prd).Comments); n != 0 {
+		t.Errorf("%d comments, want none", n)
+	}
+}
+
+// wantApproved checks that the PRD waits for a person, with exomecha's approval as the PR's last
+// review and the PR not merged.
+func (e *env) wantApproved(prd, pr int) {
+	e.t.Helper()
+	e.wantStatus(prd, label.Approved)
+	p := e.gh.Pull(pr)
+	if p.Merged || !p.Open {
+		e.t.Errorf("PR merged=%v open=%v, want it open for a person", p.Merged, p.Open)
+	}
+	if len(p.Reviews) == 0 {
+		e.t.Fatal("no review on the PR")
+	}
+	last := p.Reviews[len(p.Reviews)-1]
+	if last.Event != "COMMENT" || !strings.HasPrefix(last.Body, github.Marker+"\nexomecha's reviewer approved this PR.") || !strings.HasSuffix(last.Body, "fine") {
+		e.t.Errorf("last review = %+v, want exomecha's approval with the AI's summary", last)
+	}
+}
+
+func TestReviewerReadsAPersonsCommentsOnThePR(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr, _ := e.reviewPRD()
+	e.gh.AddLineComment(pr, "feature.txt", 1, "keep it short")
+	e.gh.AddPullComment(pr, "also log it")
+	e.gh.AddOutsiderReview(pr, "an outsider's review")
+
+	e.review(prd)
+
+	input := e.readCtl(e.reviewerBox(prd), "input.md")
+	wantContains(t, "claude input", input, "## Comments on the PR",
+		"(person, on feature.txt line 1)\n\nkeep it short", "(person)\n\nalso log it")
+	wantNotContains(t, "claude input", input, "an outsider's review")
+}
+
+// approvedPRD is a PRD whose PR exomecha approved, waiting for a person.
+func (e *env) approvedPRD() (prd, pr int) {
+	prd, pr, _ = e.reviewPRD()
+	e.gh.Relabel(prd, string(label.Review), string(label.Approved))
+	return prd, pr
+}
+
+func TestReviewerLeavesAnApprovedPRDWhileItsPRIsOpen(t *testing.T) {
+	for _, mergeable := range []*bool{new(true), nil, new(false)} {
+		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+		prd, pr := e.approvedPRD()
+		e.gh.SetMergeable(pr, mergeable)
+
+		e.review(prd)
+
+		if e.sbx.exists(e.reviewerBox(prd)) {
+			t.Error("a review started for an approved PRD")
+		}
+		e.wantStatus(prd, label.Approved)
+		if p := e.gh.Pull(pr); len(p.Reviews) != 0 || len(e.gh.Issue(prd).Comments) != 0 {
+			t.Errorf("reviews=%d comments=%d, want none", len(p.Reviews), len(e.gh.Issue(prd).Comments))
+		}
+	}
+}
+
+// A PR whose base is not the default branch leaves its PRD open when a person merges it.
+func TestReviewerFinishesAnApprovedPRDOnceAPersonMerges(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr := e.approvedPRD()
+	e.gh.MergePull(pr)
+
+	e.review(prd)
+
+	e.wantFinished(prd)
+}
+
+// Closing the PRD failed after a person merged. The next try closes it.
+func TestReviewerFinishesAnApprovedPRDWhoseCloseFailed(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr := e.approvedPRD()
+	e.gh.MergePull(pr)
+	e.gh.Fail(closeRoute, http.StatusBadGateway)
+
+	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
+		t.Fatal("Handle returned nil with the close failing")
+	}
+	e.wantStatus(prd, label.Approved)
+
+	e.gh.Fail(closeRoute, 0)
+	e.review(prd)
+	e.wantFinished(prd)
+}
+
+func TestReviewerStuckWhenAnApprovedPRIsClosedByHand(t *testing.T) {
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr := e.approvedPRD()
+	e.gh.ClosePull(pr)
+
+	e.review(prd)
+
+	e.wantStatus(prd, label.Stuck)
+	wantStuckComment(t, e.lastComment(prd), "closed without being merged", label.Ready)
 }
 
 // wantFinished checks that the PRD is closed as completed, with no status and no comment.
@@ -279,10 +382,8 @@ func TestReviewerUnknownVerdictFails(t *testing.T) {
 	}
 }
 
-const mergeRoute = "PUT /repos/{owner}/{repo}/pulls/{n}/merge"
-
-// approved is a PRD whose review approved its PR, with the run finished and not yet collected.
-func (e *env) approved() (prd, pr int, name string) {
+// approving is a PRD whose review approved its PR, with the run finished and not yet collected.
+func (e *env) approving() (prd, pr int, name string) {
 	e.t.Helper()
 	prd, pr, _, name = e.reviewing()
 	e.play(name, nil, approve)
@@ -300,181 +401,28 @@ func (e *env) wantResultKept(prd, pr int, name string) {
 	if n := len(e.gh.Issue(prd).Comments); n != 0 {
 		e.t.Errorf("%d comments, want none", n)
 	}
-	if e.gh.Pull(pr).Merged {
-		e.t.Error("PR merged")
-	}
-}
-
-func TestReviewerMergeRefusedByARuleGoesStuck(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.RefuseMerge(pr, "At least 1 approving review is required by reviewers with write access.", new(true))
-
-	e.review(prd)
-
-	e.wantStatus(prd, label.Stuck)
-	wantStuckComment(t, e.lastComment(prd), "At least 1 approving review is required by reviewers with write access.", label.Review)
-	e.wantRemoved(name)
-	if e.gh.Pull(pr).Merged {
-		t.Error("PR merged")
-	}
-}
-
-// GitHub refuses a PR that turned out to conflict the same way. That is resolver's to fix.
-func TestReviewerMergeRefusedOnAConflictLeavesThePRDToResolver(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.RefuseMerge(pr, "Pull Request is not mergeable", new(false))
-
-	e.review(prd)
-	e.wantResultKept(prd, pr, name)
-	picked, err := e.resolver().Pick(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantInts(t, "resolver Pick", picked, []int{prd})
-
-	e.review(prd)
-	e.wantRemoved(name)
-	e.wantStatus(prd, label.Review)
-}
-
-func TestReviewerMergeRefusedWhileGitHubChecksKeepsTheResult(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.RefuseMerge(pr, "Pull Request is not mergeable", nil)
-
-	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
-		t.Fatal("Handle returned nil while GitHub was still checking the PR")
-	}
-	e.wantResultKept(prd, pr, name)
-
-	e.gh.SetMergeable(pr, new(true))
-	e.review(prd)
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR not merged from the kept result")
-	}
 }
 
 const closeRoute = "PATCH /repos/{owner}/{repo}/issues/{n}"
 
-// The merge went through and closing the PRD did not. The PRD stays in review with its PR
-// merged, and the next try closes it.
-func TestReviewerFinishesATaskWhoseCloseFailedAfterTheMerge(t *testing.T) {
+// The approval is on the PR and the status change failed. The next try moves the PRD without
+// another review.
+func TestReviewerApprovalRetriesTheStatusWithoutANewReview(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.Fail(closeRoute, http.StatusBadGateway)
-
-	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
-		t.Fatal("Handle returned nil with the close failing")
-	}
-	if !e.gh.Pull(pr).Merged {
-		t.Fatal("PR not merged")
-	}
-	e.wantStatus(prd, label.Review)
-
-	e.gh.Fail(closeRoute, 0)
-	e.review(prd)
-	e.wantFinished(prd)
-	e.wantRemoved(name)
-}
-
-// The PR says "Closes", so GitHub closes the PRD as the merge goes in and then refuses exomecha's
-// own close. The PRD still loses its status, since a closed PRD is never picked again.
-func TestReviewerFinishesATaskGitHubClosedOnTheMerge(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.CloseOnMerge(pr, prd)
-	e.gh.Fail(closeRoute, http.StatusUnprocessableEntity)
-
-	e.review(prd)
-
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR not merged")
-	}
-	e.wantFinished(prd)
-	e.wantRemoved(name)
-}
-
-// The PRD closed and its status stayed. No worker takes a closed PRD, and the run goes.
-func TestReviewerLeavesATaskWhoseStatusClearFailedAfterTheMerge(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, _, name := e.approved()
+	prd, pr, name := e.approving()
 	e.gh.Fail(labelsRoute, http.StatusBadGateway)
 
 	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
-		t.Fatal("Handle returned nil with the status clear failing")
+		t.Fatal("Handle returned nil with the status change failing")
 	}
+	e.wantResultKept(prd, pr, name)
+
 	e.gh.Fail(labelsRoute, 0)
-	picked, err := e.reviewer().Pick(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantInts(t, "Pick", picked, []int{prd})
 	e.review(prd)
-
-	if got := e.gh.Issue(prd); got.Open || got.StateReason != "completed" || len(got.Comments) != 0 {
-		t.Errorf("PRD open=%v reason=%q comments=%d, want closed as completed with no comment", got.Open, got.StateReason, len(got.Comments))
-	}
-	e.wantRemoved(name)
-}
-
-// Another merge into the base branch went in at the same moment. The next try merges.
-func TestReviewerMergeThatRacedAnotherKeepsTheResult(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.RefuseMerge(pr, "Base branch was modified. Review and try the merge again.", new(true))
-
-	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
-		t.Fatal("Handle returned nil for a merge that raced another")
-	}
-	e.wantResultKept(prd, pr, name)
-
-	e.review(prd)
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR not merged from the kept result")
-	}
-}
-
-// Something was pushed between the check and the merge. The next round reviews the new head.
-func TestReviewerMergeOfAMovedHeadStartsOver(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.Fail(mergeRoute, http.StatusConflict)
-
-	e.review(prd)
-
-	e.wantRemoved(name)
-	e.wantStatus(prd, label.Review)
-	if n := len(e.gh.Issue(prd).Comments); n != 0 {
-		t.Errorf("%d comments, want none", n)
-	}
-	e.gh.Fail(mergeRoute, 0)
-	e.review(prd)
-	e.wantState(name, running)
-	if e.gh.Pull(pr).Merged {
-		t.Error("PR merged without a new review")
-	}
-}
-
-func TestReviewerMergeErrorRetriesWithoutANewReview(t *testing.T) {
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd, pr, name := e.approved()
-	e.gh.Fail(mergeRoute, http.StatusBadGateway)
-
-	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
-		t.Fatal("Handle returned nil for a failed merge")
-	}
-	e.wantResultKept(prd, pr, name)
-
-	e.gh.Fail(mergeRoute, 0)
-	e.review(prd)
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR not merged from the kept result")
-	}
 	if e.sbx.exists(name) {
 		t.Error("a new review started")
 	}
+	e.wantApproved(prd, pr)
 	e.wantRemoved(name)
 }
 
@@ -500,9 +448,7 @@ func TestReviewerFinishesARunAfterRestart(t *testing.T) {
 	wantInts(t, "Pick", picked, []int{prd})
 	e.review(prd)
 
-	if !e.gh.Pull(pr).Merged {
-		t.Error("PR not merged")
-	}
+	e.wantApproved(prd, pr)
 	e.wantRemoved(name)
 }
 
@@ -526,7 +472,7 @@ func TestReviewerHarvestsWhileTheGateIsClosed(t *testing.T) {
 	if e.sbx.exists(e.reviewerBox(waiting)) {
 		t.Error("a review started while the gate was closed")
 	}
-	if !e.gh.Pull(pr).Merged {
+	if e.statuses(running)[0] != string(label.Approved) || len(e.gh.Pull(pr).Reviews) != 1 {
 		t.Error("the review already going was not collected")
 	}
 }
