@@ -2,25 +2,36 @@ package main
 
 import "maps"
 
-// The practice project is plain POSIX sh, so claude can build and test it in sbx's own template
-// with nothing to install.
-func project(extra ...map[string]string) map[string]string {
-	files := map[string]string{
-		"README.md": "# greet\n\nA tiny command line greeter written in POSIX sh.\n",
-		"CLAUDE.md": `# greet
+const claudeMD = `# greet
 
 Plain POSIX sh. There is nothing to install or build.
 
 - Run the tests from the repository root with ` + "`sh test.sh`" + `. It prints ` + "`ok`" + ` when every test passes.
 - Each script has its tests in ` + "`tests/<script>_test.sh`" + `. Add tests there for every change.
 - Keep the scripts POSIX sh, with no bash features.
-`,
-		"greet.sh": `#!/bin/sh
+`
+
+const greetSh = `#!/bin/sh
 # Prints a greeting.
 greeting="Hello"
 name=${1:-world}
 echo "$greeting, $name!"
-`,
+`
+
+const greetTests = `#!/bin/sh
+set -e
+fail() { echo "FAIL: $1" >&2; exit 1; }
+[ "$(sh greet.sh)" = "Hello, world!" ] || fail "no argument"
+[ "$(sh greet.sh Ada)" = "Hello, Ada!" ] || fail "a name"
+`
+
+// The practice project is plain POSIX sh, so claude can build and test it in sbx's own template
+// with nothing to install.
+func project(extra ...map[string]string) map[string]string {
+	files := map[string]string{
+		"README.md": "# greet\n\nA tiny command line greeter written in POSIX sh.\n",
+		"CLAUDE.md": claudeMD,
+		"greet.sh":  greetSh,
 		"test.sh": `#!/bin/sh
 # Runs every test in tests/ and prints ok when all of them pass.
 set -e
@@ -29,12 +40,7 @@ for t in tests/*_test.sh; do
 done
 echo ok
 `,
-		"tests/greet_test.sh": `#!/bin/sh
-set -e
-fail() { echo "FAIL: $1" >&2; exit 1; }
-[ "$(sh greet.sh)" = "Hello, world!" ] || fail "no argument"
-[ "$(sh greet.sh Ada)" = "Hello, Ada!" ] || fail "a name"
-`,
+		"tests/greet_test.sh": greetTests,
 	}
 	for _, e := range extra {
 		maps.Copy(files, e)
@@ -129,24 +135,14 @@ if [ -n "$shout" ]; then
 fi
 echo "$line"
 `,
-	"tests/greet_test.sh": `#!/bin/sh
-set -e
-fail() { echo "FAIL: $1" >&2; exit 1; }
-[ "$(sh greet.sh)" = "Hello, world!" ] || fail "no argument"
-[ "$(sh greet.sh Ada)" = "Hello, Ada!" ] || fail "a name"
-[ "$(sh greet.sh --shout)" = "HELLO, WORLD!" ] || fail "shout"
+	"tests/greet_test.sh": greetTests + `[ "$(sh greet.sh --shout)" = "HELLO, WORLD!" ] || fail "shout"
 [ "$(sh greet.sh --shout Ada)" = "HELLO, ADA!" ] || fail "shout a name"
 `,
 }
 
 // shoutBroken undoes shoutDone's script but keeps its tests, which a review has to catch.
 var shoutBroken = map[string]string{
-	"greet.sh": `#!/bin/sh
-# Prints a greeting.
-greeting="Hello"
-name=${1:-world}
-echo "$greeting, $name!"
-`,
+	"greet.sh": greetSh,
 }
 
 // mainRefactor rewrites the lines shoutDone changes without changing what greet.sh prints, so a
@@ -158,12 +154,7 @@ greeting='Hello'
 name="${1:-world}"
 printf '%s, %s!\n' "$greeting" "$name"
 `,
-	"tests/greet_test.sh": `#!/bin/sh
-set -e
-fail() { echo "FAIL: $1" >&2; exit 1; }
-[ "$(sh greet.sh)" = "Hello, world!" ] || fail "no argument"
-[ "$(sh greet.sh Ada)" = "Hello, Ada!" ] || fail "a name"
-[ "$(sh greet.sh 'Ada Lovelace')" = "Hello, Ada Lovelace!" ] || fail "a full name"
+	"tests/greet_test.sh": greetTests + `[ "$(sh greet.sh 'Ada Lovelace')" = "Hello, Ada Lovelace!" ] || fail "a full name"
 `,
 }
 
@@ -175,15 +166,7 @@ greeting="Hello"
 name=${*:-world}
 echo "$greeting, $name!"
 `,
-	"CLAUDE.md": `# greet
-
-Plain POSIX sh. There is nothing to install or build.
-
-- Run the tests from the repository root with ` + "`sh test.sh`" + `. It prints ` + "`ok`" + ` when every test passes.
-- Each script has its tests in ` + "`tests/<script>_test.sh`" + `. Add tests there for every change.
-- Keep the scripts POSIX sh, with no bash features.
-- Decided: greet.sh takes no flags, ever. Every argument is part of the name. Do not add flags such as --shout.
-`,
+	"CLAUDE.md": claudeMD + "- Decided: greet.sh takes no flags, ever. Every argument is part of the name. Do not add flags such as --shout.\n",
 }
 
 var farewellDone = map[string]string{
