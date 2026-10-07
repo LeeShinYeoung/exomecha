@@ -19,9 +19,13 @@ import (
 )
 
 const (
+	// The home directory of sbx's claude templates.
+	homeDir = "/home/agent"
 	// Where the PRD's repository lives inside a sandbox. It is on the sandbox's own disk, not in
 	// the directory shared with this machine, so exomecha never runs git in a .git the AI controls.
-	repoDir = "/home/agent/repo"
+	repoDir = homeDir + "/repo"
+	// claude's user settings, under the project's own settings.
+	claudeHome = homeDir + "/.claude"
 
 	// A foreground command is capped at 10 minutes, so a run that is working still writes within this.
 	stallAfter = 15 * time.Minute
