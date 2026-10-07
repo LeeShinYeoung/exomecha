@@ -11,8 +11,9 @@ import (
 )
 
 func TestCloneGivesUpOnStalledServer(t *testing.T) {
+	old := lowSpeedTime
 	lowSpeedTime = "2"
-	t.Cleanup(func() { lowSpeedTime = "30" })
+	t.Cleanup(func() { lowSpeedTime = old })
 
 	// Accepts the connection and reads the request, then never answers.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -46,8 +47,9 @@ func TestCloneGivesUpOnStalledServer(t *testing.T) {
 }
 
 func TestFetchFromGivesUpOnAHungSandbox(t *testing.T) {
+	old := sandboxTransferTimeout
 	sandboxTransferTimeout = time.Second
-	t.Cleanup(func() { sandboxTransferTimeout = 5 * time.Minute })
+	t.Cleanup(func() { sandboxTransferTimeout = old })
 	origin := gittest.NewOrigin(t, map[string]string{"README.md": "hello\n"})
 	g := NewAt(t.TempDir(), origin, "main", "token")
 	if err := g.Sync(t.Context()); err != nil {

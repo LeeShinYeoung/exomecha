@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -102,9 +101,9 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 
 func (b *builder) place(prd github.Issue) place {
 	switch {
-	case holds(prd, label.PRD, label.Ready):
+	case holds(prd, label.Ready):
 		return ready
-	case holds(prd, label.PRD, label.Working):
+	case holds(prd, label.Working):
 		return working
 	}
 	return away
@@ -121,7 +120,7 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		remote, hasRemote, err := b.Git.Rev(ctx, "origin/"+branch)
+		remote, hasRemote, err := b.Git.Rev(ctx, b.Git.RemoteRef(branch))
 		if err != nil {
 			return spec{}, err
 		}
@@ -129,11 +128,11 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		comments, err := issueComments(ctx, b.GitHub, n)
+		input, err := prdInput(ctx, b.GitHub, prd)
 		if err != nil {
 			return spec{}, err
 		}
-		s := spec{branch: branch, base: base, head: base, remote: remote, input: prdText(prd) + comments,
+		s := spec{branch: branch, base: base, head: base, remote: remote, input: input,
 			tier: label.TierOf(prd.Labels)}
 		if !hasPR {
 			return s, nil
@@ -183,11 +182,11 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		return err
 	}
 	if head == in.Head {
-		changes, err := b.runs.sh(ctx, builderRole, n, "git status --porcelain")
+		changes, err := b.runs.changes(ctx, b.runs.name(builderRole, n))
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(changes) != "" {
+		if changes != "" {
 			return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes.\n\n"+out.Summary)
 		}
 		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).\n\n"+out.Summary)

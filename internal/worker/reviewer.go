@@ -83,7 +83,7 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !ok || pr.Mergeable == nil || *pr.Mergeable {
+		if !conflicting(pr, ok) {
 			picked = append(picked, t.Number)
 		}
 	}
@@ -132,8 +132,8 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 
 // look finds the PRD's place, with its open PR, and the CI runs that failed when the place is failing.
 func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR, []github.Run, error) {
-	approved := holds(prd, label.PRD, label.Approved)
-	if !approved && !holds(prd, label.PRD, label.Review) {
+	approved := holds(prd, label.Approved)
+	if !approved && !holds(prd, label.Review) {
 		return away, github.PR{}, nil, nil
 	}
 	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
@@ -154,12 +154,11 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR
 	// The PR waits for a person to merge it. A conflict is resolver's.
 	case approved:
 		return away, pr, nil, nil
+	case conflicting(pr, ok):
+		return away, pr, nil, nil
 	// GitHub is still computing whether the PR merges.
 	case pr.Mergeable == nil:
 		return waiting, pr, nil, nil
-	// A conflict is resolver's.
-	case !*pr.Mergeable:
-		return away, pr, nil, nil
 	}
 	ci, failed, err := r.GitHub.CheckCI(ctx, pr.HeadSHA)
 	if err != nil {
@@ -190,7 +189,7 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) er
 		if err != nil {
 			return spec{}, err
 		}
-		comments, err := issueComments(ctx, r.GitHub, n)
+		input, err := prdInput(ctx, r.GitHub, prd)
 		if err != nil {
 			return spec{}, err
 		}
@@ -199,7 +198,7 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) er
 			return spec{}, err
 		}
 		ref := r.Git.BaseRef()
-		input := prdText(prd) + comments + onPR +
+		input += onPR +
 			fmt.Sprintf("## Base branch\n\n`%s`. See this PR's changes with `git diff %s...HEAD`.\n", ref, ref)
 		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
 	})
@@ -239,7 +238,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 // finish closes the PRD as completed and then clears its status. A PRD left open comes back to
 // merged, and one closed with its status is left alone by every worker.
 func (r *reviewer) finish(ctx context.Context, n int) error {
-	if err := r.GitHub.Close(ctx, n, github.Completed); err != nil {
+	if err := r.GitHub.Close(ctx, n); err != nil {
 		return err
 	}
 	return r.GitHub.ClearStatus(ctx, n)

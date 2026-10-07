@@ -66,8 +66,3 @@ func (c *Client) replaceStatus(ctx context.Context, number int, to label.Status)
 	_, _, err = c.api.Issues.ReplaceLabelsForIssue(ctx, c.owner, c.repo, number, labels)
 	return err
 }
-
-func (c *Client) AddLabel(ctx context.Context, number int, name string) error {
-	_, _, err := c.api.Issues.AddLabelsToIssue(ctx, c.owner, c.repo, number, []string{name})
-	return err
-}

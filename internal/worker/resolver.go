@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
@@ -94,15 +93,15 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 }
 
 func (r *resolver) place(ctx context.Context, prd github.Issue) (place, error) {
-	approved := holds(prd, label.PRD, label.Approved)
-	if !approved && !holds(prd, label.PRD, label.Review) {
+	approved := holds(prd, label.Approved)
+	if !approved && !holds(prd, label.Review) {
 		return away, nil
 	}
 	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
 	if err != nil {
 		return away, err
 	}
-	conflicts := ok && pr.Mergeable != nil && !*pr.Mergeable
+	conflicts := conflicting(pr, ok)
 	switch {
 	case approved && conflicts:
 		return stale, nil
@@ -121,7 +120,7 @@ func (r *resolver) start(ctx context.Context, prd github.Issue) error {
 		return err
 	}
 	branch := branchName(n)
-	head, ok, err := r.Git.Rev(ctx, "origin/"+branch)
+	head, ok, err := r.Git.Rev(ctx, r.Git.RemoteRef(branch))
 	if err != nil || !ok {
 		return err
 	}
@@ -130,11 +129,11 @@ func (r *resolver) start(ctx context.Context, prd github.Issue) error {
 		return err
 	}
 	return r.runs.start(ctx, resolverRole, n, func(ctx context.Context) (spec, error) {
-		comments, err := issueComments(ctx, r.GitHub, n)
+		input, err := prdInput(ctx, r.GitHub, prd)
 		if err != nil {
 			return spec{}, err
 		}
-		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: prdText(prd) + comments}, nil
+		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: input}, nil
 	})
 }
 
@@ -196,51 +195,4 @@ func (r *resolver) unfinished(ctx context.Context, n int, head string, in inputs
 		return "", err
 	}
 	return "The AI committed, but the result does not include the base branch.", nil
-}
-
-// merge merges the base branch in the run's repository but stops before the merge commit, so the
-// AI makes that commit itself and sees whatever the project's commit checks report. note lists the
-// conflicted files for claude's input. problem is set when git refused the merge without a conflict.
-func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, note, problem string, err error) {
-	// The exit status comes back on stdout, apart from sbx's own failures.
-	out, err := r.sh(ctx, ro, n, `git merge --no-commit --no-ff "$1" 2>&1; echo "exit $?"`, r.Git.BaseRef())
-	if err != nil {
-		return nil, "", "", err
-	}
-	text := strings.TrimRight(out, "\n")
-	output, last := "", text
-	if i := strings.LastIndexByte(text, '\n'); i >= 0 {
-		output, last = text[:i], text[i+1:]
-	}
-	code, err := strconv.Atoi(strings.TrimPrefix(last, "exit "))
-	if err != nil {
-		return nil, "", "", fmt.Errorf("read the merge's exit status: %q", last)
-	}
-	if code != 0 {
-		// -z keeps non-ASCII file names as they are instead of quoting them.
-		list, err := r.sh(ctx, ro, n, "git diff --name-only -z --diff-filter=U")
-		if err != nil {
-			return nil, "", "", err
-		}
-		for f := range strings.SplitSeq(list, "\x00") {
-			if f != "" {
-				conflicts = append(conflicts, f)
-			}
-		}
-	}
-	if code != 0 && len(conflicts) == 0 {
-		// The same merge fails the same way on every try, so only a person can get past it. Like
-		// setup's, the output stays in the log.
-		slog.Warn("merge failed without a conflict", "issue", n, "exit", code, "output", output)
-		return nil, "", fmt.Sprintf("Merging `%s` into this PRD's branch in the sandbox failed without a conflict, so the AI did not start. "+
-			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
-	}
-	note = fmt.Sprintf("## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())
-	if len(conflicts) == 0 {
-		note += "None. The merge only needs to be committed.\n"
-	}
-	for _, f := range conflicts {
-		note += "- " + f + "\n"
-	}
-	return conflicts, note, "", nil
 }

@@ -151,8 +151,8 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 	if dir != "" {
 		cmd.Dir = f.local(name, dir)
 	}
-	cmd.Env = append(os.Environ(), "PATH="+f.path, "GIT_CONFIG_GLOBAL="+f.gitConfig)
-	cmd.Env = append(cmd.Env, env...)
+	// Like sbx exec, which passes the sandbox only its own environment and the -e values.
+	cmd.Env = append([]string{"PATH=" + f.path, "GIT_CONFIG_GLOBAL=" + f.gitConfig, "GIT_CONFIG_NOSYSTEM=1", "LC_ALL=C"}, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
