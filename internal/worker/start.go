@@ -194,11 +194,15 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 	}
 	input := s.input
 	if ro.project {
+		rules, err := r.rules(ctx, prep)
+		if err != nil {
+			return nil, err
+		}
 		note, p, err := r.setup(ctx, ro, n, in.Repos, prep)
 		if p != nil || err != nil {
 			return p, err
 		}
-		input += note
+		input += rules + note
 	}
 	// After setup, not before: conflict markers in a manifest or lockfile would break an install.
 	for i := range in.Repos {

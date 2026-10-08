@@ -422,3 +422,19 @@ func TestProjectRunsGetTheSecretsAsPlaceholders(t *testing.T) {
 		t.Errorf("reviewer's sandbox got secrets %+v and environment %q, want none", reviewer.secrets, reviewer.startEnvs[0])
 	}
 }
+
+func TestProjectRunsGetTheSandboxRules(t *testing.T) {
+	t.Parallel()
+	files := setupRepo("echo ran > " + setupMarker + "\n")
+	files[sandboxRules] = "Run only the unit tests. Start no containers.\n"
+	e := newEnv(t, files)
+	prd, name := e.startedPRD()
+	wantInOrder(t, "builder's input", e.readCtl(name, "input.md"), "## Record", "## Sandbox rules",
+		"Follow them where they differ from CLAUDE.md.\n\nRun only the unit tests. Start no containers.\n", "## Setup")
+
+	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
+	e.step(prd)
+	e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(true))
+	e.review(prd)
+	wantNotContains(t, "reviewer's input", e.readCtl(e.reviewerBox(prd), "input.md"), "## Sandbox rules")
+}

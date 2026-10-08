@@ -13,6 +13,10 @@ import (
 
 const setupScript = ".exomecha/setup.sh"
 
+// sandboxRules is what the person chose for the sandbox when /exomecha:setup asked, such as
+// which checks not to run there.
+const sandboxRules = ".exomecha/sandbox.md"
+
 const setupFix = " Fix the script on the base branch, then relabel this issue as below. You don't need to answer."
 
 const setupNote = "## Setup\n\nexomecha ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
@@ -111,6 +115,17 @@ func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep s
 		}
 	}
 	return "", &problem{why: fmt.Sprintf("`%s` %s", setupScript, what) + fix, outputs: outputs}, nil
+}
+
+// rules is the input section with the PRD repository's sandbox rules at commit prep, or "" when
+// there are none.
+func (r *runs) rules(ctx context.Context, prep string) (string, error) {
+	content, ok, err := r.Prep.Show(ctx, prep, sandboxRules)
+	if err != nil || !ok || strings.TrimSpace(content) == "" {
+		return "", err
+	}
+	return "## Sandbox rules\n\nThe project's `" + sandboxRules + "` (the base branch's copy) sets these rules for this sandbox. " +
+		"Follow them where they differ from CLAUDE.md.\n\n" + strings.TrimSpace(content) + "\n\n", nil
 }
 
 // reposEnv lists the run's repositories for the setup script, one line each: owner/name, then

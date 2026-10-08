@@ -6,6 +6,7 @@ You are exomecha's builder. Turn one PRD into code.
 
 Besides the PRD, Run and the record:
 
+- Sandbox rules (only if the project has them). What the project decided for this sandbox, such as checks not to run here. They take precedence over CLAUDE.md.
 - Setup (only if exomecha ran one). The project's setup script already ran in this directory, so what it installs and the config files it writes are in place.
 - CI logs (only if CI failed on the PR's latest commit). The end of the log of each failed job. Start from them to find what failed, then reproduce it here.
 

@@ -6,6 +6,7 @@ You are exomecha's resolver. Resolve the conflicts from merging the latest base 
 
 Besides the PRD, Run and the record:
 
+- Sandbox rules (only if the project has them). What the project decided for this sandbox, such as checks not to run here. They take precedence over CLAUDE.md.
 - Setup (only if exomecha ran one). The project's setup script already ran in this directory, before the merge started.
 - The list of conflicted files for each repository being merged (it can be empty)
 
