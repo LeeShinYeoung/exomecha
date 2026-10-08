@@ -167,8 +167,8 @@ func TestTemplateBuildFailure(t *testing.T) {
 			t.Errorf("call %d got a different Problem than call 0", i)
 		}
 	}
-	if !strings.Contains(first.Output, "TOKEN=s3cret") {
-		t.Errorf("Output = %q, want the build output", first.Output)
+	if !strings.Contains(first.Output(), "TOKEN=s3cret") {
+		t.Errorf("Output = %q, want the build output", first.Output())
 	}
 	if strings.Contains(first.Error(), "s3cret") || strings.Contains(first.Why(), "s3cret") {
 		t.Errorf("Error() = %q, must not hold the build output", first.Error())
@@ -202,7 +202,7 @@ func TestTemplateBuildTimeout(t *testing.T) {
 	}
 	_, err := newEnv(f, withDockerfile()).Template(t.Context())
 	var p *Problem
-	if !errors.As(err, &p) || !strings.Contains(p.Why(), "did not build within") || p.Output != "still downloading" {
+	if !errors.As(err, &p) || !strings.Contains(p.Why(), "did not build within") || p.Output() != "still downloading" {
 		t.Fatalf("Template = %v, want a timeout Problem", err)
 	}
 	if len(f.sandboxes) != 0 {

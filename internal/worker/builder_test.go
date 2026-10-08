@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 	"github.com/LeeShinYeoung/exomecha/internal/template"
 )
 
@@ -66,11 +68,32 @@ func (e *env) wantRemoved(name string) {
 	}
 }
 
-func (e *env) wantKept(name, file string) {
+// kept returns the directories that keep what the runs of sandbox name printed.
+func (e *env) kept(name string) []string {
 	e.t.Helper()
-	if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name, file)); err != nil {
-		e.t.Errorf("the failed run's %s was not kept: %v", file, err)
+	n, role, ok := sandbox.Parse(e.deps.SandboxPrefix, name)
+	if !ok {
+		e.t.Fatalf("%s is no run's sandbox", name)
 	}
+	dirs, err := filepath.Glob(filepath.Join(e.deps.OutputDir, strconv.Itoa(n), "*-"+role))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return dirs
+}
+
+// wantKept checks that the one kept output of the runs of sandbox name holds file, and returns its content.
+func (e *env) wantKept(name, file string) string {
+	e.t.Helper()
+	dirs := e.kept(name)
+	if len(dirs) != 1 {
+		e.t.Fatalf("kept outputs of %s = %q, want one", name, dirs)
+	}
+	b, err := os.ReadFile(filepath.Join(dirs[0], file))
+	if err != nil {
+		e.t.Errorf("the run's %s was not kept: %v", file, err)
+	}
+	return string(b)
 }
 
 // wantAuthor checks that the token owner from Deps made the commit at ref in origin.
@@ -198,7 +221,7 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 }
 
 func TestBuilderStuck(t *testing.T) {
-	log := captureLog(t)
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("Hard PRD", "", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
@@ -208,9 +231,9 @@ func TestBuilderStuck(t *testing.T) {
 
 	e.wantStatus(prd, label.Stuck)
 	comment := e.lastComment(prd)
-	wantStuckComment(t, comment, "need a decision on X\n\nIf there is nothing left to do", label.Ready)
+	wantStuckComment(t, comment, "need a decision on X\n\nThe output of this run is kept on the machine running exomecha, in `"+e.kept(name)[0]+"`.", label.Ready)
 	wantNotContains(t, "stuck comment", comment, "</stuck_reason>", "</invoke>")
-	wantContains(t, "log", log.String(), `need a decision on X</stuck_reason>\n</invoke>`)
+	wantContains(t, "kept output", e.wantKept(name, "stream.jsonl"), `need a decision on X</stuck_reason>\n</invoke>`)
 	e.wantRemoved(name)
 	if head := gittest.Head(e.origin, branchName(prd)); head != "" {
 		t.Errorf("branch was pushed for a stuck PRD: %s", head)
@@ -542,7 +565,7 @@ func TestBuilderRunNotInAutoModeFails(t *testing.T) {
 }
 
 func TestBuilderFailedRunGoesStuck(t *testing.T) {
-	log := captureLog(t)
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, name := e.startedPRD()
 	e.writeCtl(name, "stream.jsonl", `{"type":"system","subtype":"init","permissionMode":"auto"}`+"\n"+
@@ -555,9 +578,8 @@ func TestBuilderFailedRunGoesStuck(t *testing.T) {
 	comment := e.lastComment(prd)
 	wantStuckComment(t, comment, "The AI's run failed because claude ended with an error", label.Ready)
 	wantNotContains(t, "stuck comment", comment, "secret detail")
-	wantContains(t, "log", log.String(), "secret detail")
 	e.wantRemoved(name)
-	e.wantKept(name, "stream.jsonl")
+	wantContains(t, "kept output", e.wantKept(name, "stream.jsonl"), "secret detail")
 }
 
 func TestBuilderResultInAnotherFormFails(t *testing.T) {

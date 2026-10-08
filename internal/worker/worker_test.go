@@ -73,6 +73,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
+		OutputDir:     t.TempDir(),
 		SandboxPrefix: sandbox.Prefix("owner", "repo"),
 		ProjectLimit:  2,
 		ReadLimit:     2,
@@ -210,6 +211,7 @@ func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 // fakeWorker picks fixed numbers, and its Handle returns the error the test set for the number.
 type fakeWorker struct {
 	picks    []int
+	pickErr  error
 	errs     map[int]error
 	handling func()
 
@@ -218,7 +220,7 @@ type fakeWorker struct {
 }
 
 func (*fakeWorker) Name() string                          { return "test" }
-func (w *fakeWorker) Pick(context.Context) ([]int, error) { return w.picks, nil }
+func (w *fakeWorker) Pick(context.Context) ([]int, error) { return w.picks, w.pickErr }
 func (w *fakeWorker) Handle(_ context.Context, n int) error {
 	if w.handling != nil {
 		w.handling()
@@ -370,6 +372,43 @@ func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
 	wantInts(t, "tries", w.took(), []int{1, 1})
 }
 
+func TestRoundCountsAttempts(t *testing.T) {
+	log := captureLog(t)
+	c := newClock()
+	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: errors.New("sbx down")}}
+	r := newRounds(w, c)
+	r.run(t.Context())
+	c.advance(minBackoff)
+	r.run(t.Context())
+	w.errs[1] = nil
+	c.advance(2 * minBackoff)
+	r.run(t.Context())
+	r.run(t.Context())
+	w.pickErr = errors.New("GitHub down")
+	r.run(t.Context())
+	r.run(t.Context())
+	w.pickErr = nil
+	r.run(t.Context())
+	r.run(t.Context())
+
+	var got []string
+	for line := range strings.Lines(log.String()) {
+		_, msg, _ := strings.Cut(line, " level=")
+		got = append(got, strings.TrimSpace(strings.Split(msg, " err=")[0]))
+	}
+	want := []string{
+		`ERROR msg="handling the PRD failed" prd=1 attempt=1`,
+		`ERROR msg="handling the PRD failed" prd=1 attempt=2`,
+		`INFO msg="handling the PRD works again" prd=1 attempt=3`,
+		`ERROR msg="listing PRDs failed" attempt=1`,
+		`ERROR msg="listing PRDs failed" attempt=2`,
+		`INFO msg="listing PRDs works again" attempt=3`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("log lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // A step cut off by shutdown is no error either, so the log does not say one.
 func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
 	log := captureLog(t)
@@ -378,7 +417,7 @@ func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	r.run(ctx)
-	wantContains(t, "log", log.String(), "stopped before a step finished")
+	wantContains(t, "log", log.String(), `level=INFO msg="shutdown cut off a step"`)
 	wantNotContains(t, "log", log.String(), "level=ERROR")
 	w.errs[1] = nil
 	r.run(t.Context())
@@ -575,11 +614,12 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		}},
 		{"builder", "failed's AddComment", func(e *env) (int, string) {
 			prd, name := e.startedPRD()
+			e.writeCtl(name, "stderr.log", "the sandbox went away\n")
 			e.sbx.stop(name)
 			return prd, name
 		}, githubFault(commentsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Stuck)
-			e.wantKept(name, "input.md")
+			e.wantKept(name, "stderr.log")
 		}},
 		{"resolver", "start's merge", func(e *env) (int, string) {
 			prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})

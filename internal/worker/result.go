@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
 // take brings the commit the run left checked out into the shared clone, for the worker to push.
@@ -39,7 +41,7 @@ func (r *runs) take(ctx context.Context, ro role, n int, in inputs, said string)
 		return "", false, err
 	}
 	if in.moved(remote, head) {
-		return "", false, r.restart(ctx, ro, n, "the PRD branch changed on GitHub during the run")
+		return "", false, r.restart(ctx, ro, n)
 	}
 	// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
 	kept, err := r.Git.IsAncestor(ctx, in.Head, head)
@@ -58,72 +60,75 @@ const badResult = "the AI's result was not in the expected form"
 // starts over instead, and err is set only when that step failed.
 func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, err error) {
 	name := r.name(ro, n)
-	res, failure, detail, limited := r.outcome(name)
+	res, failure, limited, err := r.outcome(name)
 	if limited {
 		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
 		if r.gate != nil {
 			r.gate.stale()
 		}
-		return false, r.restart(ctx, ro, n, "the run ended at the Claude usage limit")
+		return false, r.restart(ctx, ro, n)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "exomecha could not read the run", logging.Sandbox, name, logging.Err, err)
 	}
 	if failure != "" {
-		return false, r.failed(ctx, ro, n, failure, detail)
+		return false, r.failed(ctx, ro, n, failure)
 	}
 	if err := json.Unmarshal(res, out); err != nil {
-		return false, r.failed(ctx, ro, n, badResult, err.Error())
+		return false, r.failed(ctx, ro, n, badResult)
 	}
 	return true, nil
 }
 
-// outcome reads a finished run. failure says why the run failed, in words fit for a comment, and
-// detail adds what only the log gets. limited is set when the run ended at the Claude usage limit.
-func (r *runs) outcome(name string) (res json.RawMessage, failure, detail string, limited bool) {
+// outcome reads a finished run. failure says why the run failed, in words fit for a comment. err
+// is set when exomecha could not read the run, which is exomecha's failure, not the AI's. limited
+// is set when the run ended at the Claude usage limit.
+func (r *runs) outcome(name string) (res json.RawMessage, failure string, limited bool, err error) {
 	b, err := readCtl(r.ctl(name), "exit", 64)
 	if err != nil {
-		return res, "exomecha could not read how claude ended", err.Error(), false
+		return res, "exomecha could not read how claude ended", false, err
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil {
-		return res, "exomecha could not read how claude ended", fmt.Sprintf("exit file holds %q", b), false
+		return res, "exomecha could not read how claude ended", false, fmt.Errorf("exit file holds %q", b)
 	}
 	f, err := openCtl(r.ctl(name), "stream.jsonl")
 	if err != nil {
-		return res, "exomecha could not read claude's output", err.Error(), false
+		return res, "exomecha could not read claude's output", false, err
 	}
 	defer f.Close()
 	s, err := agent.ReadStream(io.LimitReader(f, streamLimit))
 	if err != nil {
-		return res, "exomecha could not read claude's output", err.Error(), false
+		return res, "exomecha could not read claude's output", false, err
 	}
 	res, err = s.Result()
 	if (err != nil || code != 0) && s.Rejected {
-		return res, "", "", true
+		return res, "", true, nil
 	}
 	switch {
 	case s.PermissionMode != "auto":
-		return res, "claude did not run in auto permission mode", fmt.Sprintf("permission mode %q", s.PermissionMode), false
+		return res, "claude did not run in auto permission mode", false, nil
 	case err != nil:
-		return res, "claude ended with an error or without a result", err.Error(), false
+		return res, "claude ended with an error or without a result", false, nil
 	case code != 0:
-		return res, "claude ended with an error", fmt.Sprintf("exit status %d", code), false
+		return res, "claude ended with an error", false, nil
 	}
-	return res, "", "", false
+	return res, "", false, nil
 }
 
-func (r *runs) tail(name, file string) string {
-	f, err := openCtl(r.ctl(name), file)
+// tailCtl reads at most the last limit bytes of a file in ctl.
+func tailCtl(ctl, file string, limit int64) ([]byte, error) {
+	f, err := openCtl(ctl, file)
 	if err != nil {
-		return ""
+		return nil, err
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err == nil && info.Size() > tailLimit {
-		if _, err := f.Seek(-tailLimit, io.SeekEnd); err != nil {
-			return ""
+	if info, err := f.Stat(); err == nil && info.Size() > limit {
+		if _, err := f.Seek(-limit, io.SeekEnd); err != nil {
+			return nil, err
 		}
 	}
-	b, _ := io.ReadAll(io.LimitReader(f, tailLimit))
-	// The cut can land in the middle of a character.
-	return strings.TrimSpace(strings.ToValidUTF8(string(b), ""))
+	return io.ReadAll(io.LimitReader(f, limit))
 }
 
 func readCtl(ctl, file string, limit int64) ([]byte, error) {

@@ -21,6 +21,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
@@ -69,7 +70,7 @@ type world struct {
 	prds    []int
 	// The log lines of exomecha's current or last run. logTo is -1 while it runs.
 	logFrom, logTo int
-	allowed        []string
+	stuckOK        bool // the scenario sends a PRD to stuck on purpose
 }
 
 var worlds atomic.Int64
@@ -207,26 +208,28 @@ func (w *world) cleanup() {
 	}
 }
 
-// allow lets exomecha log the problems that contain any of msgs, which the scenario causes on purpose.
-func (w *world) allow(msgs ...string) {
+func (w *world) allowStuck() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.allowed = append(w.allowed, msgs...)
+	w.stuckOK = true
 }
 
-// problem returns the first warning, error or PRD sent to stuck that exomecha logged about the world
-// while it ran, unless the scenario allowed it.
+// problem returns the first warning or error exomecha logged about the world while it ran, or a
+// PRD in stuck when the scenario does not send one there.
 func (w *world) problem() string {
 	w.mu.Lock()
-	from, to, allowed := w.logFrom, w.logTo, w.allowed
+	from, to, stuckOK, prds := w.logFrom, w.logTo, w.stuckOK, slices.Clone(w.prds)
 	w.mu.Unlock()
 	for _, line := range logs.between(from, to) {
-		if !strings.Contains(line, " level=WARN ") && !strings.Contains(line, " level=ERROR ") &&
-			!strings.Contains(line, `msg="sent to stuck"`) {
-			continue
-		}
-		if w.owns(line) && !slices.ContainsFunc(allowed, func(a string) bool { return strings.Contains(line, a) }) {
+		if (strings.Contains(line, " level=WARN ") || strings.Contains(line, " level=ERROR ")) && w.owns(line) {
 			return line
+		}
+	}
+	if !stuckOK {
+		for _, n := range prds {
+			if w.status(n) == label.Stuck {
+				return fmt.Sprintf("PRD #%d went to stuck: %s", n, oneLine(w.lastComment(n), 400))
+			}
 		}
 	}
 	return ""
@@ -543,8 +546,8 @@ func (w *world) describe() string {
 	for _, e := range entries {
 		fmt.Fprintf(&b, "run dir %s\n", e.Name())
 	}
-	failed, _ := filepath.Glob(filepath.Join(w.root, "sandboxes", "failed", "*", "ctl", "stderr.log"))
-	for _, f := range failed {
+	kept, _ := filepath.Glob(filepath.Join(w.root, "outputs", "*", "*", "*"))
+	for _, f := range kept {
 		out, _ := os.ReadFile(f)
 		fmt.Fprintf(&b, "%s:\n%s\n", f, tail(string(out), 1500))
 	}
@@ -621,25 +624,22 @@ func (l *e2eLog) about(w *world) []string {
 
 func (w *world) owns(line string) bool { return strings.Contains(line, w.slug()) || w.mentions(line) }
 
-// mentions reports whether a log line names one of the world's issues or PRs.
+// mentions reports whether a log line names one of the world's PRDs.
 func (w *world) mentions(line string) bool {
-	for _, key := range []string{"prd=", "issue=", "pr="} {
-		for rest := line; ; {
-			_, after, ok := strings.Cut(rest, key)
-			if !ok {
-				break
-			}
-			rest = after
-			end := strings.IndexFunc(after, func(r rune) bool { return r < '0' || r > '9' })
-			if end < 0 {
-				end = len(after)
-			}
-			if n, err := strconv.Atoi(after[:end]); err == nil && n >= w.first && n < w.first+100 {
-				return true
-			}
+	for rest := line; ; {
+		_, after, ok := strings.Cut(rest, "prd=")
+		if !ok {
+			return false
+		}
+		rest = after
+		end := strings.IndexFunc(after, func(r rune) bool { return r < '0' || r > '9' })
+		if end < 0 {
+			end = len(after)
+		}
+		if n, err := strconv.Atoi(after[:end]); err == nil && n >= w.first && n < w.first+100 {
+			return true
 		}
 	}
-	return false
 }
 
 // setUpE2E removes what an earlier run that was cut off left behind, and starts the log.
@@ -658,7 +658,7 @@ func setUpE2E() {
 		logs.file = f
 		fmt.Fprintf(os.Stderr, "e2e log: %s\n", path)
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	slog.SetDefault(slog.New(logging.NewHandler(slog.NewTextHandler(logs, nil))))
 }
 
 // seedReview files a PRD in review with its PR open, the way builder leaves one. Each map is one

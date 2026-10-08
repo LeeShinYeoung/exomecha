@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -107,6 +106,13 @@ type spec struct {
 	tier  label.Tier // "" for the role's tier
 }
 
+// problem stops a start, and only a person can fix it. why goes into the stuck comment, and
+// outputs, file names to what was printed, only into the kept outputs, since they can hold secrets.
+type problem struct {
+	why     string
+	outputs map[string]string
+}
+
 // start starts a run of ro for issue n, when the usage gate is open and a slot is free. build
 // says what goes in. A start that does not get through is undone: a problem only a person can fix
 // sends the issue to stuck, and an error leaves builder's PRD ready and returns the error.
@@ -122,22 +128,23 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 		}
 	}
 	s, err := build(ctx)
-	problem := ""
+	var p *problem
 	if err == nil {
-		problem, err = r.open(ctx, ro, n, s)
+		p, err = r.open(ctx, ro, n, s)
 	}
-	if problem == "" && err == nil {
+	if p == nil && err == nil {
 		return nil
 	}
 	// Undo the start even when shutdown cancelled ctx.
 	cleanup := context.WithoutCancel(ctx)
-	if problem != "" {
-		if err := r.remove(cleanup, name, false); err != nil {
+	if p != nil {
+		kept := r.keep(cleanup, ro, n, p.outputs)
+		if err := r.remove(cleanup, name); err != nil {
 			return err
 		}
-		return toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, problem)
+		return toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept)
 	}
-	if rerr := r.restart(cleanup, ro, n, err.Error()); rerr != nil {
+	if rerr := r.restart(cleanup, ro, n); rerr != nil {
 		return errors.Join(err, rerr)
 	}
 	if errors.Is(err, errNoSlot) {
@@ -146,69 +153,66 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	return err
 }
 
-// open creates the sandbox, sends the code in, runs setup, and starts claude. problem is set when
-// only a person can fix what stopped it. On problem or error the caller removes the sandbox.
-func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
+// open creates the sandbox, sends the code in, runs setup, and starts claude. The problem is set
+// when only a person can fix what stopped it. On a problem or error the caller removes the sandbox.
+func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, error) {
 	tier := cmp.Or(s.tier, ro.tier)
 	model := r.Models[tier]
 	if ro.model != nil {
 		model = ro.model(r.Deps)
 	}
 	if model == (agent.Model{}) {
-		return "", fmt.Errorf("no model for %s", cmp.Or(string(tier), ro.name))
+		return nil, fmt.Errorf("no model for %s", cmp.Or(string(tier), ro.name))
 	}
-	ref, problem, err := r.create(ctx, ro, n)
-	if problem != "" || err != nil {
-		return problem, err
+	if p, err := r.create(ctx, ro, n); p != nil || err != nil {
+		return p, err
 	}
 	if err := r.send(ctx, ro, n, s); err != nil {
-		return "", err
+		return nil, err
 	}
 	// Before setup, so the project's script can change what the defaults set.
 	if err := r.defaults(ctx, ro, n); err != nil {
-		return "", err
+		return nil, err
 	}
 	in, input := inputs{Base: s.base, Head: s.head, Remote: s.remote}, s.input
 	if ro.project {
-		note, problem, err := r.setup(ctx, ro, n, s)
-		if problem != "" || err != nil {
-			return problem, err
+		note, p, err := r.setup(ctx, ro, n, s)
+		if p != nil || err != nil {
+			return p, err
 		}
 		input += note
 	}
 	// After setup, not before: conflict markers in a manifest or lockfile would break an install.
 	if s.merge {
-		var note string
-		if in.Conflicts, note, problem, err = r.merge(ctx, ro, n); problem != "" || err != nil {
-			return problem, err
+		conflicts, note, p, err := r.merge(ctx, ro, n)
+		if p != nil || err != nil {
+			return p, err
 		}
+		in.Conflicts = conflicts
 		input += note
 	}
-	if err := r.launch(ctx, ro, n, model, input, in); err != nil {
-		return "", err
-	}
-	slog.Info("started claude in a sandbox", "issue", n, "sandbox", r.name(ro, n), "template", ref,
-		"tier", tier, "model", model.Name, "effort", model.Effort)
-	return "", nil
+	return nil, r.launch(ctx, ro, n, model, input, in)
 }
 
 // create makes the run's sandbox, from the project's template and with its allowed hosts for a
 // project run, and from sbx's own template ("" ref) for a reader's.
-func (r *runs) create(ctx context.Context, ro role, n int) (ref, problem string, err error) {
+func (r *runs) create(ctx context.Context, ro role, n int) (*problem, error) {
+	var ref string
 	var hosts []string
 	if ro.project {
+		var err error
 		ref, err = r.Environment.Template(ctx)
-		if problem, err := needsPerson(n, err); problem != "" || err != nil {
-			return "", problem, err
+		if p, err := needsPerson(err); p != nil || err != nil {
+			return p, err
 		}
 		hosts, err = r.Environment.AllowedHosts(ctx)
-		if problem, err := needsPerson(n, err); problem != "" || err != nil {
-			return "", problem, err
+		if p, err := needsPerson(err); p != nil || err != nil {
+			return p, err
 		}
 	}
 	name := r.name(ro, n)
 	if err := os.MkdirAll(r.ctl(name), 0o755); err != nil {
-		return "", "", err
+		return nil, err
 	}
 	r.slots.Lock()
 	free, err := r.slotFree(ctx, ro, name)
@@ -225,7 +229,7 @@ func (r *runs) create(ctx context.Context, ro role, n int) (ref, problem string,
 	if err == nil && ro.project {
 		err = r.Sandboxes.Allow(ctx, name, hosts)
 	}
-	return ref, "", err
+	return nil, err
 }
 
 // send puts the code in the run's repository: the base branch's commit as origin/<base>, and
@@ -283,15 +287,18 @@ func (r *runs) record(name string, in inputs) error {
 	return os.Rename(path+".tmp", path)
 }
 
-// needsPerson turns an environment error that only a person can fix into the reason to give them.
-// Build output stays in the log, never in the comment.
-func needsPerson(prd int, err error) (string, error) {
+// needsPerson turns an environment error that only a person can fix into the problem to give them.
+func needsPerson(err error) (*problem, error) {
 	var person interface{ Why() string }
-	if errors.As(err, &person) {
-		slog.Warn("sandbox environment needs a person", "prd", prd, "err", err)
-		return person.Why(), nil
+	if !errors.As(err, &person) {
+		return nil, err
 	}
-	return "", err
+	p := &problem{why: person.Why()}
+	var printed interface{ Output() string }
+	if errors.As(err, &printed) && printed.Output() != "" {
+		p.outputs = map[string]string{"build.log": printed.Output()}
+	}
+	return p, nil
 }
 
 func (r *runs) git(ctx context.Context, name, dir string, args ...string) (string, error) {
@@ -327,23 +334,23 @@ func splitStatus(out string) (output string, code int, err error) {
 
 // merge merges the base branch in the run's repository but stops before the merge commit, so the
 // AI makes that commit itself and sees whatever the project's commit checks report. note lists the
-// conflicted files for claude's input. problem is set when git refused the merge without a conflict.
-func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, note, problem string, err error) {
+// conflicted files for claude's input. The problem is set when git refused the merge without a conflict.
+func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, note string, p *problem, err error) {
 	// The exit status comes back on stdout, apart from sbx's own failures. diff3 puts the original
 	// lines between the two sides of a conflict, so the AI sees what each side changed.
 	out, err := r.sh(ctx, ro, n, `git -c merge.conflictStyle=diff3 merge --no-commit --no-ff "$1" 2>&1; echo $?`, r.Git.BaseRef())
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", nil, err
 	}
 	output, code, err := splitStatus(out)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("merge: %w", err)
+		return nil, "", nil, fmt.Errorf("merge: %w", err)
 	}
 	if code != 0 {
 		// -z keeps non-ASCII file names as they are instead of quoting them.
 		list, err := r.sh(ctx, ro, n, "git diff --name-only -z --diff-filter=U")
 		if err != nil {
-			return nil, "", "", err
+			return nil, "", nil, err
 		}
 		for f := range strings.SplitSeq(list, "\x00") {
 			if f != "" {
@@ -352,11 +359,12 @@ func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, n
 		}
 	}
 	if code != 0 && len(conflicts) == 0 {
-		// The same merge fails the same way on every try, so only a person can get past it. Like
-		// setup's, the output stays in the log.
-		slog.Warn("merge failed without a conflict", "issue", n, "exit", code, "output", output)
-		return nil, "", fmt.Sprintf("Merging `%s` into this PRD's branch in the sandbox failed without a conflict, so the AI did not start. "+
-			"git's output is in exomecha's log. Fix what it reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()), nil
+		// The same merge fails the same way on every try, so only a person can get past it.
+		return nil, "", &problem{
+			why: fmt.Sprintf("Merging `%s` into this PRD's branch in the sandbox failed without a conflict, so the AI did not start. "+
+				"Fix what git reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()),
+			outputs: map[string]string{"merge.log": output},
+		}, nil
 	}
 	note = fmt.Sprintf("## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())
 	if len(conflicts) == 0 {
@@ -365,5 +373,5 @@ func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, n
 	for _, f := range conflicts {
 		note += "- " + f + "\n"
 	}
-	return conflicts, note, "", nil
+	return conflicts, note, nil, nil
 }

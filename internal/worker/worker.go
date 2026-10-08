@@ -6,6 +6,8 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
@@ -38,6 +41,8 @@ type Deps struct {
 	Environment Environment
 	// SandboxDir holds one directory per run, shared with the run's sandbox.
 	SandboxDir string
+	// OutputDir keeps what the runs that went to stuck printed, by issue.
+	OutputDir string
 	// SandboxPrefix starts the name of every run's sandbox of this repository and nothing else.
 	SandboxPrefix string
 	// ClaudeDir holds the claude user settings every run's sandbox gets. Empty gives none.
@@ -74,7 +79,7 @@ type Sandboxes interface {
 
 // Environment is the sandbox setup the target project asks for on its base branch.
 // An error whose chain holds a value with a Why() string method is one only a person can fix,
-// and Why() is what to tell them.
+// and Why() is what to tell them. An Output() string method on it gives what the build printed.
 type Environment interface {
 	// An empty ref is sbx's own template, for a project with no Dockerfile for exomecha.
 	Template(ctx context.Context) (ref string, err error)
@@ -105,6 +110,7 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 }
 
 func loop(ctx context.Context, w Worker, l *locks, every time.Duration) {
+	ctx = logging.With(ctx, logging.Worker, w.Name())
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	d := &delays{now: time.Now, first: every, items: map[int]delay{}}
@@ -124,13 +130,15 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 	// A wait counts from here, not from when Handle returned, so a wait of a minute ends by the
 	// next round.
 	now := d.now()
-	log := slog.With("worker", w.Name())
 	numbers, err := w.Pick(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Error("pick failed", "err", err)
+			slog.ErrorContext(ctx, "listing PRDs failed", logging.Attempt, d.missPick(), logging.Err, err)
 		}
 		return
+	}
+	if attempt := d.pickWorks(); attempt > 1 {
+		slog.InfoContext(ctx, "listing PRDs works again", logging.Attempt, attempt)
 	}
 	d.keep(numbers)
 	for _, n := range numbers {
@@ -139,18 +147,20 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 		}
 		wg.Go(func() {
 			defer l.unlock(n)
+			ctx := logging.With(ctx, logging.PRD, n)
 			err := w.Handle(ctx, n)
 			if err == nil {
-				d.forget(n)
+				if attempt := d.forget(n); attempt > 1 {
+					slog.InfoContext(ctx, "handling the PRD works again", logging.Attempt, attempt)
+				}
 				return
 			}
 			// An error from shutdown says nothing about the issue, and the next start finishes the step.
 			if ctx.Err() != nil {
-				log.Info("stopped before a step finished", "issue", n, "err", err)
+				slog.InfoContext(ctx, "shutdown cut off a step", logging.Err, err)
 				return
 			}
-			d.strike(n, now)
-			log.Error("handle failed", "issue", n, "err", err)
+			slog.ErrorContext(ctx, "handling the PRD failed", logging.Attempt, d.strike(n, now), logging.Err, err)
 		})
 	}
 }
@@ -162,6 +172,7 @@ type delays struct {
 	first time.Duration // the wait after one error. Zero is minBackoff.
 	mu    sync.Mutex
 	items map[int]delay
+	picks int // Picks that failed in a row
 }
 
 type delay struct {
@@ -178,19 +189,37 @@ func (d *delays) due(n int, now time.Time) bool {
 	return !ok || !now.Add(time.Second).Before(it.next)
 }
 
-func (d *delays) strike(n int, from time.Time) {
+// strike returns the attempt that failed.
+func (d *delays) strike(n int, from time.Time) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	it := d.items[n]
 	it.strikes++
 	it.next = from.Add(min(maxBackoff, cmp.Or(d.first, minBackoff)<<min(it.strikes-1, 10)))
 	d.items[n] = it
+	return it.strikes
 }
 
-func (d *delays) forget(n int) {
+// forget returns the attempt that worked.
+func (d *delays) forget(n int) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	attempt := d.items[n].strikes + 1
 	delete(d.items, n)
+	return attempt
+}
+
+// missPick returns the attempt that failed. Only the loop calls it and pickWorks, so they need no lock.
+func (d *delays) missPick() int {
+	d.picks++
+	return d.picks
+}
+
+// pickWorks returns the attempt that worked.
+func (d *delays) pickWorks() int {
+	attempt := d.picks + 1
+	d.picks = 0
+	return attempt
 }
 
 // keep forgets the issues Pick no longer returns, so one that comes back later starts with no wait.
@@ -359,22 +388,31 @@ func holds(i github.Issue, status label.Status) bool {
 }
 
 // back is where the person sends the PRD after answering, so it returns to the worker that
-// owns the problem: ready leads back to builder, review leads back to resolver.
-func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason string) error {
-	trimmed := trimClosingTags(reason)
-	if trimmed != strings.TrimSpace(reason) {
-		slog.Warn("trimmed closing tags from a stuck reason", "prd", n, "reason", reason)
+// owns the problem: ready leads back to builder, review leads back to resolver. kept is where the
+// run's output is kept, or "" for none. The comment names the place and never holds the output.
+func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason, kept string) error {
+	body := "This PRD is blocked and needs a person.\n\n" + trimClosingTags(reason)
+	if kept != "" {
+		body += "\n\nThe output of this run is kept on the machine running exomecha, in `" + tilde(kept) + "`."
 	}
-	body := "This PRD is blocked and needs a person.\n\n" + trimmed +
-		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
+	body += "\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
 	if err := gh.AddComment(ctx, n, github.Note{Worker: worker, Kind: github.KindStuck}, body); err != nil {
 		return err
 	}
-	if err := gh.SetStatus(ctx, n, from, label.Stuck); err != nil {
-		return err
+	return gh.SetStatus(ctx, n, from, label.Stuck)
+}
+
+// tilde shortens a path in the home directory, whose name gives away this machine's user.
+func tilde(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
 	}
-	slog.Info("sent to stuck", "prd", n)
-	return nil
+	rel, err := filepath.Rel(home, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return filepath.Join("~", rel)
 }
 
 var closingTag = regexp.MustCompile(`</[A-Za-z_][\w.:-]*>$`)

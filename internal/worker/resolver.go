@@ -2,8 +2,6 @@ package worker
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
@@ -83,11 +81,7 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	if p == stale {
 		// Resolving changes the code the approval was for, so the PRD goes back to review, where
 		// the next check resolves it as any other.
-		if err := r.GitHub.SetStatus(ctx, n, label.Approved, label.Review); err != nil {
-			return err
-		}
-		slog.Info("approved PR conflicts, back to review", "prd", n)
-		return nil
+		return r.GitHub.SetStatus(ctx, n, label.Approved, label.Review)
 	}
 	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
 		func(ctx context.Context) error { return r.start(ctx, prd) },
@@ -157,7 +151,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		return r.runs.stuck(ctx, resolverRole, n, out.Reason)
 	case "resolved":
 	default:
-		return r.runs.failed(ctx, resolverRole, n, badResult, fmt.Sprintf("result %q", out.Result))
+		return r.runs.failed(ctx, resolverRole, n, badResult)
 	}
 
 	head, ok, err := r.runs.take(ctx, resolverRole, n, in, out.Reason)
@@ -185,7 +179,6 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		}
 	}
 	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
-	slog.Info("merged base branch and pushed", "prd", n, "conflicts", len(in.Conflicts))
 	return r.runs.done(ctx, resolverRole, n)
 }
 

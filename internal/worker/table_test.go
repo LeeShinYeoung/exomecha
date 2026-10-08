@@ -289,8 +289,8 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 	}
 	notKept := func() {
 		t.Helper()
-		if _, err := os.Stat(filepath.Join(e.deps.SandboxDir, "failed", name)); err == nil {
-			t.Error("the run's files were kept as a failure")
+		if dirs := e.kept(name); len(dirs) != 0 {
+			t.Errorf("kept the run's output in %q, want nothing kept", dirs)
 		}
 	}
 	switch a {
@@ -319,7 +319,10 @@ func testCell(t *testing.T, w tableWorker, p place, s state, a action) {
 		e.wantRemoved(name)
 		e.wantStatus(n, label.Stuck)
 		wantStuckComment(t, e.lastComment(n), "The AI's run failed because "+e.runs.why(s), w.role.back)
-		e.wantKept(name, "input.md")
+		// Only a stalled run here wrote any output.
+		if s == stalled {
+			e.wantKept(name, "stream.jsonl")
+		}
 	case harvest:
 		e.wantRemoved(name)
 		w.harvested(e, n)
@@ -340,7 +343,7 @@ func (e *env) runTo(name string, s state, finish func(e *env, name string)) {
 	e.t.Helper()
 	switch s {
 	case none:
-		if err := e.runs.remove(e.t.Context(), name, false); err != nil {
+		if err := e.runs.remove(e.t.Context(), name); err != nil {
 			e.t.Fatal(err)
 		}
 	case preparing:

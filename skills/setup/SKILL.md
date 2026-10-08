@@ -9,7 +9,7 @@ exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every PRD gets
 
 ## What exomecha does with the files
 
-- `.exomecha/Dockerfile` becomes an sbx template. exomecha builds it the first time a PRD needs a sandbox after the file changed on the base branch, and keeps it until the next change. The build runs inside a separate sandbox with the Dockerfile on stdin, so there is no build context. It must end within 30 minutes. If it fails, the PRD goes to `status:stuck` and the build output stays in exomecha's log. Without this file, sandboxes start from sbx's default claude template.
+- `.exomecha/Dockerfile` becomes an sbx template. exomecha builds it the first time a PRD needs a sandbox after the file changed on the base branch, and keeps it until the next change. The build runs inside a separate sandbox with the Dockerfile on stdin, so there is no build context. It must end within 30 minutes. If it fails, the PRD goes to `status:stuck`, and the comment names the folder on exomecha's machine that keeps the end of the build output. Without this file, sandboxes start from sbx's default claude template.
 - `.exomecha/allowed-hosts` lists the extra hosts a sandbox may reach. sbx's network policy blocks every host it does not know. A blocked HTTPS request gets a 403 response with the body `Approval required for <host>:443.`, and nobody is there to approve it. exomecha allows the listed hosts in each PRD sandbox and in the template build only. Other sandboxes on the machine are not affected.
 - `.exomecha/setup.sh` runs in each new PRD sandbox before the AI starts:
   - as `bash -eo pipefail -c "<the script's text>"`, so it stops at the first command that fails and `$0` is not the script's path

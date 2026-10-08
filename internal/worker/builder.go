@@ -8,6 +8,7 @@ import (
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
 const builderSchema = `{
@@ -142,7 +143,7 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 			return spec{}, fmt.Errorf("PR #%d has no branch %s", pr, branch)
 		}
 		s.head = remote
-		s.input += b.ciLogs(ctx, n, remote)
+		s.input += b.ciLogs(ctx, remote)
 		return s, nil
 	})
 }
@@ -150,10 +151,10 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 // ciLogs is the end of the log of each CI job that failed on commit sha. It goes to builder's input
 // only and never into a comment, since a log holds whatever the project's CI printed. A log that
 // cannot be read is left out, since builder can still run the checks itself.
-func (b *builder) ciLogs(ctx context.Context, n int, sha string) string {
+func (b *builder) ciLogs(ctx context.Context, sha string) string {
 	ci, failed, err := b.GitHub.CheckCI(ctx, sha)
 	if err != nil {
-		slog.Warn("could not check CI for its logs", "prd", n, "err", err)
+		slog.WarnContext(ctx, "side task failed", logging.Task, "check CI for its logs", logging.Err, err)
 		return ""
 	}
 	if ci != github.CIFailed {
@@ -163,7 +164,7 @@ func (b *builder) ciLogs(ctx context.Context, n int, sha string) string {
 	for _, run := range failed {
 		logs, err := b.GitHub.FailedJobLogs(ctx, run.ID)
 		if err != nil {
-			slog.Warn("could not read a failed CI run's logs", "prd", n, "run", run.Name, "err", err)
+			slog.WarnContext(ctx, "side task failed", logging.Task, "read the logs of CI run "+run.Name, logging.Err, err)
 			continue
 		}
 		for _, l := range logs {
@@ -192,7 +193,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		return b.runs.stuck(ctx, builderRole, n, out.StuckReason)
 	case "done":
 	default:
-		return b.runs.failed(ctx, builderRole, n, badResult, fmt.Sprintf("result %q", out.Result))
+		return b.runs.failed(ctx, builderRole, n, badResult)
 	}
 
 	head, ok, err := b.runs.take(ctx, builderRole, n, in, out.Summary)
@@ -232,6 +233,5 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	if err := b.GitHub.SetStatus(ctx, n, label.Working, label.Review); err != nil {
 		return err
 	}
-	slog.Info("pushed PR", "prd", n, "pr", pr)
 	return b.runs.done(ctx, builderRole, n)
 }

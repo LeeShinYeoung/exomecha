@@ -60,10 +60,10 @@ func TestRealBuild(t *testing.T) {
 	if !ok {
 		t.Fatalf("Template with RUN false = %v, want a Problem", err)
 	}
-	if !strings.Contains(p.Output, "exomecha-test-output") || strings.Contains(p.Error(), "exomecha-test-output") {
-		t.Errorf("Problem = %q with output %q, want the output only in Output", p.Error(), p.Output)
+	if !strings.Contains(p.Output(), "exomecha-test-output") || strings.Contains(p.Error(), "exomecha-test-output") {
+		t.Errorf("Problem = %q with output %q, want the output only in Output", p.Error(), p.Output())
 	}
-	t.Logf("build failure: %s\noutput tail:\n%s", p.Why(), p.Output[max(0, len(p.Output)-600):])
+	t.Logf("build failure: %s\noutput tail:\n%s", p.Why(), p.Output()[max(0, len(p.Output())-600):])
 	wantTags(t, e, second)
 	if listed(t, e.helper) {
 		t.Error("helper left after a failed build")
