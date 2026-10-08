@@ -36,6 +36,7 @@ type config struct {
 	owner, name, base, token string
 	fiveHour, weekly         float64
 	projectLimit, readLimit  int
+	reviewLimit              int
 	light, normal, heavy     agent.Model
 	resolver                 agent.Model
 
@@ -51,6 +52,7 @@ func defaults() config {
 		weekly:       0.8,
 		projectLimit: 2,
 		readLimit:    2,
+		reviewLimit:  5,
 		light:        agent.Model{Name: "opus", Effort: "low"},
 		normal:       agent.Model{Name: "opus", Effort: "high"},
 		heavy:        agent.Model{Name: "opus", Effort: "xhigh"},
@@ -82,6 +84,9 @@ func configFromEnv() (config, error) {
 		return config{}, err
 	}
 	if c.readLimit, err = limit("EXOMECHA_READ_SANDBOX_LIMIT", c.readLimit); err != nil {
+		return config{}, err
+	}
+	if c.reviewLimit, err = limit("EXOMECHA_REVIEW_LIMIT", c.reviewLimit); err != nil {
 		return config{}, err
 	}
 	if c.light, err = envModel("EXOMECHA_TIER_LIGHT", c.light); err != nil {
@@ -189,6 +194,7 @@ func serve(ctx context.Context, c config) error {
 		ClaudeDir:     claudeDir,
 		ProjectLimit:  c.projectLimit,
 		ReadLimit:     c.readLimit,
+		ReviewLimit:   c.reviewLimit,
 		GitName:       author,
 		GitEmail:      email,
 		Models:        map[label.Tier]agent.Model{label.Light: c.light, label.Normal: c.normal, label.Heavy: c.heavy},
@@ -207,7 +213,8 @@ func serve(ctx context.Context, c config) error {
 
 	slog.Info("exomecha started", "repo", c.owner+"/"+c.name, "base", c.base, "five_hour_limit", c.fiveHour,
 		"weekly_limit", c.weekly, "sandbox_limit", c.projectLimit, "read_sandbox_limit", c.readLimit,
-		"tier_light", c.light, "tier_normal", c.normal, "tier_heavy", c.heavy, "resolver_model", c.resolver)
+		"review_limit", c.reviewLimit, "tier_light", c.light, "tier_normal", c.normal, "tier_heavy", c.heavy,
+		"resolver_model", c.resolver)
 	check := agent.Claude{}.Usage
 	if c.usage != nil {
 		check = c.usage

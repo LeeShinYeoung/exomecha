@@ -113,6 +113,19 @@ type Run struct {
 	Status     string
 	Conclusion string
 	URL        string
+	Jobs       []Job
+
+	id int64
+}
+
+type Job struct {
+	Name       string
+	Conclusion string
+	Log        string
+	// Gone makes the log's download fail, as GitHub's does once a log has expired.
+	Gone bool
+
+	id int64
 }
 
 func New(t *testing.T) *Server {
@@ -151,6 +164,10 @@ func New(t *testing.T) *Server {
 	s.route(mux, "POST "+repo+"/pulls/{n}/reviews", s.createReview)
 	s.route(mux, "GET "+repo+"/pulls/{n}/comments", s.listLineComments)
 	s.route(mux, "GET "+repo+"/actions/runs", s.listRuns)
+	s.route(mux, "GET "+repo+"/actions/runs/{id}/jobs", s.listJobs)
+	// A log is a plain text file that the API redirects to, outside the JSON the routes answer with.
+	mux.HandleFunc("GET "+repo+"/actions/jobs/{id}/logs", s.jobLogs)
+	mux.HandleFunc("GET /githubtest/logs/{id}", s.logFile)
 	s.route(mux, "GET "+repo+"/git/commits/{sha}", s.getCommit)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("githubtest: unexpected request %s %s", r.Method, r.URL.Path)
@@ -590,14 +607,81 @@ func (s *Server) listLineComments(r *http.Request) (int, any) {
 func (s *Server) listRuns(r *http.Request) (int, any) {
 	runs := s.runs[r.URL.Query().Get("head_sha")]
 	out := []any{}
-	for k, run := range runs {
-		m := map[string]any{"id": k + 1, "name": run.Name, "status": run.Status, "html_url": run.URL}
+	for _, run := range runs {
+		m := map[string]any{"id": run.id, "name": run.Name, "status": run.Status, "html_url": run.URL}
 		if run.Conclusion != "" {
 			m["conclusion"] = run.Conclusion
 		}
 		out = append(out, m)
 	}
 	return http.StatusOK, map[string]any{"total_count": len(out), "workflow_runs": out}
+}
+
+func (s *Server) listJobs(r *http.Request) (int, any) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	for _, runs := range s.runs {
+		for _, run := range runs {
+			if run.id != id {
+				continue
+			}
+			out := []any{}
+			for _, j := range run.Jobs {
+				m := map[string]any{"id": j.id, "run_id": run.id, "name": j.Name, "status": "completed"}
+				if j.Conclusion != "" {
+					m["conclusion"] = j.Conclusion
+				}
+				out = append(out, m)
+			}
+			return http.StatusOK, map[string]any{"total_count": len(out), "jobs": out}
+		}
+	}
+	return notFound()
+}
+
+// job finds the job whose ID is in the request's path.
+func (s *Server) job(r *http.Request) (Job, bool) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	for _, runs := range s.runs {
+		for _, run := range runs {
+			for _, j := range run.Jobs {
+				if j.id == id {
+					return j, true
+				}
+			}
+		}
+	}
+	return Job{}, false
+}
+
+func (s *Server) jobLogs(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	j, ok := s.job(r)
+	s.mu.Unlock()
+	switch {
+	case !ok:
+		http.NotFound(w, r)
+	case j.Gone:
+		http.Error(w, `{"message": "Gone"}`, http.StatusGone)
+	default:
+		http.Redirect(w, r, s.URL+"githubtest/logs/"+r.PathValue("id"), http.StatusFound)
+	}
+}
+
+func (s *Server) logFile(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "" {
+		s.t.Errorf("githubtest: a log download carried the token")
+	}
+	s.mu.Lock()
+	j, ok := s.job(r)
+	s.mu.Unlock()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	if _, err := w.Write([]byte(j.Log)); err != nil {
+		s.t.Errorf("githubtest: write log: %v", err)
+	}
 }
 
 func (s *Server) getCommit(r *http.Request) (int, any) {
@@ -790,6 +874,16 @@ func (s *Server) Pulls() []Pull {
 func (s *Server) SetRuns(sha string, runs ...Run) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	runs = slices.Clone(runs)
+	for k := range runs {
+		s.id++
+		runs[k].id = s.id
+		runs[k].Jobs = slices.Clone(runs[k].Jobs)
+		for i := range runs[k].Jobs {
+			s.id++
+			runs[k].Jobs[i].id = s.id
+		}
+	}
 	s.runs[sha] = runs
 }
 

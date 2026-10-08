@@ -13,6 +13,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/template"
 )
@@ -263,6 +264,38 @@ func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 	wantStuckComment(t, e.lastComment(prd), "rewrote commits", label.Ready)
 	if got := gittest.Head(e.origin, branch); got != prev {
 		t.Errorf("branch moved to %s, want it left at %s", got, prev)
+	}
+}
+
+func TestBuilderGetsTheFailedCILogs(t *testing.T) {
+	t.Parallel()
+	for _, gone := range []bool{false, true} {
+		t.Run(fmt.Sprintf("gone=%v", gone), func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+			prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready))
+			branch := branchName(prd)
+			sha := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
+			pr := e.gh.AddPull(branch, "main")
+			e.gh.AddReview(pr, github.Marker+"\nCI failed.\n\n- ci: failure http://ci/1\n")
+			e.gh.SetRuns(sha, githubtest.Run{Name: "ci", Status: "completed", Conclusion: "failure", Jobs: []githubtest.Job{
+				{Name: "lint", Conclusion: "success", Log: "lint is fine\n"},
+				{Name: "test", Conclusion: "failure", Log: "2026-01-01T00:00:00.0000000Z FAIL TestGreet\n", Gone: gone},
+			}})
+
+			e.step(prd)
+
+			input := e.readCtl(e.builderBox(prd), "input.md")
+			if gone {
+				wantNotContains(t, "claude input", input, "## CI logs")
+				return
+			}
+			wantContains(t, "claude input", input, "## CI logs", "### ci: test\n\n```\nFAIL TestGreet\n```")
+			wantNotContains(t, "claude input", input, "lint is fine")
+			for _, rv := range e.gh.Pull(pr).Reviews {
+				wantNotContains(t, "review", rv.Body, "FAIL TestGreet")
+			}
+		})
 	}
 }
 

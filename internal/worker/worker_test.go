@@ -76,6 +76,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		SandboxPrefix: sandbox.Prefix("owner", "repo"),
 		ProjectLimit:  2,
 		ReadLimit:     2,
+		ReviewLimit:   5,
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
 		Models:        maps.Clone(testModels),
@@ -434,11 +435,12 @@ func TestRoundRetriesAReviewerAfterAMinute(t *testing.T) {
 }
 
 const (
-	labelsRoute   = "PUT /repos/{owner}/{repo}/issues/{n}/labels"
-	commentsRoute = "POST /repos/{owner}/{repo}/issues/{n}/comments"
-	pullsRoute    = "POST /repos/{owner}/{repo}/pulls"
-	pullRoute     = "GET /repos/{owner}/{repo}/pulls/{n}"
-	reviewsRoute  = "POST /repos/{owner}/{repo}/pulls/{n}/reviews"
+	labelsRoute      = "PUT /repos/{owner}/{repo}/issues/{n}/labels"
+	commentsRoute    = "POST /repos/{owner}/{repo}/issues/{n}/comments"
+	pullsRoute       = "POST /repos/{owner}/{repo}/pulls"
+	pullRoute        = "GET /repos/{owner}/{repo}/pulls/{n}"
+	reviewsRoute     = "POST /repos/{owner}/{repo}/pulls/{n}/reviews"
+	listReviewsRoute = "GET /repos/{owner}/{repo}/pulls/{n}/reviews"
 )
 
 // refusePushes makes exomecha's pushes to origin fail, as GitHub refusing them would, until it is
@@ -583,6 +585,13 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
 			return prd, e.reviewerBox(prd)
 		}, githubFault(reviewsRoute), reviewerHandle, func(e *env, n int, name string) {
+			e.wantStatus(n, label.Ready)
+		}},
+		{"reviewer", "failing's SendBacks", func(e *env) (int, string) {
+			prd, _, sha := e.reviewPRD()
+			e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
+			return prd, e.reviewerBox(prd)
+		}, githubFault(listReviewsRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Ready)
 		}},
 		{"reviewer", "start's create", inReview, sbxFault("create"), reviewerHandle, func(e *env, n int, name string) {

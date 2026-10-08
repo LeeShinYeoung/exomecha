@@ -1,8 +1,11 @@
 package github
 
 import (
+	"bufio"
 	"cmp"
 	"context"
+	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -105,6 +108,45 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 	return latest, nil
 }
 
+// SendBacks counts exomecha's reviews on PR pr that sent PRD prd back to builder since a person last
+// stepped in: since exomecha's latest approval on the PR or its latest comment on the PRD, which
+// asked a person to answer.
+func (c *Client) SendBacks(ctx context.Context, prd, pr int) (int, error) {
+	comments, err := c.Comments(ctx, prd)
+	if err != nil {
+		return 0, err
+	}
+	var since time.Time
+	for _, cm := range comments {
+		if cm.Exomecha && cm.Trusted {
+			since = cm.CreatedAt
+		}
+	}
+	var sent []time.Time
+	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, pr, &gh.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return 0, err
+		}
+		body := r.GetBody()
+		if r.GetState() == "PENDING" || !byExomecha(body) || !trusted(r.GetAuthorAssociation()) {
+			continue
+		}
+		at := r.GetSubmittedAt().Time
+		if !strings.HasPrefix(withoutMarker(body), approval) {
+			sent = append(sent, at)
+		} else if at.After(since) {
+			since = at
+		}
+	}
+	n := 0
+	for _, at := range sent {
+		if at.After(since) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // PRComments returns what was written on the PR, oldest first: comments on the conversation, the
 // bodies of reviews, and comments on lines of the diff.
 func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) {
@@ -149,6 +191,7 @@ const (
 )
 
 type Run struct {
+	ID         int64
 	Name       string
 	Conclusion string
 	URL        string
@@ -176,13 +219,85 @@ func (c *Client) CheckCI(ctx context.Context, sha string) (CI, []Run, error) {
 		switch r.GetConclusion() {
 		case "success", "skipped", "neutral":
 		default:
-			failed = append(failed, Run{Name: r.GetName(), Conclusion: r.GetConclusion(), URL: r.GetHTMLURL()})
+			failed = append(failed, Run{ID: r.GetID(), Name: r.GetName(), Conclusion: r.GetConclusion(), URL: r.GetHTMLURL()})
 		}
 	}
 	if len(failed) > 0 {
 		return CIFailed, failed, nil
 	}
 	return CIPassed, nil, nil
+}
+
+type JobLog struct {
+	Job  string
+	Tail string // the last lines of its log
+}
+
+// logLines is how much of a failed job's log FailedJobLogs keeps. A job's failure is near its end.
+const logLines = 80
+
+// The download goes to wherever GitHub redirects, which is not GitHub's API: it gets no token, and
+// it stays out of the API client's ETag store, which keeps every answer it saw.
+var logClient = &http.Client{Timeout: time.Minute}
+
+// FailedJobLogs returns the end of the log of every job that failed in CI run runID.
+func (c *Client) FailedJobLogs(ctx context.Context, runID int64) ([]JobLog, error) {
+	var out []JobLog
+	opts := &gh.ListWorkflowJobsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for j, err := range c.api.Actions.ListWorkflowJobsIter(ctx, c.owner, c.repo, runID, opts) {
+		if err != nil {
+			return nil, err
+		}
+		switch j.GetConclusion() {
+		case "", "success", "skipped", "neutral":
+			continue
+		}
+		at, _, err := c.api.Actions.GetWorkflowJobLogs(ctx, c.owner, c.repo, j.GetID(), 1)
+		if err != nil {
+			return nil, err
+		}
+		tail, err := logTail(ctx, at.String())
+		if err != nil {
+			return nil, fmt.Errorf("read the log of %s: %w", j.GetName(), err)
+		}
+		out = append(out, JobLog{Job: j.GetName(), Tail: tail})
+	}
+	return out, nil
+}
+
+func logTail(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := logClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download: %s", resp.Status)
+	}
+	var lines []string
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(nil, 1<<20)
+	for sc.Scan() {
+		line := strings.TrimPrefix(sc.Text(), "\ufeff")
+		// Every line starts with when it was written, which says nothing about the failure.
+		if stamp, rest, ok := strings.Cut(line, " "); ok {
+			if _, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
+				line = rest
+			}
+		}
+		lines = append(lines, line)
+		if len(lines) > logLines {
+			lines = lines[1:]
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func (c *Client) CommitTime(ctx context.Context, sha string) (time.Time, error) {

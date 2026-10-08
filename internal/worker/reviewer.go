@@ -122,10 +122,9 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		for _, f := range failed {
 			fmt.Fprintf(&b, "- %s: %s %s\n", f.Name, f.Conclusion, f.URL)
 		}
-		if err := r.requeue(ctx, n, pr.Number, b.String()); err != nil {
+		if err := r.requeue(ctx, n, pr.Number, b.String(), "CI failed"); err != nil {
 			return err
 		}
-		slog.Info("requeued after CI failure", "prd", n, "pr", pr.Number)
 	}
 	return nil
 }
@@ -217,10 +216,9 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 	}
 	switch out.Verdict {
 	case "changes":
-		if err := r.requeue(ctx, n, pr.Number, out.Body); err != nil {
+		if err := r.requeue(ctx, n, pr.Number, out.Body, "review comments"); err != nil {
 			return err
 		}
-		slog.Info("requeued with review comments", "prd", n, "pr", pr.Number)
 	case "approve":
 		if err := r.GitHub.AddApproval(ctx, pr.Number, out.Body); err != nil {
 			return err
@@ -244,10 +242,23 @@ func (r *reviewer) finish(ctx context.Context, n int) error {
 	return r.GitHub.ClearStatus(ctx, n)
 }
 
-// requeue leaves a review on the PR and sends the PRD back to builder.
-func (r *reviewer) requeue(ctx context.Context, n, pr int, review string) error {
+// requeue leaves a review on the PR and sends the PRD back to builder, or to a person once
+// reviewer has sent it back ReviewLimit times since a person last stepped in.
+func (r *reviewer) requeue(ctx context.Context, n, pr int, review, why string) error {
+	sent, err := r.GitHub.SendBacks(ctx, n, pr)
+	if err != nil {
+		return err
+	}
 	if err := r.GitHub.AddReview(ctx, pr, review); err != nil {
 		return err
 	}
-	return r.GitHub.SetStatus(ctx, n, label.Review, label.Ready)
+	if sent >= r.ReviewLimit {
+		return toStuck(ctx, r.GitHub, n, label.Review, label.Ready, fmt.Sprintf(
+			"reviewer sent PR #%d back to builder %d times, the limit, and its latest review on the PR still asks for changes.", pr, sent))
+	}
+	if err := r.GitHub.SetStatus(ctx, n, label.Review, label.Ready); err != nil {
+		return err
+	}
+	slog.Info("sent back to builder", "prd", n, "pr", pr, "why", why)
+	return nil
 }

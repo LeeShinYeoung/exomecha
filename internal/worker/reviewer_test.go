@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -159,6 +160,48 @@ func TestReviewerRequeuesOnFailedCI(t *testing.T) {
 	}
 	wantContains(t, "review", reviews[0].Body, "test: failure http://ci/test")
 	wantNotContains(t, "review", reviews[0].Body, "lint")
+}
+
+func TestReviewerSendsAPersonThePRAfterTheLimit(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.deps.ReviewLimit = 2
+	prd, pr, sha := e.reviewPRD()
+	e.gh.AddReview(pr, github.Marker+"\nrename the function")
+	e.gh.AddReview(pr, github.Marker+"\nCI failed.")
+	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure", URL: "http://ci/test"})
+
+	e.review(prd)
+
+	e.wantStatus(prd, label.Stuck)
+	wantStuckComment(t, e.lastComment(prd), fmt.Sprintf("sent PR #%d back to builder 2 times, the limit", pr), label.Ready)
+	reviews := e.gh.Pull(pr).Reviews
+	if len(reviews) != 3 {
+		t.Fatalf("%d reviews, want the third one left on the PR too", len(reviews))
+	}
+	wantContains(t, "the third review", reviews[2].Body, "test: failure http://ci/test")
+}
+
+// An approval is a person's turn, so the send-backs before it do not count.
+func TestReviewerCountsSendBacksSinceTheApproval(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.deps.ReviewLimit = 1
+	prd, pr, _ := e.reviewPRD()
+	e.gh.AddReview(pr, github.Marker+"\nrename the function")
+	if err := e.deps.GitHub.AddApproval(t.Context(), pr, "fine"); err != nil {
+		t.Fatal(err)
+	}
+	e.review(prd)
+	name := e.reviewerBox(prd)
+	e.play(name, nil, `{"verdict": "changes", "body": "a person asked for more"}`)
+
+	e.review(prd)
+
+	e.wantStatus(prd, label.Ready)
+	if n := len(e.gh.Issue(prd).Comments); n != 0 {
+		t.Errorf("%d comments on the PRD, want none", n)
+	}
 }
 
 func TestReviewerWaitsForCIToAppear(t *testing.T) {

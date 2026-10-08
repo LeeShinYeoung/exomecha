@@ -45,6 +45,8 @@ type Deps struct {
 	// How many sandboxes of project runs, and of reader runs, may exist at once.
 	ProjectLimit int
 	ReadLimit    int
+	// How many times reviewer sends a PR back to builder before a person decides.
+	ReviewLimit int
 	// The commit identity for project runs, the token owner's. A sandbox has none of its own.
 	GitName  string
 	GitEmail string
