@@ -329,8 +329,9 @@ func splitStatus(out string) (output string, code int, err error) {
 // AI makes that commit itself and sees whatever the project's commit checks report. note lists the
 // conflicted files for claude's input. problem is set when git refused the merge without a conflict.
 func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, note, problem string, err error) {
-	// The exit status comes back on stdout, apart from sbx's own failures.
-	out, err := r.sh(ctx, ro, n, `git merge --no-commit --no-ff "$1" 2>&1; echo $?`, r.Git.BaseRef())
+	// The exit status comes back on stdout, apart from sbx's own failures. diff3 puts the original
+	// lines between the two sides of a conflict, so the AI sees what each side changed.
+	out, err := r.sh(ctx, ro, n, `git -c merge.conflictStyle=diff3 merge --no-commit --no-ff "$1" 2>&1; echo $?`, r.Git.BaseRef())
 	if err != nil {
 		return nil, "", "", err
 	}

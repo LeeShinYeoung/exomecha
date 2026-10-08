@@ -570,7 +570,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		{"resolver", "start's merge", func(e *env) (int, string) {
 			prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 			return prd, e.resolverBox(prd)
-		}, execFault("git merge"), resolverHandle, func(e *env, n int, name string) {
+		}, execFault("merge --no-commit"), resolverHandle, func(e *env, n int, name string) {
 			e.wantState(name, running)
 		}},
 		{"resolver", "collect's push", func(e *env) (int, string) {

@@ -120,8 +120,8 @@ func TestResolverPushesResolvedMerge(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD")); err != nil {
 		t.Errorf("no merge in progress in the sandbox: %v", err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(repo, "app.txt")); !strings.Contains(string(b), "<<<<<<<") {
-		t.Errorf("app.txt has no conflict markers: %q", b)
+	if b, _ := os.ReadFile(filepath.Join(repo, "app.txt")); !strings.Contains(string(b), "<<<<<<<") || !strings.Contains(string(b), "||||||| ") {
+		t.Errorf("app.txt has no conflict markers with the original lines: %q", b)
 	}
 	input := e.readCtl(name, "input.md")
 	wantContains(t, "claude input", input, "PRD body", "## Conflicted files (merging `origin/main`)", "- app.txt")
@@ -264,7 +264,7 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	name := e.resolverBox(prd)
-	e.sbx.failExec = "git merge"
+	e.sbx.failExec = "merge --no-commit"
 
 	if err := e.resolver().Handle(t.Context(), prd); err == nil {
 		t.Fatal("Handle returned nil for an sbx error")
