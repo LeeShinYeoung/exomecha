@@ -18,20 +18,23 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 	"github.com/LeeShinYeoung/exomecha/internal/template"
 	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
 
 func main() {
+	// Until run opens the log file, lines go to the terminal alone, in the same form.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err := run(); err != nil {
-		slog.Error("exomecha stopped", "err", err)
+		slog.Error("exomecha could not start", logging.Err, err)
 		os.Exit(1)
 	}
 }
 
-// config is what one exomecha runs with. main reads it from the environment. Only the e2e tests
-// set the fields after the models.
+// config is what one exomecha runs with. main reads it from the environment. run sets the fields
+// after the models to the operator's own, and the e2e tests set them to theirs.
 type config struct {
 	owner, name, base, token string
 	fiveHour, weekly         float64
@@ -40,10 +43,12 @@ type config struct {
 	light, normal, heavy     agent.Model
 	resolver                 agent.Model
 
-	apiURL, gitURL, root string // empty: GitHub's API, github.com, ~/.exomecha/<owner>/<name>
-	interval, ciGrace    time.Duration
-	usage                func(context.Context) (agent.Usage, error) // nil: claude's own reading
-	started              func()                                     // called just before the workers start
+	apiURL, gitURL    string // empty: GitHub's API, github.com
+	root              string // what exomecha keeps of this repository
+	claudeDir         string // empty: no default claude settings
+	interval, ciGrace time.Duration
+	usage             func(context.Context) (agent.Usage, error) // nil: claude's own reading
+	started           func()                                     // called just before the workers start
 }
 
 func defaults() config {
@@ -114,11 +119,50 @@ func run() error {
 		return err
 	}
 
+	// Without this a write to stderr after whatever reads it has gone, such as tee, ends exomecha.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	c.root = filepath.Join(home, ".exomecha", c.owner, c.name)
+	// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
+	c.claudeDir = filepath.Join(home, ".exomecha", "claude")
+	if err := os.MkdirAll(c.root, 0o755); err != nil {
+		return err
+	}
+	held, err := lock(c.root)
+	if err != nil {
+		return err
+	}
+	defer held.Close()
+	if err := logging.Open(filepath.Join(c.root, "logs"), os.Stderr); err != nil {
+		return err
+	}
+
 	// Closing the terminal sends SIGHUP. Treat it like Ctrl-C, so a sandbox start in progress is
 	// undone instead of cut off.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	return serve(ctx, c)
+}
+
+// lock keeps a second exomecha off the repository: both would take the same PRDs and sandboxes and
+// write the same log. The OS lets go of the lock when the process ends, however it ends.
+func lock(root string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(root, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errors.New("another exomecha is already running for this repository")
+		}
+		return nil, fmt.Errorf("lock %s: %w", root, err)
+	}
+	return f, nil
 }
 
 // serve runs exomecha until ctx is done.
@@ -167,31 +211,23 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return fmt.Errorf("read the token's GitHub user: %w", err)
 	}
-	root, claudeDir := c.root, ""
-	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		root = filepath.Join(home, ".exomecha", c.owner, c.name)
-		// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
-		claudeDir = filepath.Join(home, ".exomecha", "claude")
-		if err := worker.Seed(claudeDir); err != nil {
+	if c.claudeDir != "" {
+		if err := worker.Seed(c.claudeDir); err != nil {
 			return fmt.Errorf("write the default claude settings: %w", err)
 		}
 	}
-	g := git.New(root, c.owner, c.name, c.base, c.token)
+	g := git.New(c.root, c.owner, c.name, c.base, c.token)
 	if c.gitURL != "" {
-		g = git.NewAt(root, c.gitURL, c.base, c.token)
+		g = git.NewAt(c.root, c.gitURL, c.base, c.token)
 	}
 	deps := worker.Deps{
 		GitHub:        gh,
 		Git:           g,
 		Sandboxes:     sbx,
 		Environment:   template.New(g, sbx, c.owner, c.name),
-		SandboxDir:    filepath.Join(root, "sandboxes"),
+		SandboxDir:    filepath.Join(c.root, "sandboxes"),
 		SandboxPrefix: sandbox.Prefix(c.owner, c.name),
-		ClaudeDir:     claudeDir,
+		ClaudeDir:     c.claudeDir,
 		ProjectLimit:  c.projectLimit,
 		ReadLimit:     c.readLimit,
 		ReviewLimit:   c.reviewLimit,
@@ -207,14 +243,11 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return fmt.Errorf("ensure labels: %w", err)
 	}
-	for _, l := range created {
-		slog.Info("created label", "label", l)
-	}
 
-	slog.Info("exomecha started", "repo", c.owner+"/"+c.name, "base", c.base, "five_hour_limit", c.fiveHour,
-		"weekly_limit", c.weekly, "sandbox_limit", c.projectLimit, "read_sandbox_limit", c.readLimit,
-		"review_limit", c.reviewLimit, "tier_light", c.light, "tier_normal", c.normal, "tier_heavy", c.heavy,
-		"resolver_model", c.resolver)
+	slog.Info("exomecha started", logging.Repo, c.owner+"/"+c.name, logging.Base, c.base, logging.FiveHourLimit, c.fiveHour,
+		logging.WeeklyLimit, c.weekly, logging.SandboxLimit, c.projectLimit, logging.ReadSandboxLimit, c.readLimit,
+		logging.ReviewLimit, c.reviewLimit, logging.TierLight, c.light, logging.TierNormal, c.normal, logging.TierHeavy, c.heavy,
+		logging.ResolverModel, c.resolver, logging.CreatedLabels, created)
 	check := agent.Claude{}.Usage
 	if c.usage != nil {
 		check = c.usage
@@ -224,7 +257,7 @@ func serve(ctx context.Context, c config) error {
 		c.started()
 	}
 	worker.Run(ctx, deps, gate)
-	slog.Info("exomecha stopped")
+	slog.Info("exomecha stopped", logging.Reason, context.Cause(ctx))
 	return nil
 }
 
