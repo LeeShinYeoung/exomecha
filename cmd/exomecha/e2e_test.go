@@ -64,6 +64,7 @@ type world struct {
 	sbx    sandbox.CLI
 
 	mu      sync.Mutex
+	others  []*codeRepo // repositories PRDs may change besides the world's own
 	cancel  context.CancelFunc
 	done    chan struct{}
 	exitErr error
@@ -535,10 +536,20 @@ func (w *world) describe() string {
 			fmt.Fprintf(&b, "  last comment: %s\n", oneLine(c, 400))
 		}
 	}
-	for _, p := range w.gh.Pulls() {
-		fmt.Fprintf(&b, "PR #%d %s -> %s open=%v merged=%v reviews=%d\n", p.Number, p.Head, p.Base, p.Open, p.Merged, len(p.Reviews))
-		if n := len(p.Reviews); n > 0 {
-			fmt.Fprintf(&b, "  last review: %s\n", oneLine(p.Reviews[n-1].Body, 400))
+	servers := map[string]*githubtest.Server{w.repo: w.gh}
+	names := []string{w.repo}
+	w.mu.Lock()
+	for _, r := range w.others {
+		servers[r.name] = r.gh
+		names = append(names, r.name)
+	}
+	w.mu.Unlock()
+	for _, name := range names {
+		for _, p := range servers[name].Pulls() {
+			fmt.Fprintf(&b, "PR %s#%d %s -> %s open=%v merged=%v reviews=%d\n", name, p.Number, p.Head, p.Base, p.Open, p.Merged, len(p.Reviews))
+			if n := len(p.Reviews); n > 0 {
+				fmt.Fprintf(&b, "  last review: %s\n", oneLine(p.Reviews[n-1].Body, 400))
+			}
 		}
 	}
 	for _, x := range w.boxes() {
