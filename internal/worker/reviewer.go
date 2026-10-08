@@ -114,7 +114,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
-		return toStuck(ctx, r.GitHub, n, prd.Status(), label.Ready,
+		return toStuck(ctx, r.GitHub, n, reviewerRole.name, prd.Status(), label.Ready,
 			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
 	case failing:
 		var b strings.Builder
@@ -122,7 +122,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		for _, f := range failed {
 			fmt.Fprintf(&b, "- %s: %s %s\n", f.Name, f.Conclusion, f.URL)
 		}
-		if err := r.requeue(ctx, n, pr.Number, b.String(), "CI failed"); err != nil {
+		if err := r.requeue(ctx, n, pr.Number, github.KindCI, b.String()); err != nil {
 			return err
 		}
 	}
@@ -188,17 +188,10 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) er
 		if err != nil {
 			return spec{}, err
 		}
-		input, err := prdInput(ctx, r.GitHub, prd)
+		input, err := record(ctx, r.GitHub, r.Git.BaseRef(), prd, pr.Number)
 		if err != nil {
 			return spec{}, err
 		}
-		onPR, err := prComments(ctx, r.GitHub, pr.Number)
-		if err != nil {
-			return spec{}, err
-		}
-		ref := r.Git.BaseRef()
-		input += onPR +
-			fmt.Sprintf("## Base branch\n\n`%s`. See this PR's changes with `git diff %s...HEAD`.\n", ref, ref)
 		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
 	})
 }
@@ -216,7 +209,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 	}
 	switch out.Verdict {
 	case "changes":
-		if err := r.requeue(ctx, n, pr.Number, out.Body, "review comments"); err != nil {
+		if err := r.requeue(ctx, n, pr.Number, github.KindChanges, out.Body); err != nil {
 			return err
 		}
 	case "approve":
@@ -244,21 +237,21 @@ func (r *reviewer) finish(ctx context.Context, n int) error {
 
 // requeue leaves a review on the PR and sends the PRD back to builder, or to a person once
 // reviewer has sent it back ReviewLimit times since a person last stepped in.
-func (r *reviewer) requeue(ctx context.Context, n, pr int, review, why string) error {
+func (r *reviewer) requeue(ctx context.Context, n, pr int, kind, review string) error {
 	sent, err := r.GitHub.SendBacks(ctx, n, pr)
 	if err != nil {
 		return err
 	}
-	if err := r.GitHub.AddReview(ctx, pr, review); err != nil {
+	if err := r.GitHub.AddReview(ctx, pr, github.Note{Worker: reviewerRole.name, Kind: kind}, review); err != nil {
 		return err
 	}
 	if sent >= r.ReviewLimit {
-		return toStuck(ctx, r.GitHub, n, label.Review, label.Ready, fmt.Sprintf(
+		return toStuck(ctx, r.GitHub, n, reviewerRole.name, label.Review, label.Ready, fmt.Sprintf(
 			"reviewer sent PR #%d back to builder %d times, the limit, and its latest review on the PR still asks for changes.", pr, sent))
 	}
 	if err := r.GitHub.SetStatus(ctx, n, label.Review, label.Ready); err != nil {
 		return err
 	}
-	slog.Info("sent back to builder", "prd", n, "pr", pr, "why", why)
+	slog.Info("sent back to builder", "prd", n, "pr", pr, "why", kind)
 	return nil
 }

@@ -194,6 +194,7 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 	if p.Head != branch || p.Base != "main" || p.Title != "Add feature" || p.Body != fmt.Sprintf("Closes #%d\n\ndid it", prd) {
 		t.Errorf("PR = head %q base %q title %q body %q", p.Head, p.Base, p.Title, p.Body)
 	}
+	e.wantSummary(p.Number, "did it")
 }
 
 func TestBuilderStuck(t *testing.T) {
@@ -322,10 +323,18 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 		t.Fatalf("sandbox repository is not on the PR branch: %q, %v", b, err)
 	}
 	input := e.readCtl(name, "input.md")
-	wantContains(t, "claude input", input, "PRD body", "## Existing PR", "## Last review", "please rename X",
-		"(exomecha)\n\na question exomecha asked", "(person)\n\na person's answer",
-		"## Comments on the PR", "(person)\n\na person's review", "(person, on feature.txt line 1)\n\na person's comment on a line",
-		"(person)\n\na person's comment on the PR")
+	onPR := fmt.Sprintf("PR #%d", pr)
+	in := []string{
+		"PRD body", "## Run", fmt.Sprintf("- PR #%d, on branch `%s`.", pr, branch), "## Record",
+		"(exomecha, " + onPR + ")\n\nplease rename X",
+		"(person, " + onPR + ")\n\na person's review",
+		"(person, " + onPR + ", on feature.txt line 1)\n\na person's comment on a line",
+		"(person, " + onPR + ")\n\na person's comment on the PR",
+		"(exomecha, PRD)\n\na question exomecha asked",
+		"(person, PRD)\n\na person's answer",
+	}
+	wantContains(t, "claude input", input, in...)
+	wantInOrder(t, "claude input", input, in...)
 	wantNotContains(t, "claude input", input, github.Marker,
 		"an outsider posing as exomecha", "an outsider's instruction", "an outsider's review")
 	if strings.Count(input, "please rename X") != 1 {
@@ -343,6 +352,17 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	}
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want the existing one only", n)
+	}
+	e.wantSummary(pr, "did it")
+}
+
+// wantSummary checks that builder's last run left its summary on the PR, where the next run reads it.
+func (e *env) wantSummary(pr int, summary string) {
+	e.t.Helper()
+	comments := e.gh.Pull(pr).Comments
+	want := github.Noted(github.Note{Worker: "builder", Kind: github.KindSummary}, summary)
+	if len(comments) == 0 || comments[len(comments)-1].Body != want {
+		e.t.Errorf("PR comments = %+v, want the last one to be builder's summary %q", comments, summary)
 	}
 }
 
@@ -394,15 +414,23 @@ func TestBuilderStartsOverAfterAClosedPR(t *testing.T) {
 
 // A person sent an approved PRD back with a review on the PR. exomecha's approval is no change to
 // make.
-func TestBuilderLeavesOutTheApproval(t *testing.T) {
+// The record names each of exomecha's entries by its worker and kind, so builder can tell what was
+// asked and settled before a person's latest request.
+func TestBuilderReadsWhoWroteEachEntry(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready))
 	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	pr := e.gh.AddPull(branch, "main")
-	e.gh.AddReview(pr, github.Marker+"\nplease rename X")
-	if err := e.deps.GitHub.AddApproval(t.Context(), pr, "renames X"); err != nil {
+	gh := e.deps.GitHub
+	if err := gh.AddComment(t.Context(), pr, github.Note{Worker: "builder", Kind: github.KindSummary}, "added X"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gh.AddReview(t.Context(), pr, github.Note{Worker: "reviewer", Kind: github.KindChanges}, "please rename X"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gh.AddApproval(t.Context(), pr, "renames X"); err != nil {
 		t.Fatal(err)
 	}
 	e.gh.AddReview(pr, "use a shorter name")
@@ -410,8 +438,16 @@ func TestBuilderLeavesOutTheApproval(t *testing.T) {
 	e.step(prd)
 
 	input := e.readCtl(e.builderBox(prd), "input.md")
-	wantContains(t, "claude input", input, "(person)\n\nuse a shorter name")
-	wantNotContains(t, "claude input", input, "## Last review", "please rename X", "renames X")
+	onPR := fmt.Sprintf("PR #%d", pr)
+	in := []string{
+		"(builder summary, " + onPR + ")\n\nadded X",
+		"(reviewer changes, " + onPR + ")\n\nplease rename X",
+		"(reviewer approved, " + onPR + ")\n\nexomecha's reviewer approved this PR.",
+		"(person, " + onPR + ")\n\nuse a shorter name",
+	}
+	wantContains(t, "claude input", input, in...)
+	wantInOrder(t, "claude input", input, in...)
+	wantNotContains(t, "claude input", input, "**exomecha")
 }
 
 func TestBuilderRunsTheTasksTier(t *testing.T) {

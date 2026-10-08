@@ -135,7 +135,7 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 		if err := r.remove(cleanup, name, false); err != nil {
 			return err
 		}
-		return toStuck(cleanup, r.GitHub, n, ro.from, ro.back, problem)
+		return toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, problem)
 	}
 	if rerr := r.restart(cleanup, ro, n, err.Error()); rerr != nil {
 		return errors.Join(err, rerr)

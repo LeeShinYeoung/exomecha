@@ -12,8 +12,27 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
-// Marker starts every comment and review exomecha writes, to tell them apart from people's.
+// Marker starts the comments and reviews exomecha wrote before it named their worker. Newer ones
+// start with "<!-- exomecha:<worker>:<kind> -->" and a line that names the worker to a person.
 const Marker = "<!-- exomecha -->"
+
+const markerStart = "<!-- exomecha"
+
+// Note says which worker wrote a comment or review of exomecha's, and what it is. One that exomecha
+// wrote with Marker alone has none.
+type Note struct {
+	Worker string
+	Kind   string
+}
+
+const (
+	KindSummary  = "summary"  // what builder did in a run
+	KindChanges  = "changes"  // reviewer asks builder for changes
+	KindApproved = "approved" // reviewer found nothing to fix
+	KindCI       = "ci"       // reviewer sends the PR back for a failed CI
+	KindResolved = "resolved" // how resolver settled a merge of the base branch
+	KindStuck    = "stuck"    // a worker needs a person
+)
 
 // trusted reports whether GitHub says the author can write to the repository. On a public
 // repository anyone can open issues, comment, and review, and none of that may steer the AI.
@@ -110,6 +129,7 @@ type Comment struct {
 	Body      string
 	CreatedAt time.Time
 	Exomecha  bool
+	Note      Note
 	Trusted   bool // written by someone who can write to the repository
 	// Only a comment on a line of a PR's diff has these.
 	Path string
@@ -129,30 +149,51 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 	return out, nil
 }
 
-func (c *Client) AddComment(ctx context.Context, number int, body string) error {
+// AddComment comments on an issue, or on the conversation of a PR, which is an issue too.
+func (c *Client) AddComment(ctx context.Context, number int, n Note, body string) error {
 	_, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, number, gh.IssueCommentRequest{
-		Body: withMarker(body),
+		Body: Noted(n, body),
 	})
 	return err
 }
 
 func commentFrom(body, association string, at time.Time) Comment {
+	n, text, ok := ParseNote(body)
 	return Comment{
-		Body:      withoutMarker(body),
+		Body:      text,
 		CreatedAt: at,
-		Exomecha:  byExomecha(body),
+		Exomecha:  ok,
+		Note:      n,
 		Trusted:   trusted(association),
 	}
 }
 
-func withMarker(body string) string {
-	return Marker + "\n" + body
+// Noted is body as exomecha posts it for worker n.Worker.
+func Noted(n Note, body string) string {
+	return "<!-- exomecha:" + n.Worker + ":" + n.Kind + " -->\n" + header(n.Worker) + "\n\n" + body
 }
 
-func byExomecha(body string) bool {
-	return strings.HasPrefix(strings.TrimSpace(body), Marker)
-}
+func header(worker string) string { return "**exomecha " + worker + "**" }
 
-func withoutMarker(body string) string {
-	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(body), Marker))
+// ParseNote reads what Noted wrote, or a body that starts with Marker alone. ok is false for a body
+// without either, and text is then body as it is.
+func ParseNote(body string) (n Note, text string, ok bool) {
+	b := strings.TrimSpace(body)
+	inner, rest, found := strings.Cut(strings.TrimPrefix(b, markerStart), "-->")
+	if !strings.HasPrefix(b, markerStart) || !found {
+		return Note{}, body, false
+	}
+	inner = strings.TrimSpace(inner)
+	if inner != "" {
+		named, isNamed := strings.CutPrefix(inner, ":")
+		if !isNamed {
+			return Note{}, body, false
+		}
+		n.Worker, n.Kind, _ = strings.Cut(named, ":")
+	}
+	rest = strings.TrimSpace(rest)
+	if n.Worker != "" {
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, header(n.Worker)))
+	}
+	return n, rest, true
 }

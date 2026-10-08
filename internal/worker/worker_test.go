@@ -145,6 +145,19 @@ func wantNotContains(t *testing.T, what, s string, subs ...string) {
 	}
 }
 
+// wantInOrder checks that subs appear in s in the order given.
+func wantInOrder(t *testing.T, what, s string, subs ...string) {
+	t.Helper()
+	last := -1
+	for _, sub := range subs {
+		i := strings.Index(s, sub)
+		if i < last {
+			t.Errorf("%s has %q before the entry it should follow:\n%s", what, sub, s)
+		}
+		last = i
+	}
+}
+
 func wantInts(t *testing.T, what string, got, want []int) {
 	t.Helper()
 	if !slices.Equal(got, want) {
@@ -173,8 +186,8 @@ func TestTrimClosingTags(t *testing.T) {
 // since that decides which worker gets the PRD back. A PRD's comment says to remove the label.
 func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 	t.Helper()
-	if !strings.HasPrefix(comment, github.Marker) {
-		t.Errorf("stuck comment does not start with the exomecha marker:\n%s", comment)
+	if n, _, ok := github.ParseNote(comment); !ok || n.Kind != github.KindStuck || n.Worker == "" {
+		t.Errorf("stuck comment does not start with a worker's stuck note:\n%s", comment)
 	}
 	again := "relabel it `" + string(back) + "`"
 	if back == label.None {

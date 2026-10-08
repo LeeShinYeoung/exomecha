@@ -415,8 +415,8 @@ func (s *Server) listComments(r *http.Request) (int, any) {
 }
 
 func (s *Server) createComment(r *http.Request) (int, any) {
-	i := s.pathIssue(r)
-	if i == nil {
+	comments := s.commentsOf(r)
+	if comments == nil {
 		return notFound()
 	}
 	var req struct {
@@ -425,8 +425,8 @@ func (s *Server) createComment(r *http.Request) (int, any) {
 	if !s.decode(r, &req) {
 		return http.StatusBadRequest, message("bad body")
 	}
-	i.Comments = append(i.Comments, Comment{Body: req.Body, Association: associationOwner, At: s.now()})
-	return http.StatusCreated, commentJSON(len(i.Comments)-1, i.Comments[len(i.Comments)-1])
+	*comments = append(*comments, Comment{Body: req.Body, Association: associationOwner, At: s.now()})
+	return http.StatusCreated, commentJSON(len(*comments)-1, (*comments)[len(*comments)-1])
 }
 
 func (s *Server) listLabels(r *http.Request) (int, any) {

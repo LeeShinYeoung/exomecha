@@ -677,7 +677,8 @@ func (w *world) seedReview(p prdText, commits ...map[string]string) (prd, pr int
 func (w *world) seedApproved(p prdText, commits ...map[string]string) (prd, pr int) {
 	w.t.Helper()
 	prd, pr = w.seedReview(p, commits...)
-	w.gh.AddReview(pr, github.Marker+"\n"+approvedLine+" A person reviews and merges it.\n\nThe PR does what the PRD asks.")
+	w.gh.AddReview(pr, github.Noted(github.Note{Worker: "reviewer", Kind: github.KindApproved},
+		approvedLine+" A person reviews and merges it.\n\nThe PR does what the PRD asks."))
 	w.relabel(prd, label.Review, label.Approved)
 	return prd, pr
 }
@@ -709,11 +710,20 @@ func (w *world) isAncestor(ancestor, commit string) bool {
 	return exec.Command("git", "-C", w.origin, "merge-base", "--is-ancestor", ancestor, commit).Run() == nil
 }
 
+// lastOf is the last of items, or the zero value when there are none.
+func lastOf[T any](items []T) T {
+	var zero T
+	if len(items) == 0 {
+		return zero
+	}
+	return items[len(items)-1]
+}
+
 // approvals counts exomecha's approvals among a PR's reviews.
 func approvals(reviews []githubtest.Review) int {
 	n := 0
 	for _, r := range reviews {
-		if strings.HasPrefix(r.Body, github.Marker+"\n"+approvedLine) {
+		if note, _, _ := github.ParseNote(r.Body); note.Kind == github.KindApproved {
 			n++
 		}
 	}

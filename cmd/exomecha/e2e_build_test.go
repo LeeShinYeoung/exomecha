@@ -53,8 +53,11 @@ func TestE2EHappyPath(t *testing.T) {
 	w.waitFor("the review", aRun, func() bool { return w.status(prd) != label.Review })
 	w.wantStatus(prd, label.Approved)
 	p := w.gh.Pull(pr.Number)
-	if n := len(p.Reviews); n != 1 || p.Reviews[0].Event != "COMMENT" || !strings.HasPrefix(p.Reviews[0].Body, github.Marker+"\n"+approvedLine) {
+	if n := len(p.Reviews); n != 1 || p.Reviews[0].Event != "COMMENT" || approvals(p.Reviews) != 1 {
 		t.Errorf("reviews = %+v, want one approval", p.Reviews)
+	}
+	if note, _, _ := github.ParseNote(lastOf(p.Comments).Body); note != (github.Note{Worker: "builder", Kind: github.KindSummary}) {
+		t.Errorf("PR comments = %+v, want builder's summary", p.Comments)
 	}
 	if !p.Open || p.Merged {
 		t.Errorf("PR open=%v merged=%v, want it left for a person", p.Open, p.Merged)
@@ -69,8 +72,9 @@ func TestE2EStuckAndBack(t *testing.T) {
 	w.start()
 
 	w.waitFor("builder to ask for the missing decision", aStart+aRun, func() bool { return w.status(prd) == label.Stuck })
-	if q := w.lastComment(prd); !strings.HasPrefix(q, github.Marker) || !strings.Contains(q, "`"+string(label.Ready)+"`") {
-		t.Errorf("stuck comment = %q, want exomecha's question that says to relabel it ready", q)
+	q := w.lastComment(prd)
+	if note, _, _ := github.ParseNote(q); note != (github.Note{Worker: "builder", Kind: github.KindStuck}) || !strings.Contains(q, "`"+string(label.Ready)+"`") {
+		t.Errorf("stuck comment = %q, want builder's question that says to relabel it ready", q)
 	}
 	if n := len(w.prsOf(prd)); n != 0 {
 		t.Errorf("a stuck PRD opened %d PRs", n)
@@ -82,7 +86,7 @@ func TestE2EStuckAndBack(t *testing.T) {
 	w.gh.AddComment(prd, "The official greeting is Ahoy. `sh greet.sh` should print `Ahoy, world!`.")
 	w.relabel(prd, label.Stuck, label.Ready)
 	w.waitFor("builder to start again", aRound+aStart, func() bool { return w.started(box) })
-	if in := w.input(box); !strings.Contains(in, "Ahoy") || !strings.Contains(in, "(person)") || !strings.Contains(in, "(exomecha)") {
+	if in := w.input(box); !strings.Contains(in, "Ahoy") || !strings.Contains(in, "(person, PRD)") || !strings.Contains(in, "(builder stuck, PRD)") {
 		t.Errorf("the second run's input lacks the question or the answer:\n%s", in)
 	}
 	w.waitFor("the PR", aRun, func() bool { _, ok := w.openPR(prd); return ok })
