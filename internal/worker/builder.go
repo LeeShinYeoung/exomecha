@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -154,8 +155,38 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		if review != "" {
 			s.input += "## Last review (exomecha's latest review on this PR: changes to make or CI failures)\n\n" + review + "\n"
 		}
+		s.input += b.ciLogs(ctx, n, remote)
 		return s, nil
 	})
+}
+
+// ciLogs is the end of the log of each CI job that failed on commit sha. It goes to builder's input
+// only and never into a comment, since a log holds whatever the project's CI printed. A log that
+// cannot be read is left out, since builder can still run the checks itself.
+func (b *builder) ciLogs(ctx context.Context, n int, sha string) string {
+	ci, failed, err := b.GitHub.CheckCI(ctx, sha)
+	if err != nil {
+		slog.Warn("could not check CI for its logs", "prd", n, "err", err)
+		return ""
+	}
+	if ci != github.CIFailed {
+		return ""
+	}
+	var out strings.Builder
+	for _, run := range failed {
+		logs, err := b.GitHub.FailedJobLogs(ctx, run.ID)
+		if err != nil {
+			slog.Warn("could not read a failed CI run's logs", "prd", n, "run", run.Name, "err", err)
+			continue
+		}
+		for _, l := range logs {
+			fmt.Fprintf(&out, "### %s: %s\n\n```\n%s\n```\n\n", run.Name, l.Job, l.Tail)
+		}
+	}
+	if out.Len() == 0 {
+		return ""
+	}
+	return "## CI logs\n\nThe end of the log of each CI job that failed on the PR's latest commit.\n\n" + out.String()
 }
 
 func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) error {

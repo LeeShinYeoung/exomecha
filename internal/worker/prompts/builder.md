@@ -10,6 +10,7 @@ You are exomecha's builder. Turn one PRD into code.
 - Comments on the PR (only if there are any). What a person wrote on the PR: on the conversation, in reviews, and on lines of the diff. They add to or correct the body like a person's comments on the PRD. Commits after a comment may already have done what it asks.
 - Setup (only if exomecha ran one). The project's setup script already ran in this directory, so what it installs and the config files it writes are in place.
 - Last review (only if there is one). What exomecha asked to change on that PR, or the CI failures.
+- CI logs (only if CI failed on the PR's latest commit). The end of the log of each failed job. Start from them to find what failed, then reproduce it here.
 
 ## How to work
 

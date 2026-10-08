@@ -97,6 +97,52 @@ func TestSendBacks(t *testing.T) {
 	want("after the stuck comment", 1)
 }
 
+func TestFailedJobLogs(t *testing.T) {
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	var log strings.Builder
+	log.WriteString("\ufeff")
+	for k := 1; k <= 100; k++ {
+		fmt.Fprintf(&log, "2026-01-01T00:00:%02d.1234567Z line %d\n", k%60, k)
+	}
+	s.SetRuns("abc", githubtest.Run{Name: "ci", Status: "completed", Conclusion: "failure", Jobs: []githubtest.Job{
+		{Name: "lint", Conclusion: "success", Log: "fine\n"},
+		{Name: "test", Conclusion: "failure", Log: log.String()},
+		{Name: "deploy", Conclusion: "skipped"},
+	}})
+
+	_, failed, err := client.CheckCI(t.Context(), "abc")
+	if err != nil || len(failed) != 1 {
+		t.Fatalf("CheckCI = %+v, %v", failed, err)
+	}
+	logs, err := client.FailedJobLogs(t.Context(), failed[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].Job != "test" {
+		t.Fatalf("logs = %+v, want only the failed job's", logs)
+	}
+	lines := strings.Split(logs[0].Tail, "\n")
+	if len(lines) != logLines || lines[0] != "line 21" || lines[len(lines)-1] != "line 100" {
+		t.Errorf("tail = %d lines from %q to %q, want lines 21 to 100 without their times", len(lines), lines[0], lines[len(lines)-1])
+	}
+}
+
+func TestFailedJobLogsWhenALogIsGone(t *testing.T) {
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	s.SetRuns("abc", githubtest.Run{Name: "ci", Status: "completed", Conclusion: "failure", Jobs: []githubtest.Job{
+		{Name: "test", Conclusion: "failure", Gone: true},
+	}})
+	_, failed, err := client.CheckCI(t.Context(), "abc")
+	if err != nil || len(failed) != 1 {
+		t.Fatalf("CheckCI = %+v, %v", failed, err)
+	}
+	if logs, err := client.FailedJobLogs(t.Context(), failed[0].ID); err == nil {
+		t.Errorf("FailedJobLogs = %+v, want an error", logs)
+	}
+}
+
 func TestPRComments(t *testing.T) {
 	s := githubtest.New(t)
 	client := clientOf(t, s)
