@@ -370,13 +370,16 @@ func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
 	wantInts(t, "tries", w.took(), []int{1, 1})
 }
 
+// A step cut off by shutdown is no error either, so the log does not say one.
 func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
-	t.Parallel()
+	log := captureLog(t)
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: context.Canceled}}
 	r := newRounds(w, newClock())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	r.run(ctx)
+	wantContains(t, "log", log.String(), "stopped before a step finished")
+	wantNotContains(t, "log", log.String(), "level=ERROR")
 	w.errs[1] = nil
 	r.run(t.Context())
 	wantInts(t, "tries", w.took(), []int{1, 1})

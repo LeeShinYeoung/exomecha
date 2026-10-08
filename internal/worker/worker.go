@@ -144,10 +144,12 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 				d.forget(n)
 				return
 			}
-			// An error from shutdown says nothing about the issue.
-			if ctx.Err() == nil {
-				d.strike(n, now)
+			// An error from shutdown says nothing about the issue, and the next start finishes the step.
+			if ctx.Err() != nil {
+				log.Info("stopped before a step finished", "issue", n, "err", err)
+				return
 			}
+			d.strike(n, now)
 			log.Error("handle failed", "issue", n, "err", err)
 		})
 	}
