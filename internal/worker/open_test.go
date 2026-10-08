@@ -239,17 +239,17 @@ func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 	wantContains(t, "log", log.String(), "a secret in the build output")
 }
 
-func TestOpenRunsTheRolesTier(t *testing.T) {
+func TestOpenRunsTheRolesModel(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		ro   role
 		tier label.Tier // the spec's
-		want label.Tier
+		want agent.Model
 	}{
-		{reviewerRole, "", label.Heavy},
-		{resolverRole, "", label.Light},
-		{builderRole, "", label.Normal},
-		{builderRole, label.Light, label.Light},
+		{reviewerRole, "", testModels[label.Heavy]},
+		{resolverRole, "", testResolverModel},
+		{builderRole, "", testModels[label.Normal]},
+		{builderRole, label.Light, testModels[label.Light]},
 	} {
 		name := c.ro.name
 		if c.tier != "" {
@@ -266,8 +266,8 @@ func TestOpenRunsTheRolesTier(t *testing.T) {
 			if problem, err := e.runs.open(t.Context(), c.ro, 1, s); problem != "" || err != nil {
 				t.Fatalf("open = %q, %v", problem, err)
 			}
-			if got := e.startedModel(e.runs.name(c.ro, 1)); got != testModels[c.want] {
-				t.Errorf("claude got %v, want %s's %v", got, c.want, testModels[c.want])
+			if got := e.startedModel(e.runs.name(c.ro, 1)); got != c.want {
+				t.Errorf("claude got %v, want %v", got, c.want)
 			}
 		})
 	}
@@ -275,14 +275,20 @@ func TestOpenRunsTheRolesTier(t *testing.T) {
 
 func TestOpenWithoutAModelCreatesNoSandbox(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	delete(e.runs.Models, label.Normal)
-	s, name := e.testSpec()
-	if problem, err := e.runs.open(t.Context(), builderRole, 1, s); problem != "" || err == nil {
-		t.Errorf("open = %q, %v, want an error", problem, err)
-	}
-	if e.sbx.exists(name) {
-		t.Error("a sandbox was created")
+	for _, ro := range []role{builderRole, resolverRole} {
+		t.Run(ro.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+			delete(e.runs.Models, label.Normal)
+			e.runs.ResolverModel = agent.Model{}
+			s, _ := e.testSpec()
+			if problem, err := e.runs.open(t.Context(), ro, 1, s); problem != "" || err == nil {
+				t.Errorf("open = %q, %v, want an error", problem, err)
+			}
+			if name := e.runs.name(ro, 1); e.sbx.exists(name) {
+				t.Error("a sandbox was created")
+			}
+		})
 	}
 }
 

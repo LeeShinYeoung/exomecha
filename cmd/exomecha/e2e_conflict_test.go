@@ -25,8 +25,8 @@ func TestE2EConflict(t *testing.T) {
 		}
 	}
 	w.waitFor("resolver", aStart, func() bool { noReview(); return w.started(resolver) })
-	if args := w.claudeArgs(resolver); !strings.Contains(args, "--effort low") {
-		t.Errorf("resolver runs claude as %q, want the light tier", args)
+	if args := w.claudeArgs(resolver); !strings.Contains(args, "--effort medium") {
+		t.Errorf("resolver runs claude as %q, want resolver's own model", args)
 	}
 	w.waitFor("the merge", aRun, func() bool { noReview(); return w.head(branchOf(prd)) != before })
 	head := w.head(branchOf(prd))

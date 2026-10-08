@@ -49,7 +49,8 @@ type Deps struct {
 	GitName  string
 	GitEmail string
 	// Models has a model for every tier.
-	Models map[label.Tier]agent.Model
+	Models        map[label.Tier]agent.Model
+	ResolverModel agent.Model
 	// Zero takes the default. Only the e2e tests shorten them.
 	Interval time.Duration // between two checks of a worker, and the first wait after an error
 	CIGrace  time.Duration

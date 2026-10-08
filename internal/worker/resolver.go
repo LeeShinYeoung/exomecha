@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
@@ -26,7 +27,8 @@ var resolverRole = role{
 	project: true,
 	from:    label.Review,
 	back:    label.Review,
-	tier:    label.Light,
+	// A conflict asks the same judgment whatever the PRD's tier.
+	model: func(d Deps) agent.Model { return d.ResolverModel },
 }
 
 // begin does nothing when the PRD branch is missing or already has the base branch.

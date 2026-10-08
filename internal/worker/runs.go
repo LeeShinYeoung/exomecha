@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
@@ -97,8 +98,10 @@ type role struct {
 	// ready is builder's alone: a start moves the PRD from ready to from, and a start that is
 	// undone or starts over moves it back.
 	ready label.Status
-	// tier picks the model of the role's runs, unless the spec names one.
-	tier label.Tier
+	// tier picks the model of the role's runs, unless the spec names one. model, when set, picks
+	// it instead of any tier.
+	tier  label.Tier
+	model func(Deps) agent.Model
 }
 
 type run struct {
