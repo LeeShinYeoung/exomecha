@@ -48,7 +48,7 @@ The practice project is plain POSIX sh, so claude needs nothing installed to bui
 | Conflict | resolver merges main into a conflicting PR on the light tier, with a merge commit that ends with `PRD: #<n>` and passing tests. reviewer does not take the PR while it conflicts. |
 | Contradiction | A PR that main contradicts goes stuck with a question, and resolver settles it the way the answer says. builder never takes part. |
 | SetupAndCommitChecks | The setup script runs before claude and can start a Docker service, its files stay out of the PR, and builder's and resolver's commits pass a `commit-msg` hook. |
-| StartRefusesBadModels | exomecha refuses to start on haiku or on a misspelled model. |
+| StartRefusesUnknownModel | exomecha refuses to start on a misspelled model. |
 
 Not covered by the suite:
 - Killing exomecha with `kill -9`. Starting again picks the runs up the same way as after Ctrl-C, and a start cut off halfway is covered by the unit tests.

@@ -55,21 +55,14 @@ func TestE2ESetupAndCommitChecks(t *testing.T) {
 	w.gh.CloseIssue(prd)
 }
 
-func TestE2EStartRefusesBadModels(t *testing.T) {
+// Not haiku: claude sometimes reports auto permission mode for it, and then the start goes ahead.
+// TestCheckStream covers a model claude does not run in auto permission mode.
+func TestE2EStartRefusesUnknownModel(t *testing.T) {
 	e2e(t, false)
-	for _, c := range []struct{ model, want string }{
-		{"haiku:low", "auto permission mode"},
-		{"opsu:low", "opsu"},
-	} {
-		m, err := agent.ParseModel(c.model)
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg := defaults()
-		cfg.light = m
-		err = serve(t.Context(), cfg)
-		if err == nil || !strings.Contains(err.Error(), "EXOMECHA_TIER_LIGHT") || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("start with light %s: %v, want a refusal naming EXOMECHA_TIER_LIGHT and %q", c.model, err, c.want)
-		}
+	cfg := defaults()
+	cfg.light = agent.Model{Name: "opsu", Effort: "low"}
+	err := serve(t.Context(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "EXOMECHA_TIER_LIGHT") || !strings.Contains(err.Error(), "opsu") {
+		t.Errorf("start with light opsu: %v, want a refusal naming EXOMECHA_TIER_LIGHT and opsu", err)
 	}
 }

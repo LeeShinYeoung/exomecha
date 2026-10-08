@@ -81,11 +81,10 @@ func TestRealCheck(t *testing.T) {
 	if err := (Claude{}).Check(t.Context(), Model{Name: "opus", Effort: "low"}); err != nil {
 		t.Errorf("Check(opus) = %v, want nil", err)
 	}
-	for _, m := range []Model{{Name: "haiku", Effort: "low"}, {Name: "opsu", Effort: "low"}} {
-		err := (Claude{}).Check(t.Context(), m)
-		if err == nil {
-			t.Errorf("Check(%s) = nil, want an error", m.Name)
-		}
-		t.Logf("Check(%s): %v", m.Name, err)
+	// Not haiku: claude sometimes reports auto permission mode for it.
+	err := (Claude{}).Check(t.Context(), Model{Name: "opsu", Effort: "low"})
+	if err == nil {
+		t.Error("Check(opsu) = nil, want an error")
 	}
+	t.Logf("Check(opsu): %v", err)
 }
