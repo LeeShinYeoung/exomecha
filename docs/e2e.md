@@ -39,12 +39,12 @@ The practice project is plain POSIX sh, so claude needs nothing installed to bui
 
 | Test | What it checks |
 |---|---|
-| HappyPath | A PRD with no tier label builds with opus, the PR closes the PRD, the commit has the token owner as author and ends with `PRD: #<n>`, the PR's tests pass, and reviewer approves with a COMMENT review and leaves the PR open. |
-| StuckAndBack | builder asks for a missing decision and goes stuck. After an answer and a relabel, it uses the answer. |
+| HappyPath | A PRD with no tier label builds with opus, the PR closes the PRD, the commit has the token owner as author and ends with `PRD: #<n>`, the PR's tests pass, builder leaves its summary on the PR, and reviewer approves with a COMMENT review and leaves the PR open. |
+| StuckAndBack | builder asks for a missing decision and goes stuck with a notice that names it. After an answer and a relabel, it uses the answer. |
 | BlockedHost | builder names the host the sandbox blocked. After the host is added to allowed-hosts, the PR opens. |
 | Restart | Stopping exomecha leaves a running build's sandbox alone, and after a restart the build is collected without starting claude again. |
-| SentBackByReview | A wrong commit gets a review asking for changes, and builder fixes it on the same PR. |
-| SentBackByPerson | A person's review and line comment reach builder's input, comments from accounts without write access do not, and builder does what the person asked on the same PR. |
+| SentBackByReview | A wrong commit gets reviewer's review asking for changes, which reaches builder's record, and builder fixes it on the same PR. |
+| SentBackByPerson | A person's review and line comment reach builder's record after reviewer's approval, comments from accounts without write access do not, and builder does what the person asked on the same PR. |
 | Conflict | resolver merges main into a conflicting PR on its own model, with a merge commit that ends with `PRD: #<n>` and passing tests. reviewer does not take the PR while it conflicts. |
 | Contradiction | A PR that main contradicts goes stuck with a question, and resolver settles it the way the answer says. builder never takes part. |
 | SetupAndCommitChecks | The setup script runs before claude and can start a Docker service, its files stay out of the PR, and builder's and resolver's commits pass a `commit-msg` hook. |
