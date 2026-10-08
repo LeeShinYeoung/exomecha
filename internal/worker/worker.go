@@ -43,6 +43,8 @@ type Deps struct {
 	// Prep is the PRD repository's clone, whose base branch holds the files that prepare a project
 	// run's sandbox. It is one of the Repos' when the PRD repository is one of them.
 	Prep *git.Git
+	// Secrets go into every project run's sandbox. sbx hands the AI only their placeholders.
+	Secrets []sandbox.Secret
 
 	Sandboxes   Sandboxes
 	Environment Environment
@@ -78,7 +80,9 @@ type Sandboxes interface {
 	Allow(ctx context.Context, name string, hosts []string) error
 	Exec(ctx context.Context, name, dir string, env []string, args ...string) ([]byte, error)
 	// Start returns at once and leaves args running after the exec session ends.
-	Start(ctx context.Context, name, dir string, args ...string) error
+	Start(ctx context.Context, name, dir string, env []string, args ...string) error
+	// SetSecret has sbx keep s for the sandbox only, until the sandbox is removed.
+	SetSecret(ctx context.Context, name string, s sandbox.Secret) error
 	// Remove of a sandbox that does not exist is not an error.
 	Remove(ctx context.Context, name string) error
 	GitURL(name, dir string) string

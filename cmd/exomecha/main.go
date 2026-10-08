@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,6 +50,7 @@ type config struct {
 	prd                     target   // whose issues are the PRDs
 	repos                   []target // the repositories PRDs may change
 	base, token             string
+	secrets                 []sandbox.Secret
 	fiveHour, weekly        float64
 	projectLimit, readLimit int
 	reviewLimit             int
@@ -117,6 +120,19 @@ func configFromEnv() (config, error) {
 			c.prd = t
 		}
 	}
+	for _, kv := range os.Environ() {
+		key, value, _ := strings.Cut(kv, "=")
+		name, ok := strings.CutPrefix(key, secretPrefix)
+		if !ok {
+			continue
+		}
+		secret, err := parseSecret(name, value)
+		if err != nil {
+			return config{}, err
+		}
+		c.secrets = append(c.secrets, secret)
+	}
+	slices.SortFunc(c.secrets, func(a, b sandbox.Secret) int { return strings.Compare(a.Env, b.Env) })
 	var err error
 	if c.fiveHour, err = usageLimit("EXOMECHA_FIVE_HOUR_LIMIT", c.fiveHour); err != nil {
 		return config{}, err
@@ -146,6 +162,63 @@ func configFromEnv() (config, error) {
 		return config{}, err
 	}
 	return c, nil
+}
+
+const secretPrefix = "EXOMECHA_SECRET_"
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// parseSecret reads EXOMECHA_SECRET_<name>: the hosts, separated by commas, then a space and the
+// command that prints the value.
+func parseSecret(name, value string) (sandbox.Secret, error) {
+	env := secretPrefix + name
+	hosts, command, _ := strings.Cut(strings.TrimSpace(value), " ")
+	s := sandbox.Secret{Env: name, Command: strings.TrimSpace(command)}
+	if !envName.MatchString(name) {
+		return s, fmt.Errorf("%s: %q is not an environment variable name", env, name)
+	}
+	if s.Command == "" {
+		return s, fmt.Errorf("%s must hold the hosts, a space, and the command that prints the value: %q", env, value)
+	}
+	for h := range strings.SplitSeq(hosts, ",") {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			return s, fmt.Errorf("%s lists an empty host: %q", env, hosts)
+		}
+		// The proxy would hand the value to any request the AI makes there, so it could push past exomecha's checks.
+		for _, gh := range []string{"github.com", "api.github.com"} {
+			if hostMatches(strings.ToLower(h), gh) {
+				return s, fmt.Errorf("%s: %s reaches %s, and the AI could use the secret on GitHub", env, h, gh)
+			}
+		}
+		s.Hosts = append(s.Hosts, h)
+	}
+	return s, nil
+}
+
+// hostMatches reports whether an sbx host pattern covers host: "*" stands for one label and "**"
+// for any number of them.
+func hostMatches(pattern, host string) bool {
+	var match func(p, h []string) bool
+	match = func(p, h []string) bool {
+		switch {
+		case len(p) == 0:
+			return len(h) == 0
+		case p[0] == "**":
+			for i := 0; i <= len(h); i++ {
+				if match(p[1:], h[i:]) {
+					return true
+				}
+			}
+			return false
+		case len(h) == 0:
+			return false
+		case p[0] == "*" || p[0] == h[0]:
+			return match(p[1:], h[1:])
+		}
+		return false
+	}
+	return match(strings.Split(pattern, "."), strings.Split(host, "."))
 }
 
 func parseTarget(env, repo string) (target, error) {
@@ -280,6 +353,7 @@ func serve(ctx context.Context, c config) error {
 		PRDRepo:       c.prd.full(),
 		Repos:         repos,
 		Prep:          prep,
+		Secrets:       c.secrets,
 		Sandboxes:     sbx,
 		Environment:   template.New(prep, sbx, c.prd.owner, c.prd.name),
 		SandboxDir:    filepath.Join(c.root, "sandboxes"),

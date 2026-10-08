@@ -107,9 +107,31 @@ func (CLI) Exec(ctx context.Context, name, dir string, env []string, args ...str
 }
 
 // Start runs args in the sandbox in a session of their own, and returns without waiting for them.
-// They keep running after the exec session ends, until they exit or the sandbox stops.
-func (c CLI) Start(ctx context.Context, name, dir string, args ...string) error {
-	_, err := c.Exec(ctx, name, dir, nil, append([]string{"sh", "-c", `setsid -f "$@" </dev/null >/dev/null 2>&1`, "sh"}, args...)...)
+// They keep running after the exec session ends, until they exit or the sandbox stops. env may be empty.
+func (c CLI) Start(ctx context.Context, name, dir string, env []string, args ...string) error {
+	_, err := c.Exec(ctx, name, dir, env, append([]string{"sh", "-c", `setsid -f "$@" </dev/null >/dev/null 2>&1`, "sh"}, args...)...)
+	return err
+}
+
+// Secret is a value the sbx proxy puts into the requests a sandbox sends to Hosts, in place of a
+// placeholder. The sandbox never holds the value.
+type Secret struct {
+	Env     string // the environment variable that holds the placeholder
+	Hosts   []string
+	Command string // prints the value, on this machine
+}
+
+// Placeholder is what the sandbox holds instead of the value. It is no secret.
+func (s Secret) Placeholder() string { return "exomecha-secret-" + strings.ToLower(s.Env) }
+
+// SetSecret has sbx keep s for the sandbox only. It goes away with the sandbox. sbx does not set
+// the environment variable in a sandbox that already exists, so the caller passes Env itself.
+func (CLI) SetSecret(ctx context.Context, name string, s Secret) error {
+	args := []string{"secret", "set-custom", "--sandbox", name, "--env", s.Env, "--placeholder", s.Placeholder(), "--command", s.Command}
+	for _, h := range s.Hosts {
+		args = append(args, "--host", h)
+	}
+	_, err := run(ctx, args...)
 	return err
 }
 

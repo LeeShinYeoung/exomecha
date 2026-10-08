@@ -11,6 +11,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
 // otherRepo is another repository PRDs may change, with a GitHub and an origin of its own.
@@ -390,5 +391,34 @@ func TestResolverMergesOnlyTheRepositoryThatConflicts(t *testing.T) {
 		if len(p.Comments) != 1 || !strings.Contains(p.Comments[0].Body, "kept both lines") {
 			t.Errorf("PR #%d comments = %+v, want how resolver resolved", p.Number, p.Comments)
 		}
+	}
+}
+
+func TestProjectRunsGetTheSecretsAsPlaceholders(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, setupRepo("printf '%s' \"$NPM_TOKEN\" > "+setupMarker+"\n"))
+	secret := sandbox.Secret{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com"}, Command: "/bin/echo token"}
+	e.deps.Secrets = []sandbox.Secret{secret}
+	e.newRuns()
+	prd, name := e.startedPRD()
+
+	box := e.sbx.box(name)
+	if len(box.secrets) != 1 || box.secrets[0].Env != "NPM_TOKEN" {
+		t.Errorf("builder's sandbox secrets = %+v, want NPM_TOKEN", box.secrets)
+	}
+	if b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker)); err != nil || string(b) != secret.Placeholder() {
+		t.Errorf("setup saw NPM_TOKEN = %q, %v, want the placeholder", b, err)
+	}
+	if env := box.startEnvs[0]; len(env) != 1 || env[0] != "NPM_TOKEN="+secret.Placeholder() {
+		t.Errorf("claude's environment = %q, want the placeholder", env)
+	}
+
+	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
+	e.step(prd)
+	e.gh.SetMergeable(e.gh.Pulls()[0].Number, new(true))
+	e.review(prd)
+	reviewer := e.sbx.box(e.reviewerBox(prd))
+	if len(reviewer.secrets) != 0 || len(reviewer.startEnvs[0]) != 0 {
+		t.Errorf("reviewer's sandbox got secrets %+v and environment %q, want none", reviewer.secrets, reviewer.startEnvs[0])
 	}
 }

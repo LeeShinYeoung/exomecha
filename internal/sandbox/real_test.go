@@ -65,7 +65,7 @@ func TestRealSandbox(t *testing.T) {
 
 	exit := filepath.Join(workspace, "exit")
 	script := "sleep 2; (echo new > new.txt && git add new.txt && git -c user.name=test -c user.email=test@example.com commit -qm work) > " + exit + ".log 2>&1; echo $? > " + exit
-	if err := sbx.Start(ctx, name, repo, "sh", "-c", script); err != nil {
+	if err := sbx.Start(ctx, name, repo, nil, "sh", "-c", script); err != nil {
 		t.Fatal(err)
 	}
 	for {
@@ -112,7 +112,7 @@ func TestRealSandbox(t *testing.T) {
 
 	// worker counts a run as dead when its sandbox is not running and claude wrote no exit file.
 	stopped := filepath.Join(workspace, "stopped-exit")
-	if err := sbx.Start(ctx, name, "", "sh", "-c", "sleep 600; echo 0 > "+stopped); err != nil {
+	if err := sbx.Start(ctx, name, "", nil, "sh", "-c", "sleep 600; echo 0 > "+stopped); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.CommandContext(ctx, "sbx", "stop", name).CombinedOutput(); err != nil {
@@ -139,5 +139,41 @@ func TestRealSandbox(t *testing.T) {
 		if b.Name == name {
 			t.Errorf("%s still listed after Remove: %+v", name, b)
 		}
+	}
+}
+
+// TestRealSecret checks that a secret sbx keeps for one sandbox goes away with it.
+func TestRealSecret(t *testing.T) {
+	if os.Getenv("EXOMECHA_TEST_SBX") != "1" {
+		t.Skip("set EXOMECHA_TEST_SBX=1 to run against the real sbx")
+	}
+	sbx := sandbox.CLI{}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	name := fmt.Sprintf("impl-secret-test-%d", time.Now().UnixNano()%1_000_000)
+	t.Cleanup(func() { sbx.Remove(context.Background(), name) })
+	if err := sbx.Create(ctx, name, "", t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	s := sandbox.Secret{Env: "IMPL_TOKEN", Hosts: []string{"example.com"}, Command: "/bin/echo not-a-real-token"}
+	if err := sbx.SetSecret(ctx, name, s); err != nil {
+		t.Fatal(err)
+	}
+	listed := func() bool {
+		t.Helper()
+		out, err := exec.CommandContext(ctx, "sbx", "secret", "ls", "--json").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Contains(string(out), s.Placeholder()) && strings.Contains(string(out), name)
+	}
+	if !listed() {
+		t.Error("sbx secret ls does not list the secret for the sandbox")
+	}
+	if err := sbx.Remove(ctx, name); err != nil {
+		t.Fatal(err)
+	}
+	if listed() {
+		t.Error("the secret is still listed after the sandbox went")
 	}
 }

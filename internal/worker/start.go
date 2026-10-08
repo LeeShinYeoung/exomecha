@@ -259,7 +259,23 @@ func (r *runs) create(ctx context.Context, ro role, n int) (*problem, error) {
 	if err == nil && ro.project {
 		err = r.Sandboxes.Allow(ctx, name, hosts)
 	}
+	for _, secret := range r.Secrets {
+		if err == nil && ro.project {
+			err = r.Sandboxes.SetSecret(ctx, name, secret)
+		}
+	}
 	return nil, err
+}
+
+// secretEnv sets each secret's environment variable to its placeholder in a project run.
+func (r *runs) secretEnv(ro role) []string {
+	var env []string
+	if ro.project {
+		for _, s := range r.Secrets {
+			env = append(env, s.Env+"="+s.Placeholder())
+		}
+	}
+	return env
 }
 
 // send puts one repository's code at dir in the run's sandbox: the base branch's commit as
@@ -299,7 +315,7 @@ func (r *runs) launch(ctx context.Context, ro role, n int, model agent.Model, in
 		}
 	}
 	args := append([]string{"sh", filepath.Join(ctl, "run.sh"), ctl, "claude"}, agent.Args(prompt(ro.name), ro.schema, model)...)
-	if err := r.Sandboxes.Start(ctx, name, repoDir, args...); err != nil {
+	if err := r.Sandboxes.Start(ctx, name, repoDir, r.secretEnv(ro), args...); err != nil {
 		return err
 	}
 	return r.record(name, in)

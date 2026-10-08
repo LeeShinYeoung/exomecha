@@ -28,7 +28,7 @@ type fakeSandboxes struct {
 
 	mu    sync.Mutex
 	boxes map[string]*fakeBox
-	fail  map[string]error // by sbx verb: create, allow, exec, start, remove
+	fail  map[string]error // by sbx verb: create, allow, exec, start, secret, remove
 	// An exec whose command line contains this fails, as sbx failing that one command.
 	failExec string
 }
@@ -39,7 +39,9 @@ type fakeBox struct {
 	deny      []string
 	allowed   []string
 	stopped   bool
+	secrets   []sandbox.Secret
 	starts    [][]string // dir, then args
+	startEnvs [][]string
 	execs     [][]string
 	envs      [][]string
 }
@@ -168,7 +170,7 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 	return stdout.Bytes(), nil
 }
 
-func (f *fakeSandboxes) Start(_ context.Context, name, dir string, args ...string) error {
+func (f *fakeSandboxes) Start(_ context.Context, name, dir string, env []string, args ...string) error {
 	if err := f.failing("start"); err != nil {
 		return err
 	}
@@ -179,6 +181,21 @@ func (f *fakeSandboxes) Start(_ context.Context, name, dir string, args ...strin
 		return fmt.Errorf("sandbox %s not found", name)
 	}
 	b.starts = append(b.starts, append([]string{dir}, args...))
+	b.startEnvs = append(b.startEnvs, env)
+	return nil
+}
+
+func (f *fakeSandboxes) SetSecret(_ context.Context, name string, s sandbox.Secret) error {
+	if err := f.failing("secret"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.boxes[name]
+	if !ok {
+		return fmt.Errorf("sandbox %s not found", name)
+	}
+	b.secrets = append(b.secrets, s)
 	return nil
 }
 

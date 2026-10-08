@@ -44,7 +44,7 @@ func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep s
 	// The timeout inside the sandbox stops the script. This one only covers sbx itself hanging.
 	runCtx, cancel := context.WithTimeout(ctx, setupTimeout+time.Minute)
 	defer cancel()
-	env := []string{"EXOMECHA_PRD=" + strconv.Itoa(n), "EXOMECHA_REPOS=" + reposEnv(runs)}
+	env := append([]string{"EXOMECHA_PRD=" + strconv.Itoa(n), "EXOMECHA_REPOS=" + reposEnv(runs)}, r.secretEnv(ro)...)
 	out, err := r.Sandboxes.Exec(runCtx, name, repoDir, env, "sh", "-c", script, "sh", r.ctl(name))
 	if err != nil {
 		return "", nil, fmt.Errorf("run %s: %w", setupScript, err)
