@@ -16,42 +16,51 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
-// take brings the commit the run left checked out into the shared clone, for the worker to push.
-// ok is false when the run went to stuck or starts over instead, and err is set only when a step
-// failed. said is what the AI said about its work, for a stuck comment.
-func (r *runs) take(ctx context.Context, ro role, n int, in inputs, said string) (head string, ok bool, err error) {
-	// rev-parse exits 1 for an unborn HEAD, which sh would report as an error.
-	out, err := r.sh(ctx, ro, n, "git rev-parse -q --verify HEAD || true")
-	if err != nil {
-		return "", false, err
-	}
-	// A fetch would fail the same way on every try.
-	if strings.TrimSpace(out) == "" {
-		return "", false, r.stuck(ctx, ro, n, "The AI left its repository with no commit checked out, so there is nothing to push.\n\n"+said)
-	}
+// take brings the commits the run left checked out in the repositories of runs into their shared
+// clones, for the worker to push, and returns them in the same order. ok is false when the run went
+// to stuck or starts over instead, and err is set only when a step failed. said is what the AI said
+// about its work, for a stuck comment.
+func (r *runs) take(ctx context.Context, ro role, n int, runs []repoRun, said string) (heads []string, ok bool, err error) {
 	name := r.name(ro, n)
-	if head, err = r.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, repoDir), name); err != nil {
-		return "", false, err
+	for _, rr := range runs {
+		repo, found := r.repo(rr.Repo)
+		if !found {
+			return nil, false, r.stuck(ctx, ro, n, fmt.Sprintf("The run changed %s, which is no longer one of the repositories exomecha may change, so nothing was pushed.\n\n%s", rr.Repo, said))
+		}
+		// rev-parse exits 1 for an unborn HEAD, which sh would report as an error.
+		out, err := r.sh(ctx, ro, n, rr.Dir, "git rev-parse -q --verify HEAD || true")
+		if err != nil {
+			return nil, false, err
+		}
+		// A fetch would fail the same way on every try.
+		if strings.TrimSpace(out) == "" {
+			return nil, false, r.stuck(ctx, ro, n, "The AI left its repository"+rr.where()+" with no commit checked out, so there is nothing to push.\n\n"+said)
+		}
+		head, err := repo.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, rr.Dir), name)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := repo.Git.Sync(ctx); err != nil {
+			return nil, false, err
+		}
+		remote, _, err := repo.Git.Rev(ctx, repo.Git.RemoteRef(branchName(n)))
+		if err != nil {
+			return nil, false, err
+		}
+		if rr.moved(remote, head) {
+			return nil, false, r.restart(ctx, ro, n)
+		}
+		// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
+		kept, err := repo.Git.IsAncestor(ctx, rr.Head, head)
+		if err != nil {
+			return nil, false, err
+		}
+		if !kept {
+			return nil, false, r.stuck(ctx, ro, n, "The AI rewrote commits that were already on the branch"+rr.where()+", so they cannot be pushed.\n\n"+said)
+		}
+		heads = append(heads, head)
 	}
-	if err := r.Git.Sync(ctx); err != nil {
-		return "", false, err
-	}
-	remote, _, err := r.Git.Rev(ctx, r.Git.RemoteRef(branchName(n)))
-	if err != nil {
-		return "", false, err
-	}
-	if in.moved(remote, head) {
-		return "", false, r.restart(ctx, ro, n)
-	}
-	// GitHub refuses a push that rewrites the branch, and it would refuse it again on every retry.
-	kept, err := r.Git.IsAncestor(ctx, in.Head, head)
-	if err != nil {
-		return "", false, err
-	}
-	if !kept {
-		return "", false, r.stuck(ctx, ro, n, "The AI rewrote commits that were already on the branch, so they cannot be pushed.\n\n"+said)
-	}
-	return head, true, nil
+	return heads, true, nil
 }
 
 const badResult = "the AI's result was not in the expected form"

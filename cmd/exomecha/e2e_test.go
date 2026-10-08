@@ -92,8 +92,9 @@ func newWorld(t *testing.T, short string, files map[string]string, opts ...func(
 
 	w.root = t.TempDir()
 	w.cfg = defaults()
-	w.cfg.owner, w.cfg.name, w.cfg.base, w.cfg.token = e2eOwner, w.repo, "main", "e2e-token-"+randomHex(8)
-	w.cfg.apiURL, w.cfg.gitURL, w.cfg.root = w.gh.URL, w.origin, w.root
+	w.cfg.prd = target{owner: e2eOwner, name: w.repo, apiURL: w.gh.URL, gitURL: w.origin}
+	w.cfg.repos = []target{w.cfg.prd}
+	w.cfg.base, w.cfg.token, w.cfg.root = "main", "e2e-token-"+randomHex(8), w.root
 	w.cfg.interval, w.cfg.ciGrace = 5*time.Second, 15*time.Second
 	for _, o := range opts {
 		o(&w.cfg)
@@ -350,7 +351,8 @@ func (w *world) testsPass(ref string) error {
 // The person's side of GitHub.
 
 func (w *world) filePRD(p prdText, labels ...string) int {
-	n := w.gh.AddIssue(p.title, p.body, append([]string{label.PRD}, labels...)...)
+	body := "## Repositories\n\n- " + e2eOwner + "/" + w.repo + "\n\n" + p.body
+	n := w.gh.AddIssue(p.title, body, append([]string{label.PRD}, labels...)...)
 	w.track(n)
 	return n
 }

@@ -17,7 +17,7 @@ const resolverDone = `{"result": "resolved", "reason": "kept both lines"}`
 // conflictPRD sets up a PRD in review whose branch and main both changed since the branch
 // started, and whose PR GitHub reports as conflicting. It returns the branch head.
 func (e *env) conflictPRD(feature, main map[string]string) (prd, pr int, head string) {
-	prd = e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
+	prd = e.addPRD("PRD", "PRD body", label.PRD, string(label.Review))
 	head = gittest.Commit(e.t, e.origin, branchName(prd), "main", feature)
 	gittest.Commit(e.t, e.origin, "main", "", main)
 	pr = e.gh.AddPull(branchName(prd), "main")
@@ -284,7 +284,7 @@ func TestResolverNothingToMerge(t *testing.T) {
 	t.Parallel()
 	// The script fails if setup runs, which it must not with nothing to merge.
 	e := newEnv(t, setupRepo("exit 1\n"))
-	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
+	prd := e.addPRD("PRD", "PRD body", label.PRD, string(label.Review))
 	head := gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})
 	pr := e.gh.AddPull(branchName(prd), "main")
 	e.gh.SetMergeable(pr, new(false))

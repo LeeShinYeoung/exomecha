@@ -96,14 +96,20 @@ func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error)
 }
 
 type spec struct {
-	branch string // checked out in the run's repository, and set to head
+	repos []repoSpec
+	input string     // claude's input. open adds what setup and the merge did.
+	tier  label.Tier // "" for the role's tier
+}
+
+// repoSpec is what one repository of a run gets.
+type repoSpec struct {
+	repo   *Repo
+	branch string // checked out in the repository, and set to head. "" leaves base checked out, detached
 	base   string // the base branch commit
 	head   string // the commit claude starts from
 	remote string // the PRD branch on GitHub, "" when there is none
 	// merge merges the base branch after setup and lists the conflicts in the input.
 	merge bool
-	input string     // claude's input. open adds what setup and the merge did.
-	tier  label.Tier // "" for the role's tier
 }
 
 // problem stops a start, and only a person can fix it. why goes into the stuck comment, and
@@ -164,34 +170,58 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 	if model == (agent.Model{}) {
 		return nil, fmt.Errorf("no model for %s", cmp.Or(string(tier), ro.name))
 	}
+	// The sandbox files are read at one commit of the PRD repository for the whole start.
+	var prep string
+	if ro.project {
+		var err error
+		if prep, err = r.prepBase(ctx, s); err != nil {
+			return nil, err
+		}
+	}
 	if p, err := r.create(ctx, ro, n); p != nil || err != nil {
 		return p, err
 	}
-	if err := r.send(ctx, ro, n, s); err != nil {
-		return nil, err
+	in := inputs{Repos: make([]repoRun, len(s.repos))}
+	for i, rs := range s.repos {
+		in.Repos[i] = repoRun{Repo: rs.repo.Name, Dir: dirOf(len(s.repos), rs.repo), Base: rs.base, Head: rs.head, Remote: rs.remote, Merge: rs.merge}
+		if err := r.send(ctx, ro, n, rs, in.Repos[i].Dir); err != nil {
+			return nil, err
+		}
 	}
 	// Before setup, so the project's script can change what the defaults set.
 	if err := r.defaults(ctx, ro, n); err != nil {
 		return nil, err
 	}
-	in, input := inputs{Base: s.base, Head: s.head, Remote: s.remote}, s.input
+	input := s.input
 	if ro.project {
-		note, p, err := r.setup(ctx, ro, n, s)
+		note, p, err := r.setup(ctx, ro, n, in.Repos, prep)
 		if p != nil || err != nil {
 			return p, err
 		}
 		input += note
 	}
 	// After setup, not before: conflict markers in a manifest or lockfile would break an install.
-	if s.merge {
-		conflicts, note, p, err := r.merge(ctx, ro, n)
+	for i := range in.Repos {
+		if !in.Repos[i].Merge {
+			continue
+		}
+		note, p, err := r.merge(ctx, ro, n, &in.Repos[i])
 		if p != nil || err != nil {
 			return p, err
 		}
-		in.Conflicts = conflicts
 		input += note
 	}
 	return nil, r.launch(ctx, ro, n, model, input, in)
+}
+
+// prepBase is the PRD repository's base branch commit. A repository of the run already synced it.
+func (r *runs) prepBase(ctx context.Context, s spec) (string, error) {
+	for _, rs := range s.repos {
+		if rs.repo.Git == r.Prep {
+			return rs.base, nil
+		}
+	}
+	return baseCommit(ctx, r.Prep)
 }
 
 // create makes the run's sandbox, from the project's template and with its allowed hosts for a
@@ -232,31 +262,31 @@ func (r *runs) create(ctx context.Context, ro role, n int) (*problem, error) {
 	return nil, err
 }
 
-// send puts the code in the run's repository: the base branch's commit as origin/<base>, and
-// s.head checked out as s.branch.
-func (r *runs) send(ctx context.Context, ro role, n int, s spec) error {
+// send puts one repository's code at dir in the run's sandbox: the base branch's commit as
+// origin/<base>, and rs.head checked out as rs.branch.
+func (r *runs) send(ctx context.Context, ro role, n int, rs repoSpec, dir string) error {
 	name := r.name(ro, n)
-	if _, err := r.git(ctx, name, "", "init", "-q", repoDir); err != nil {
+	if _, err := r.git(ctx, name, "", "init", "-q", dir); err != nil {
 		return err
 	}
 	if ro.project {
 		// Before setup, so the project's script can set another.
 		for _, kv := range [][2]string{{"user.name", r.GitName}, {"user.email", r.GitEmail}} {
-			if _, err := r.git(ctx, name, repoDir, "config", kv[0], kv[1]); err != nil {
+			if _, err := r.git(ctx, name, dir, "config", kv[0], kv[1]); err != nil {
 				return err
 			}
 		}
 	}
-	if err := r.Git.SendTo(ctx, r.Sandboxes.GitURL(name, repoDir), s.base, s.branch, s.head); err != nil {
+	if err := rs.repo.Git.SendTo(ctx, r.Sandboxes.GitURL(name, dir), rs.base, rs.branch, rs.head); err != nil {
 		return err
 	}
-	checkout := []string{"checkout", "-q", s.branch}
-	if s.branch == "" {
+	checkout := []string{"checkout", "-q", rs.branch}
+	if rs.branch == "" {
 		// Detached, since SendTo sent no branch: git refuses a push to the branch checked out, and
 		// a new repository's unborn branch has whatever name the image's git config gives it.
-		checkout = []string{"checkout", "-q", "--detach", r.Git.BaseRef()}
+		checkout = []string{"checkout", "-q", "--detach", rs.repo.Git.BaseRef()}
 	}
-	_, err := r.git(ctx, name, repoDir, checkout...)
+	_, err := r.git(ctx, name, dir, checkout...)
 	return err
 }
 
@@ -306,13 +336,13 @@ func (r *runs) git(ctx context.Context, name, dir string, args ...string) (strin
 	return string(out), err
 }
 
-func (r *runs) sh(ctx context.Context, ro role, n int, script string, args ...string) (string, error) {
-	out, err := r.Sandboxes.Exec(ctx, r.name(ro, n), repoDir, nil, append([]string{"sh", "-c", script, "sh"}, args...)...)
+func (r *runs) sh(ctx context.Context, ro role, n int, dir, script string, args ...string) (string, error) {
+	out, err := r.Sandboxes.Exec(ctx, r.name(ro, n), dir, nil, append([]string{"sh", "-c", script, "sh"}, args...)...)
 	return string(out), err
 }
 
-func (r *runs) changes(ctx context.Context, name string) (string, error) {
-	out, err := r.git(ctx, name, repoDir, "status", "--porcelain")
+func (r *runs) changes(ctx context.Context, name, dir string) (string, error) {
+	out, err := r.git(ctx, name, dir, "status", "--porcelain")
 	// Not TrimSpace: a line for an unstaged change starts with a space.
 	return strings.TrimRight(out, "\n"), err
 }
@@ -332,25 +362,45 @@ func splitStatus(out string) (output string, code int, err error) {
 	return output, code, nil
 }
 
-// merge merges the base branch in the run's repository but stops before the merge commit, so the
-// AI makes that commit itself and sees whatever the project's commit checks report. note lists the
-// conflicted files for claude's input. The problem is set when git refused the merge without a conflict.
-func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, note string, p *problem, err error) {
+// where names the repository in a run of several, for a comment or the input, and is "" in a run
+// of one.
+func (rr repoRun) where() string {
+	if rr.Dir == repoDir {
+		return ""
+	}
+	return " in " + rr.Repo
+}
+
+// folder is the repository's folder in the run's sandbox, relative to where claude starts.
+func (rr repoRun) folder() string {
+	return strings.TrimPrefix(strings.TrimPrefix(rr.Dir, repoDir), "/")
+}
+
+// merge merges the base branch in one repository of the run but stops before the merge commit, so
+// the AI makes that commit itself and sees whatever the project's commit checks report. It lists
+// the conflicted files in rr.Conflicts and in note, for claude's input. The problem is set when git
+// refused the merge without a conflict.
+func (r *runs) merge(ctx context.Context, ro role, n int, rr *repoRun) (note string, p *problem, err error) {
+	repo, ok := r.repo(rr.Repo)
+	if !ok {
+		return "", nil, fmt.Errorf("no repository %s", rr.Repo)
+	}
 	// The exit status comes back on stdout, apart from sbx's own failures. diff3 puts the original
 	// lines between the two sides of a conflict, so the AI sees what each side changed.
-	out, err := r.sh(ctx, ro, n, `git -c merge.conflictStyle=diff3 merge --no-commit --no-ff "$1" 2>&1; echo $?`, r.Git.BaseRef())
+	out, err := r.sh(ctx, ro, n, rr.Dir, `git -c merge.conflictStyle=diff3 merge --no-commit --no-ff "$1" 2>&1; echo $?`, repo.Git.BaseRef())
 	if err != nil {
-		return nil, "", nil, err
+		return "", nil, err
 	}
 	output, code, err := splitStatus(out)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("merge: %w", err)
+		return "", nil, fmt.Errorf("merge: %w", err)
 	}
+	var conflicts []string
 	if code != 0 {
 		// -z keeps non-ASCII file names as they are instead of quoting them.
-		list, err := r.sh(ctx, ro, n, "git diff --name-only -z --diff-filter=U")
+		list, err := r.sh(ctx, ro, n, rr.Dir, "git diff --name-only -z --diff-filter=U")
 		if err != nil {
-			return nil, "", nil, err
+			return "", nil, err
 		}
 		for f := range strings.SplitSeq(list, "\x00") {
 			if f != "" {
@@ -360,18 +410,23 @@ func (r *runs) merge(ctx context.Context, ro role, n int) (conflicts []string, n
 	}
 	if code != 0 && len(conflicts) == 0 {
 		// The same merge fails the same way on every try, so only a person can get past it.
-		return nil, "", &problem{
-			why: fmt.Sprintf("Merging `%s` into this PRD's branch in the sandbox failed without a conflict, so the AI did not start. "+
-				"Fix what git reports, then relabel this issue as below. You don't need to answer.", r.Git.Base()),
+		return "", &problem{
+			why: fmt.Sprintf("Merging `%s` into this PRD's branch%s in the sandbox failed without a conflict, so the AI did not start. "+
+				"Fix what git reports, then relabel this issue as below. You don't need to answer.", repo.Git.Base(), rr.where()),
 			outputs: map[string]string{"merge.log": output},
 		}, nil
 	}
-	note = fmt.Sprintf("## Conflicted files (merging `%s`)\n\n", r.Git.BaseRef())
+	rr.Conflicts = conflicts
+	in := ""
+	if f := rr.folder(); f != "" {
+		in = " in `" + f + "/`"
+	}
+	note = fmt.Sprintf("## Conflicted files%s (merging `%s`)\n\n", in, repo.Git.BaseRef())
 	if len(conflicts) == 0 {
 		note += "None. The merge only needs to be committed.\n"
 	}
 	for _, f := range conflicts {
 		note += "- " + f + "\n"
 	}
-	return conflicts, note, nil, nil
+	return note, nil, nil
 }

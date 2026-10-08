@@ -50,7 +50,7 @@ func TestRunStates(t *testing.T) {
 	e.wantState(name, preparing)
 	e.sbx.add(name)
 	e.wantState(name, preparing)
-	if err := e.runs.record(name, inputs{Head: "abc"}); err != nil {
+	if err := e.runs.record(name, inputs{Repos: []repoRun{{Head: "abc"}}}); err != nil {
 		t.Fatal(err)
 	}
 	e.wantState(name, running)

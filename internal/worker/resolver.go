@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
@@ -45,8 +46,8 @@ type resolver struct {
 
 func (*resolver) Name() string { return resolverRole.name }
 
-// Pick returns the PRDs in review or approved whose PR conflicts, and every PRD that has a resolver
-// sandbox.
+// Pick returns the PRDs in review or approved with a PR that conflicts, and every PRD that has a
+// resolver sandbox.
 func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	review, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
@@ -58,7 +59,7 @@ func (r *resolver) Pick(ctx context.Context) ([]int, error) {
 	}
 	var picked []int
 	for _, t := range append(review, approved...) {
-		p, err := r.place(ctx, t)
+		p, _, err := r.place(ctx, t)
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +75,7 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
-	p, err := r.place(ctx, prd)
+	p, prs, err := r.place(ctx, prd)
 	if err != nil {
 		return err
 	}
@@ -84,56 +85,78 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 		return r.GitHub.SetStatus(ctx, n, label.Approved, label.Review)
 	}
 	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
-		func(ctx context.Context) error { return r.start(ctx, prd) },
+		func(ctx context.Context) error { return r.start(ctx, prd, prs) },
 		func(ctx context.Context, run run) error { return r.collect(ctx, n, run.in) })
 }
 
-func (r *resolver) place(ctx context.Context, prd github.Issue) (place, error) {
+// place is away for a PRD whose Repositories section is wrong, which reviewer sends to stuck.
+func (r *resolver) place(ctx context.Context, prd github.Issue) (place, []repoPR, error) {
 	approved := holds(prd, label.Approved)
 	if !approved && !holds(prd, label.Review) {
-		return away, nil
+		return away, nil, nil
 	}
-	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
+	repos, why := r.prdRepos(prd)
+	if why != "" {
+		return away, nil, nil
+	}
+	prs, err := prdPRs(ctx, repos, prd.Number)
 	if err != nil {
-		return away, err
+		return away, nil, err
 	}
-	conflicts := conflicting(pr, ok)
+	conflicts := conflicting(prs)
 	switch {
 	case approved && conflicts:
-		return stale, nil
+		return stale, prs, nil
 	case approved:
-		return away, nil
+		return away, prs, nil
 	case conflicts:
-		return ready, nil
+		return ready, prs, nil
 	}
-	return clean, nil
+	return clean, prs, nil
 }
 
-func (r *resolver) start(ctx context.Context, prd github.Issue) error {
+// start merges the base branch in each repository whose PR conflicts. The sandbox gets the PRD's
+// other repositories too, as builder's does, so the AI can see how they fit.
+func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) error {
 	n := prd.Number
-	base, err := baseCommit(ctx, r.Git)
-	if err != nil {
-		return err
-	}
 	branch := branchName(n)
-	head, ok, err := r.Git.Rev(ctx, r.Git.RemoteRef(branch))
-	if err != nil || !ok {
-		return err
+	var s spec
+	var shown []runRepo
+	for _, p := range prs {
+		base, err := baseCommit(ctx, p.repo.Git)
+		if err != nil {
+			return err
+		}
+		rs := repoSpec{repo: p.repo, base: base, head: base}
+		if p.open.Number != 0 {
+			head, ok, err := p.repo.Git.Rev(ctx, p.repo.Git.RemoteRef(branch))
+			if err != nil || !ok {
+				return err
+			}
+			rs.branch, rs.head, rs.remote = branch, head, head
+			if conflicting([]repoPR{p}) {
+				// The branch may already have the base branch, and GitHub has not caught up yet.
+				upToDate, err := p.repo.Git.IsAncestor(ctx, base, head)
+				if err != nil {
+					return err
+				}
+				rs.merge = !upToDate
+			}
+		}
+		s.repos = append(s.repos, rs)
+		shown = append(shown, runRepo{repo: p.repo, pr: p.open.Number})
 	}
-	// The branch already has the base branch, and GitHub has not caught up yet. Leave before setup runs for nothing.
-	if upToDate, err := r.Git.IsAncestor(ctx, base, head); err != nil || upToDate {
-		return err
+	// Leave before setup runs for nothing.
+	if !slices.ContainsFunc(s.repos, func(rs repoSpec) bool { return rs.merge }) {
+		return nil
 	}
 	return r.runs.start(ctx, resolverRole, n, func(ctx context.Context) (spec, error) {
-		pr, _, err := r.GitHub.OpenPR(ctx, branch)
+		input, err := record(ctx, r.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
-		input, err := record(ctx, r.GitHub, r.Git.BaseRef(), prd, pr)
-		if err != nil {
-			return spec{}, err
-		}
-		return spec{branch: branch, base: base, head: head, remote: head, merge: true, input: input}, nil
+		s.input = input
+		return s, nil
 	})
 }
 
@@ -154,54 +177,74 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		return r.runs.failed(ctx, resolverRole, n, badResult)
 	}
 
-	head, ok, err := r.runs.take(ctx, resolverRole, n, in, out.Reason)
+	// Only the merges are resolver's to push. Anything else the AI changed stays in the sandbox.
+	var merges []repoRun
+	for _, rr := range in.Repos {
+		if rr.Merge {
+			merges = append(merges, rr)
+		}
+	}
+	heads, ok, err := r.runs.take(ctx, resolverRole, n, merges, out.Reason)
 	if err != nil || !ok {
 		return err
 	}
-	problem, err := r.unfinished(ctx, n, head, in)
-	if err != nil {
-		return err
+	for i, rr := range merges {
+		problem, err := r.unfinished(ctx, n, rr, heads[i])
+		if err != nil {
+			return err
+		}
+		if problem != "" {
+			return r.runs.stuck(ctx, resolverRole, n, problem+"\n\n"+out.Reason)
+		}
 	}
-	if problem != "" {
-		return r.runs.stuck(ctx, resolverRole, n, problem+"\n\n"+out.Reason)
-	}
-	if err := r.Git.PushCommit(ctx, head, branchName(n), false); err != nil {
-		return err
+	for i, rr := range merges {
+		repo, _ := r.runs.repo(rr.Repo)
+		if err := repo.Git.PushCommit(ctx, heads[i], branchName(n), false); err != nil {
+			return err
+		}
 	}
 	// The record shows reviewer and the next workers how the merge was settled.
-	pr, ok, err := r.GitHub.OpenPR(ctx, branchName(n))
-	if err != nil {
-		return err
-	}
-	if ok {
-		if err := r.GitHub.AddComment(ctx, pr, github.Note{Worker: resolverRole.name, Kind: github.KindResolved}, out.Reason); err != nil {
+	for _, rr := range in.Repos {
+		repo, ok := r.runs.repo(rr.Repo)
+		if !ok {
+			continue
+		}
+		pr, open, err := repo.GitHub.OpenPR(ctx, branchName(n))
+		if err != nil {
 			return err
+		}
+		if open {
+			if err := repo.GitHub.AddComment(ctx, pr, github.Note{Worker: resolverRole.name, Kind: github.KindResolved}, out.Reason); err != nil {
+				return err
+			}
 		}
 	}
 	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
 	return r.runs.done(ctx, resolverRole, n)
 }
 
-// unfinished returns what is still wrong after the AI reported the merge resolved, or "" if nothing is.
-func (r *resolver) unfinished(ctx context.Context, n int, head string, in inputs) (string, error) {
+// unfinished returns what is still wrong in one repository after the AI reported the merge
+// resolved, or "" if nothing is.
+func (r *resolver) unfinished(ctx context.Context, n int, rr repoRun, head string) (string, error) {
+	repo, _ := r.runs.repo(rr.Repo)
 	// rev-parse exits 1 when there is no merge in progress, which sh would report as an error.
-	merging, err := r.runs.sh(ctx, resolverRole, n, "git rev-parse -q --verify MERGE_HEAD || true")
+	merging, err := r.runs.sh(ctx, resolverRole, n, rr.Dir, "git rev-parse -q --verify MERGE_HEAD || true")
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(merging) != "" {
-		return "The AI said the conflicts were resolved, but the merge was not committed.", nil
+		return "The AI said the conflicts were resolved, but the merge" + rr.where() + " was not committed.", nil
 	}
-	left, err := r.Git.ConflictMarkers(ctx, head, in.Conflicts)
+	left, err := repo.Git.ConflictMarkers(ctx, head, rr.Conflicts)
 	if err != nil {
 		return "", err
 	}
 	if len(left) > 0 {
-		return "The AI said the conflicts were resolved, but conflict markers remain in: " + strings.Join(left, ", "), nil
+		return "The AI said the conflicts were resolved, but conflict markers remain" + rr.where() + " in: " + strings.Join(left, ", "), nil
 	}
-	ok, err := r.Git.IsAncestor(ctx, in.Base, head)
+	ok, err := repo.Git.IsAncestor(ctx, rr.Base, head)
 	if err != nil || ok {
 		return "", err
 	}
-	return "The AI committed, but the result does not include the base branch.", nil
+	return "The AI committed, but the result" + rr.where() + " does not include the base branch.", nil
 }

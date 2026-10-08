@@ -18,7 +18,7 @@ import (
 
 func (e *env) rev(ref string) string {
 	e.t.Helper()
-	commit, ok, err := e.deps.Git.Rev(e.t.Context(), ref)
+	commit, ok, err := e.git.Rev(e.t.Context(), ref)
 	if err != nil || !ok {
 		e.t.Fatalf("Rev(%s) = %q, %v, %v", ref, commit, ok, err)
 	}
@@ -28,11 +28,11 @@ func (e *env) rev(ref string) string {
 // testSpec is a builder run for PRD 1 on a new branch off main, and the name of its sandbox.
 func (e *env) testSpec() (spec, string) {
 	e.t.Helper()
-	if err := e.deps.Git.Sync(e.t.Context()); err != nil {
+	if err := e.git.Sync(e.t.Context()); err != nil {
 		e.t.Fatal(err)
 	}
 	base := e.rev("origin/main")
-	return spec{branch: branchName(1), base: base, head: base, input: "the PRD\n\n"}, e.runs.name(builderRole, 1)
+	return spec{repos: []repoSpec{{repo: e.repo, branch: branchName(1), base: base, head: base}}, input: "the PRD\n\n"}, e.runs.name(builderRole, 1)
 }
 
 func (e *env) open(s spec) *problem {
@@ -88,11 +88,11 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 		t.Errorf("network: deny %q, allowed %q", box.deny, box.allowed)
 	}
 	repo := e.sbx.repo(name)
-	if got := gittest.Run(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); got != s.branch {
-		t.Errorf("sandbox repository is on %q, want %s", got, s.branch)
+	if got := gittest.Run(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); got != s.repos[0].branch {
+		t.Errorf("sandbox repository is on %q, want %s", got, s.repos[0].branch)
 	}
-	if got := gittest.Run(t, repo, "rev-parse", "origin/main"); got != s.base {
-		t.Errorf("origin/main in the sandbox = %s, want %s", got, s.base)
+	if got := gittest.Run(t, repo, "rev-parse", "origin/main"); got != s.repos[0].base {
+		t.Errorf("origin/main in the sandbox = %s, want %s", got, s.repos[0].base)
 	}
 	if got := gittest.Run(t, repo, "remote"); got != "" {
 		t.Errorf("sandbox repository has remotes: %q", got)
@@ -129,7 +129,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 		t.Errorf("run.sh = %q", got)
 	}
 	r, err := e.runs.read(t.Context(), builderRole, 1)
-	if err != nil || r.state != running || r.in.Head != s.head {
+	if err != nil || r.state != running || r.in.Repos[0].Head != s.repos[0].head {
 		t.Errorf("after open: %+v, %v", r, err)
 	}
 }
@@ -143,7 +143,7 @@ func TestRunsNeverSeeTheToken(t *testing.T) {
 		t.Fatalf("open problem: %s", p.why)
 	}
 	reader := e.runs.name(reviewerRole, 1)
-	s.branch = ""
+	s.repos[0].branch = ""
 	if p, err := e.runs.open(t.Context(), reviewerRole, 1, s); p != nil || err != nil {
 		t.Fatalf("reviewer open = %+v, %v", p, err)
 	}
@@ -185,7 +185,7 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	e.envr.err = errors.New("read the project's environment")
 	e.sbx.fail["allow"] = errors.New("allow hosts")
 	s, _ := e.testSpec()
-	s.branch = ""
+	s.repos[0].branch = ""
 	name := e.runs.name(reviewerRole, 1)
 
 	if p, err := e.runs.open(t.Context(), reviewerRole, 1, s); p != nil || err != nil {
@@ -200,8 +200,8 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	if got := gittest.Run(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
 		t.Errorf("sandbox repository is on %q, want a detached HEAD", got)
 	}
-	if got := gittest.Run(t, repo, "rev-parse", "HEAD"); got != s.base {
-		t.Errorf("sandbox repository is at %s, want the base %s", got, s.base)
+	if got := gittest.Run(t, repo, "rev-parse", "HEAD"); got != s.repos[0].base {
+		t.Errorf("sandbox repository is at %s, want the base %s", got, s.repos[0].base)
 	}
 	if got := gittest.Run(t, repo, "for-each-ref", "--format=%(refname)"); got != "refs/remotes/origin/main" {
 		t.Errorf("sandbox refs = %q, want only origin/main", got)
@@ -262,7 +262,7 @@ func TestOpenRunsTheRolesModel(t *testing.T) {
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			s, _ := e.testSpec()
 			if !c.ro.project {
-				s.branch = ""
+				s.repos[0].branch = ""
 			}
 			s.tier = c.tier
 			if p, err := e.runs.open(t.Context(), c.ro, 1, s); p != nil || err != nil {
@@ -430,7 +430,7 @@ func TestSetupOnABranchOlderThanTheScript(t *testing.T) {
 	old := gittest.Commit(t, e.origin, branchName(1), "main", map[string]string{"feature.txt": "first\n"})
 	gittest.Commit(t, e.origin, "main", "", setupRepo("echo ran > "+setupMarker+"\n"))
 	s, _ := e.testSpec()
-	s.head = old
+	s.repos[0].head = old
 
 	e.wantOpenProblem(s, "changed the working copy", "merge the base branch into `"+branchName(1)+"`")
 }

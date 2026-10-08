@@ -34,8 +34,15 @@ type Worker interface {
 }
 
 type Deps struct {
+	// GitHub is the PRD repository's. Its issues are the PRDs.
 	GitHub *github.Client
-	Git    *git.Git
+	// PRDRepo is the PRD repository, as owner/name.
+	PRDRepo string
+	// Repos are the repositories PRDs may change.
+	Repos []*Repo
+	// Prep is the PRD repository's clone, whose base branch holds the files that prepare a project
+	// run's sandbox. It is one of the Repos' when the PRD repository is one of them.
+	Prep *git.Git
 
 	Sandboxes   Sandboxes
 	Environment Environment
@@ -273,40 +280,53 @@ func prompt(name string) string {
 	return b.String()
 }
 
+// runRepo is one repository of a run, as the run's input shows it.
+type runRepo struct {
+	repo *Repo
+	pr   int // the PRD's open PR there, 0 for none
+}
+
 // record is the start of every run's input: the PRD, where its work is, and everything written on
-// the PRD and on its PR (pr, or 0 for none), oldest first. Every worker gets the same record, so
-// each sees what people asked and what the other workers did. Only what people who can write to
-// the repository wrote goes in, so outsiders cannot steer the AI.
-func record(ctx context.Context, gh *github.Client, base string, prd github.Issue, pr int) (string, error) {
+// the PRD and on its open PRs, oldest first. Every worker gets the same record, so each sees what
+// people asked and what the other workers did. Only what people who can write to the repository
+// wrote goes in, so outsiders cannot steer the AI.
+func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (string, error) {
 	type entry struct {
 		github.Comment
 		where string
 	}
 	var entries []entry
-	comments, err := gh.Comments(ctx, prd.Number)
+	comments, err := d.GitHub.Comments(ctx, prd.Number)
 	if err != nil {
 		return "", err
 	}
 	for _, c := range comments {
 		entries = append(entries, entry{c, "PRD"})
 	}
-	if pr != 0 {
-		comments, err := gh.PRComments(ctx, pr)
+	seen := map[string]bool{}
+	for _, rr := range repos {
+		if rr.pr == 0 {
+			continue
+		}
+		comments, err := rr.repo.GitHub.PRComments(ctx, rr.pr)
 		if err != nil {
 			return "", err
 		}
 		for _, c := range comments {
-			entries = append(entries, entry{c, fmt.Sprintf("PR #%d", pr)})
+			// exomecha posts the same entry on each of a PRD's PRs.
+			key := c.Note.Worker + "\x00" + c.Note.Kind + "\x00" + strings.TrimSpace(c.Body)
+			if c.Exomecha && seen[key] {
+				continue
+			}
+			seen[key] = c.Exomecha
+			entries = append(entries, entry{c, "PR " + d.issueRef(d.PRDRepo, rr.repo.Name, rr.pr)})
 		}
 	}
 	slices.SortStableFunc(entries, func(a, b entry) int { return a.CreatedAt.Compare(b.CreatedAt) })
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# PRD #%d: %s\n\n%s\n\n## Run\n\n", prd.Number, prd.Title, strings.TrimSpace(prd.Body))
-	if pr != 0 {
-		fmt.Fprintf(&b, "- PR #%d, on branch `%s`.\n", pr, branchName(prd.Number))
-	}
-	fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `git diff %s...HEAD`.\n\n", base, base)
+	b.WriteString(d.run(prd.Number, repos))
 	b.WriteString("## Record\n\nOldest first. Each entry says who wrote it and where.\n\n")
 	written := false
 	for _, e := range entries {
@@ -327,6 +347,32 @@ func record(ctx context.Context, gh *github.Client, base string, prd github.Issu
 		b.WriteString("Nothing yet.\n\n")
 	}
 	return b.String(), nil
+}
+
+// run is the record's Run section: where each repository is, its PR, and its base branch.
+func (d Deps) run(n int, repos []runRepo) string {
+	var b strings.Builder
+	write := func(rr runRepo, git string) {
+		if rr.pr != 0 {
+			fmt.Fprintf(&b, "- PR %s, on branch `%s`.\n", d.issueRef(d.PRDRepo, rr.repo.Name, rr.pr), branchName(n))
+		}
+		base := rr.repo.Git.BaseRef()
+		fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `%s diff %s...HEAD`.\n", base, git, base)
+		fmt.Fprintf(&b, "- Commit messages here end with `PRD: %s`.\n\n", d.ref(rr.repo.Name, n))
+	}
+	if len(repos) == 1 {
+		write(repos[0], "git")
+		return b.String()
+	}
+	b.WriteString("This PRD changes several repositories. Each is in a folder of its own in this directory.\n\n")
+	for _, rr := range repos {
+		fmt.Fprintf(&b, "### `%s/`: %s\n\n", rr.repo.folder(), rr.repo.Name)
+		if rr.pr == 0 {
+			b.WriteString("- No PR.\n")
+		}
+		write(rr, "git -C "+rr.repo.folder())
+	}
+	return b.String()
 }
 
 func writer(c github.Comment) string {
@@ -354,21 +400,6 @@ func baseCommit(ctx context.Context, g *git.Git) (string, error) {
 		err = fmt.Errorf("no %s", g.BaseRef())
 	}
 	return base, err
-}
-
-func prdPR(ctx context.Context, gh *github.Client, n int) (pr github.PR, ok bool, err error) {
-	number, ok, err := gh.OpenPR(ctx, branchName(n))
-	if err != nil || !ok {
-		return pr, false, err
-	}
-	pr, err = gh.PR(ctx, number)
-	return pr, err == nil, err
-}
-
-// conflicting splits the PRDs in review between the workers: an open PR that conflicts is
-// resolver's, and any other, even one GitHub has not checked yet, is reviewer's.
-func conflicting(pr github.PR, ok bool) bool {
-	return ok && pr.Mergeable != nil && !*pr.Mergeable
 }
 
 // holds reports whether the issue is an open PRD with status as its only status.

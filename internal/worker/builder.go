@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github"
@@ -96,8 +97,13 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
-	return b.runs.step(ctx, builderRole, n, builderTable[b.place(prd)],
-		func(ctx context.Context) error { return b.start(ctx, prd) },
+	p := b.place(prd)
+	repos, why := b.prdRepos(prd)
+	if p != away && why != "" {
+		return b.runs.invalid(ctx, builderRole, prd, why)
+	}
+	return b.runs.step(ctx, builderRole, n, builderTable[p],
+		func(ctx context.Context) error { return b.start(ctx, prd, repos) },
 		func(ctx context.Context, run run) error { return b.collect(ctx, prd, run.in) })
 }
 
@@ -111,48 +117,58 @@ func (b *builder) place(prd github.Issue) place {
 	return away
 }
 
-func (b *builder) start(ctx context.Context, prd github.Issue) error {
+func (b *builder) start(ctx context.Context, prd github.Issue, repos []*Repo) error {
 	n := prd.Number
 	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
 		return err
 	}
 	return b.runs.start(ctx, builderRole, n, func(ctx context.Context) (spec, error) {
 		branch := branchName(n)
-		base, err := baseCommit(ctx, b.Git)
+		s := spec{tier: label.TierOf(prd.Labels)}
+		var shown []runRepo
+		var logs string
+		for _, repo := range repos {
+			base, err := baseCommit(ctx, repo.Git)
+			if err != nil {
+				return spec{}, err
+			}
+			remote, hasRemote, err := repo.Git.Rev(ctx, repo.Git.RemoteRef(branch))
+			if err != nil {
+				return spec{}, err
+			}
+			pr, hasPR, err := repo.GitHub.OpenPR(ctx, branch)
+			if err != nil {
+				return spec{}, err
+			}
+			rs := repoSpec{repo: repo, branch: branch, base: base, head: base, remote: remote}
+			if hasPR {
+				if !hasRemote {
+					return spec{}, fmt.Errorf("PR %s#%d has no branch %s", repo.Name, pr, branch)
+				}
+				rs.head = remote
+				logs += b.ciLogs(ctx, repo, len(repos), remote)
+			}
+			s.repos = append(s.repos, rs)
+			shown = append(shown, runRepo{repo: repo, pr: pr})
+		}
+		input, err := record(ctx, b.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
-		remote, hasRemote, err := b.Git.Rev(ctx, b.Git.RemoteRef(branch))
-		if err != nil {
-			return spec{}, err
+		s.input = input
+		if logs != "" {
+			s.input += "## CI logs\n\nThe end of the log of each CI job that failed on the latest commit of the PRD's PRs.\n\n" + logs
 		}
-		pr, hasPR, err := b.GitHub.OpenPR(ctx, branch)
-		if err != nil {
-			return spec{}, err
-		}
-		input, err := record(ctx, b.GitHub, b.Git.BaseRef(), prd, pr)
-		if err != nil {
-			return spec{}, err
-		}
-		s := spec{branch: branch, base: base, head: base, remote: remote, input: input,
-			tier: label.TierOf(prd.Labels)}
-		if !hasPR {
-			return s, nil
-		}
-		if !hasRemote {
-			return spec{}, fmt.Errorf("PR #%d has no branch %s", pr, branch)
-		}
-		s.head = remote
-		s.input += b.ciLogs(ctx, remote)
 		return s, nil
 	})
 }
 
-// ciLogs is the end of the log of each CI job that failed on commit sha. It goes to builder's input
-// only and never into a comment, since a log holds whatever the project's CI printed. A log that
-// cannot be read is left out, since builder can still run the checks itself.
-func (b *builder) ciLogs(ctx context.Context, sha string) string {
-	ci, failed, err := b.GitHub.CheckCI(ctx, sha)
+// ciLogs is the end of the log of each CI job that failed on commit sha of repo. It goes to
+// builder's input only and never into a comment, since a log holds whatever the project's CI
+// printed. A log that cannot be read is left out, since builder can still run the checks itself.
+// count is how many repositories the run has, which name theirs.
+func (b *builder) ciLogs(ctx context.Context, repo *Repo, count int, sha string) string {
+	ci, failed, err := repo.GitHub.CheckCI(ctx, sha)
 	if err != nil {
 		slog.WarnContext(ctx, "side task failed", logging.Task, "check CI for its logs", logging.Err, err)
 		return ""
@@ -160,21 +176,22 @@ func (b *builder) ciLogs(ctx context.Context, sha string) string {
 	if ci != github.CIFailed {
 		return ""
 	}
+	prefix := ""
+	if count > 1 {
+		prefix = repo.Name + ": "
+	}
 	var out strings.Builder
 	for _, run := range failed {
-		logs, err := b.GitHub.FailedJobLogs(ctx, run.ID)
+		logs, err := repo.GitHub.FailedJobLogs(ctx, run.ID)
 		if err != nil {
 			slog.WarnContext(ctx, "side task failed", logging.Task, "read the logs of CI run "+run.Name, logging.Err, err)
 			continue
 		}
 		for _, l := range logs {
-			fmt.Fprintf(&out, "### %s: %s\n\n```\n%s\n```\n\n", run.Name, l.Job, l.Tail)
+			fmt.Fprintf(&out, "### %s%s: %s\n\n```\n%s\n```\n\n", prefix, run.Name, l.Job, l.Tail)
 		}
 	}
-	if out.Len() == 0 {
-		return ""
-	}
-	return "## CI logs\n\nThe end of the log of each CI job that failed on the PR's latest commit.\n\n" + out.String()
+	return out.String()
 }
 
 func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) error {
@@ -196,39 +213,65 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		return b.runs.failed(ctx, builderRole, n, badResult)
 	}
 
-	head, ok, err := b.runs.take(ctx, builderRole, n, in, out.Summary)
+	heads, ok, err := b.runs.take(ctx, builderRole, n, in.Repos, out.Summary)
 	if err != nil || !ok {
 		return err
 	}
-	if head == in.Head {
-		changes, err := b.runs.changes(ctx, b.runs.name(builderRole, n))
-		if err != nil {
-			return err
+	var changed []int
+	for i, rr := range in.Repos {
+		if heads[i] != rr.Head {
+			changed = append(changed, i)
 		}
-		if changes != "" {
-			return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes.\n\n"+out.Summary)
+	}
+	if len(changed) == 0 {
+		for _, rr := range in.Repos {
+			changes, err := b.runs.changes(ctx, b.runs.name(builderRole, n), rr.Dir)
+			if err != nil {
+				return err
+			}
+			if changes != "" {
+				return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes"+rr.where()+".\n\n"+out.Summary)
+			}
 		}
 		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).\n\n"+out.Summary)
 	}
-	// A run that did not start from the branch began from the base branch, so it replaces any old
-	// branch of the same name.
-	if err := b.Git.PushCommit(ctx, head, branch, in.Head != in.Remote); err != nil {
-		return err
+	// Merging one PR finishes the PRD only when it changes a single repository. With several,
+	// exomecha closes the PRD once all its PRs are merged.
+	keyword := "Closes"
+	if len(in.Repos) > 1 {
+		keyword = "Part of"
 	}
-	pr, hasPR, err := b.GitHub.OpenPR(ctx, branch)
-	if err != nil {
-		return err
-	}
-	if !hasPR {
-		// "Closes" is what makes GitHub link the PR and the PRD to each other.
-		pr, err = b.GitHub.CreatePR(ctx, branch, b.Git.Base(), prd.Title, fmt.Sprintf("Closes #%d\n\n%s", n, out.Summary))
+	var prs []runRepo
+	for i, rr := range in.Repos {
+		repo, _ := b.runs.repo(rr.Repo)
+		if slices.Contains(changed, i) {
+			// A run that did not start from the branch began from the base branch, so it replaces any
+			// old branch of the same name.
+			if err := repo.Git.PushCommit(ctx, heads[i], branch, rr.Head != rr.Remote); err != nil {
+				return err
+			}
+		}
+		pr, hasPR, err := repo.GitHub.OpenPR(ctx, branch)
 		if err != nil {
 			return err
 		}
+		if !hasPR && slices.Contains(changed, i) {
+			// The keyword is what makes GitHub link the PR and the PRD to each other.
+			body := fmt.Sprintf("%s %s\n\n%s", keyword, b.ref(repo.Name, n), out.Summary)
+			if pr, err = repo.GitHub.CreatePR(ctx, branch, repo.Git.Base(), prd.Title, body); err != nil {
+				return err
+			}
+			hasPR = true
+		}
+		if hasPR {
+			prs = append(prs, runRepo{repo: repo, pr: pr})
+		}
 	}
-	// Every run's summary goes on the PR, where the record shows the next worker what this run did.
-	if err := b.GitHub.AddComment(ctx, pr, github.Note{Worker: builderRole.name, Kind: github.KindSummary}, out.Summary); err != nil {
-		return err
+	// Every run's summary goes on the PRs, where the record shows the next worker what this run did.
+	for _, p := range prs {
+		if err := p.repo.GitHub.AddComment(ctx, p.pr, github.Note{Worker: builderRole.name, Kind: github.KindSummary}, out.Summary); err != nil {
+			return err
+		}
 	}
 	if err := b.GitHub.SetStatus(ctx, n, label.Working, label.Review); err != nil {
 		return err

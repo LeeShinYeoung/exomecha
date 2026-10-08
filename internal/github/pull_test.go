@@ -8,25 +8,29 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 )
 
-func TestMerged(t *testing.T) {
+func TestLastClosedPR(t *testing.T) {
 	s := githubtest.New(t)
 	client := clientOf(t, s)
 	const branch = "exomecha/prd-1"
-	want := func(what string, merged bool) {
+	want := func(what string, number int, merged, ok bool) {
 		t.Helper()
-		if got, err := client.Merged(t.Context(), branch); err != nil || got != merged {
-			t.Errorf("%s: Merged = %v, %v, want %v", what, got, err, merged)
+		n, m, found, err := client.LastClosedPR(t.Context(), branch)
+		if err != nil || n != number || m != merged || found != ok {
+			t.Errorf("%s: LastClosedPR = %d, %v, %v, %v, want %d, %v, %v", what, n, m, found, err, number, merged, ok)
 		}
 	}
 
-	want("no PR", false)
-	first := s.AddPull(branch, "main")
-	s.ClosePull(first)
-	want("closed without a merge", false)
-	s.MergePull(s.AddPull(branch, "main"))
-	want("merged", true)
-	s.ClosePull(s.AddPull(branch, "main"))
-	want("closed after a merged one", false)
+	want("no PR", 0, false, false)
+	open := s.AddPull(branch, "main")
+	want("an open PR", 0, false, false)
+	s.ClosePull(open)
+	want("closed without a merge", open, false, true)
+	merged := s.AddPull(branch, "main")
+	s.MergePull(merged)
+	want("merged", merged, true, true)
+	closed := s.AddPull(branch, "main")
+	s.ClosePull(closed)
+	want("closed after a merged one", closed, false, true)
 }
 
 func TestParseNote(t *testing.T) {
@@ -59,7 +63,11 @@ func TestSendBacks(t *testing.T) {
 	pr := s.AddPull("exomecha/prd-1", "main")
 	want := func(what string, n int) {
 		t.Helper()
-		if got, err := client.SendBacks(t.Context(), prd, pr); err != nil || got != n {
+		comments, err := client.Comments(t.Context(), prd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := client.SendBacks(t.Context(), pr, comments); err != nil || got != n {
 			t.Errorf("%s: SendBacks = %d, %v, want %d", what, got, err, n)
 		}
 	}

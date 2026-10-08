@@ -29,7 +29,7 @@ func (e *env) reviewerBox(n int) string { return e.runs.name(reviewerRole, n) }
 // reviewPRD sets up a PRD in review, with a pushed branch and an open, mergeable PR. With no
 // CI runs set, its head commit is an hour old.
 func (e *env) reviewPRD() (prd, pr int, sha string) {
-	prd = e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Review))
+	prd = e.addPRD("PRD", "PRD body", label.PRD, string(label.Review))
 	sha = gittest.Commit(e.t, e.origin, branchName(prd), "main", map[string]string{"feature.txt": "x\n"})
 	pr = e.gh.AddPull(branchName(prd), "main")
 	e.gh.SetMergeable(pr, new(true))

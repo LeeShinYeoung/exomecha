@@ -103,7 +103,7 @@ func resolverCells(t *testing.T) tableWorker {
 		},
 		away: leave(label.Ready),
 		place: func(e *env, n int) place {
-			p, err := e.resolver().place(t.Context(), e.issue(n))
+			p, _, err := e.resolver().place(t.Context(), e.issue(n))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -174,7 +174,7 @@ func reviewerCells(t *testing.T) tableWorker {
 			},
 		},
 		place: func(e *env, n int) place {
-			p, _, _, err := e.reviewer().look(t.Context(), e.issue(n))
+			p, _, _, err := e.reviewer().look(t.Context(), e.issue(n), e.deps.Repos)
 			if err != nil {
 				t.Fatal(err)
 			}
