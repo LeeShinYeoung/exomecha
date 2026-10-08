@@ -29,7 +29,9 @@ func NewAt(apiURL, owner, repo, token string) (*Client, error) {
 var requestTimeout = 30 * time.Second
 
 func newClient(owner, repo string, opts ...gh.ClientOptionsFunc) (*Client, error) {
-	opts = append(opts, gh.WithTimeout(requestTimeout), gh.WithTransport(newETagTransport(http.DefaultTransport)))
+	// rateWatch under etagTransport, which hands back an older answer for a 304.
+	watch := &rateWatch{base: http.DefaultTransport, now: time.Now}
+	opts = append(opts, gh.WithTimeout(requestTimeout), gh.WithTransport(newETagTransport(watch)))
 	api, err := gh.NewClient(opts...)
 	if err != nil {
 		return nil, err
