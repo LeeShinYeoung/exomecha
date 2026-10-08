@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
 // usageFresh is how long one usage reading is shared by every worker. Each reading is a small claude call.
@@ -44,14 +45,15 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 
 	u := g.usage
 	closed := u.Known && (u.Rejected || u.FiveHour.Used >= g.FiveHour || u.Weekly.Used >= g.Weekly)
+	// Not ctx: the usage is every worker's, not the PRD's whose start read it.
 	if closed != g.closed {
 		g.closed = closed
 		if closed {
 			slog.Warn("Claude usage over the limit, pausing new work",
-				"five_hour", percent(u.FiveHour.Used), "five_hour_resets", u.FiveHour.ResetsAt.Local().Format(time.DateTime),
-				"weekly", percent(u.Weekly.Used), "weekly_resets", u.Weekly.ResetsAt.Local().Format(time.DateTime))
+				logging.FiveHour, percent(u.FiveHour.Used), logging.Weekly, percent(u.Weekly.Used), logging.Until, g.reopens())
 		} else {
-			slog.Info("Claude usage back under the limit, resuming")
+			slog.Info("Claude usage under the limit, resuming new work",
+				logging.FiveHour, percent(u.FiveHour.Used), logging.Weekly, percent(u.Weekly.Used))
 		}
 	}
 	return !closed, nil
@@ -84,6 +86,27 @@ func (g *Gate) fresh(now time.Time) bool {
 		return true
 	}
 	return now.Sub(g.at) < usageFresh
+}
+
+// reopens is when the windows at or over their limits reset, the latest of them. A rejected call
+// with every window under its limit waits for the latest reset known.
+func (g *Gate) reopens() time.Time {
+	var over, all time.Time
+	for _, w := range []struct {
+		agent.Window
+		limit float64
+	}{{g.usage.FiveHour, g.FiveHour}, {g.usage.Weekly, g.Weekly}} {
+		if w.ResetsAt.After(all) {
+			all = w.ResetsAt
+		}
+		if w.Used >= w.limit && w.ResetsAt.After(over) {
+			over = w.ResetsAt
+		}
+	}
+	if over.IsZero() {
+		return all
+	}
+	return over
 }
 
 func percent(used float64) string {
