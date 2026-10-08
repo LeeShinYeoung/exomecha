@@ -11,6 +11,7 @@ import (
 
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
 // The file the test setup scripts write. Git ignores it, the way it ignores what a real setup script creates.
@@ -25,7 +26,7 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	slog.SetDefault(slog.New(logging.NewHandler(slog.NewTextHandler(&buf, nil))))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	return &buf
 }

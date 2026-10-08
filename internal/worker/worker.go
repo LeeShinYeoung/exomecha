@@ -16,6 +16,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/git"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
@@ -105,6 +106,7 @@ func Run(ctx context.Context, d Deps, gate *Gate) {
 }
 
 func loop(ctx context.Context, w Worker, l *locks, every time.Duration) {
+	ctx = logging.With(ctx, logging.Worker, w.Name())
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	d := &delays{now: time.Now, first: every, items: map[int]delay{}}
@@ -124,13 +126,15 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 	// A wait counts from here, not from when Handle returned, so a wait of a minute ends by the
 	// next round.
 	now := d.now()
-	log := slog.With("worker", w.Name())
 	numbers, err := w.Pick(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Error("pick failed", "err", err)
+			slog.ErrorContext(ctx, "listing PRDs failed", logging.Attempt, d.missPick(), logging.Err, err)
 		}
 		return
+	}
+	if attempt := d.pickWorks(); attempt > 1 {
+		slog.InfoContext(ctx, "listing PRDs works again", logging.Attempt, attempt)
 	}
 	d.keep(numbers)
 	for _, n := range numbers {
@@ -139,18 +143,20 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 		}
 		wg.Go(func() {
 			defer l.unlock(n)
+			ctx := logging.With(ctx, logging.PRD, n)
 			err := w.Handle(ctx, n)
 			if err == nil {
-				d.forget(n)
+				if attempt := d.forget(n); attempt > 1 {
+					slog.InfoContext(ctx, "handling the PRD works again", logging.Attempt, attempt)
+				}
 				return
 			}
 			// An error from shutdown says nothing about the issue, and the next start finishes the step.
 			if ctx.Err() != nil {
-				log.Info("stopped before a step finished", "issue", n, "err", err)
+				slog.InfoContext(ctx, "shutdown cut off a step", logging.Err, err)
 				return
 			}
-			d.strike(n, now)
-			log.Error("handle failed", "issue", n, "err", err)
+			slog.ErrorContext(ctx, "handling the PRD failed", logging.Attempt, d.strike(n, now), logging.Err, err)
 		})
 	}
 }
@@ -162,6 +168,7 @@ type delays struct {
 	first time.Duration // the wait after one error. Zero is minBackoff.
 	mu    sync.Mutex
 	items map[int]delay
+	picks int // Picks that failed in a row
 }
 
 type delay struct {
@@ -178,19 +185,37 @@ func (d *delays) due(n int, now time.Time) bool {
 	return !ok || !now.Add(time.Second).Before(it.next)
 }
 
-func (d *delays) strike(n int, from time.Time) {
+// strike returns the attempt that failed.
+func (d *delays) strike(n int, from time.Time) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	it := d.items[n]
 	it.strikes++
 	it.next = from.Add(min(maxBackoff, cmp.Or(d.first, minBackoff)<<min(it.strikes-1, 10)))
 	d.items[n] = it
+	return it.strikes
 }
 
-func (d *delays) forget(n int) {
+// forget returns the attempt that worked.
+func (d *delays) forget(n int) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	attempt := d.items[n].strikes + 1
 	delete(d.items, n)
+	return attempt
+}
+
+// missPick returns the attempt that failed. Only the loop calls it and pickWorks, so they need no lock.
+func (d *delays) missPick() int {
+	d.picks++
+	return d.picks
+}
+
+// pickWorks returns the attempt that worked.
+func (d *delays) pickWorks() int {
+	attempt := d.picks + 1
+	d.picks = 0
+	return attempt
 }
 
 // keep forgets the issues Pick no longer returns, so one that comes back later starts with no wait.
