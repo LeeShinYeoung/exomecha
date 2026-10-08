@@ -20,7 +20,7 @@ func TestRealBuild(t *testing.T) {
 	const from = "FROM docker/sandbox-templates:claude-code-docker\n"
 	const box = "impl-env-from-template"
 	files := fakeFiles{
-		dockerfilePath: from + "RUN true\n",
+		dockerfilePath: from + "USER root\nRUN echo from-template > /etc/exomecha-template\nUSER agent\n",
 		hostsPath:      "example.com # proves the helper takes allowed-hosts\n",
 	}
 	e := New(files, sandbox.CLI{}, "impl-env", "realtest")
@@ -39,9 +39,11 @@ func TestRealBuild(t *testing.T) {
 		t.Errorf("Template again = %q, %v", again, err)
 	}
 
-	sbx(t, "create", "--name", box, "--pull", "never", "-t", first, "claude")
-	if out := sbx(t, "exec", box, "sh", "-c", "echo ok"); strings.TrimSpace(out) != "ok" {
-		t.Errorf("exec in a sandbox from the template printed %q", out)
+	if err := (sandbox.CLI{}).Create(ctx, box, first, t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if out := sbx(t, "exec", box, "cat", "/etc/exomecha-template"); strings.TrimSpace(out) != "from-template" {
+		t.Errorf("the file the Dockerfile wrote, in a sandbox from the template = %q", out)
 	}
 	sbx(t, "rm", "--force", box)
 

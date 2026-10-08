@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,12 +99,40 @@ func TestRealSandbox(t *testing.T) {
 	if err != nil || string(code) != "403" {
 		t.Errorf("ssh.github.com from the sandbox = %q, %v, want 403", code, err)
 	}
+	if err := sbx.Allow(ctx, name, []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	code, err = sbx.Exec(ctx, name, "", nil, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "https://example.com/")
+	if err != nil || string(code) != "200" {
+		t.Errorf("example.com once allowed = %q, %v, want 200", code, err)
+	}
+	if out, _ := sbx.Exec(ctx, name, "", nil, "curl", "-s", "https://example.org/"); !strings.Contains(string(out), "Approval required for example.org:443") {
+		t.Errorf("example.org, which no rule allows = %q, want sbx asking for approval", out)
+	}
+
+	// worker counts a run as dead when its sandbox is not running and claude wrote no exit file.
+	stopped := filepath.Join(workspace, "stopped-exit")
+	if err := sbx.Start(ctx, name, "", "sh", "-c", "sleep 600; echo 0 > "+stopped); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.CommandContext(ctx, "sbx", "stop", name).CombinedOutput(); err != nil {
+		t.Fatalf("sbx stop: %v\n%s", err, out)
+	}
+	boxes, err := sbx.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(boxes, func(b sandbox.Box) bool { return b.Name == name }); i < 0 || boxes[i].Running() {
+		t.Errorf("after sbx stop, List = %+v, want %s listed and not running", boxes, name)
+	}
+	if _, err := os.Stat(stopped); err == nil {
+		t.Error("the command in the stopped sandbox wrote its exit file")
+	}
 
 	if err := sbx.Remove(ctx, name); err != nil {
 		t.Fatal(err)
 	}
-	boxes, err := sbx.List(ctx)
-	if err != nil {
+	if boxes, err = sbx.List(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, b := range boxes {

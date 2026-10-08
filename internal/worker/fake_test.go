@@ -41,6 +41,7 @@ type fakeBox struct {
 	stopped   bool
 	starts    [][]string // dir, then args
 	execs     [][]string
+	envs      [][]string
 }
 
 func newFakeSandboxes(t *testing.T) *fakeSandboxes {
@@ -137,6 +138,7 @@ func (f *fakeSandboxes) Exec(ctx context.Context, name, dir string, env []string
 	if ok {
 		b.stopped = false // as sbx exec starts a stopped sandbox
 		b.execs = append(b.execs, args)
+		b.envs = append(b.envs, env)
 	}
 	failExec := f.failExec
 	f.mu.Unlock()

@@ -190,6 +190,10 @@ func message(text string) any { return map[string]string{"message": text} }
 
 func notFound() (int, any) { return http.StatusNotFound, message("Not Found") }
 
+func serverError(err error) (int, any) {
+	return http.StatusInternalServerError, message("githubtest: " + err.Error())
+}
+
 func (s *Server) decode(r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		s.t.Errorf("githubtest: decode %s %s: %v", r.Method, r.URL.Path, err)
@@ -255,7 +259,11 @@ func labelsJSON(names []string) any {
 	return out
 }
 
-func (s *Server) pullJSON(p *Pull) any {
+func (s *Server) pullJSON(p *Pull) (any, error) {
+	mergeable, err := s.mergeable(p)
+	if err != nil {
+		return nil, err
+	}
 	state := "open"
 	if !p.Open {
 		state = "closed"
@@ -267,13 +275,13 @@ func (s *Server) pullJSON(p *Pull) any {
 		"body":      p.Body,
 		"head":      map[string]string{"ref": p.Head, "sha": s.head(p)},
 		"base":      map[string]string{"ref": p.Base},
-		"mergeable": s.mergeable(p),
+		"mergeable": mergeable,
 		"merged":    p.Merged,
 	}
 	if p.Merged {
 		m["merged_at"] = commentEpoch.Format(time.RFC3339)
 	}
-	return m
+	return m, nil
 }
 
 func (s *Server) getUser(*http.Request) (int, any) {
@@ -475,7 +483,11 @@ func (s *Server) listPulls(r *http.Request) (int, any) {
 	slices.SortFunc(numbers, func(a, b int) int { return cmp.Compare(b, a) })
 	out := []any{}
 	for _, n := range numbers {
-		out = append(out, s.pullJSON(s.pulls[n]))
+		p, err := s.pullJSON(s.pulls[n])
+		if err != nil {
+			return serverError(err)
+		}
+		out = append(out, p)
 	}
 	return http.StatusOK, out
 }
@@ -490,7 +502,11 @@ func (s *Server) createPull(r *http.Request) (int, any) {
 	if !s.decode(r, &req) {
 		return http.StatusBadRequest, message("bad body")
 	}
-	return http.StatusCreated, s.pullJSON(s.newPull(req.Head, req.Base, req.Title, req.Body))
+	p, err := s.pullJSON(s.newPull(req.Head, req.Base, req.Title, req.Body))
+	if err != nil {
+		return serverError(err)
+	}
+	return http.StatusCreated, p
 }
 
 func (s *Server) newPull(head, base, title, body string) *Pull {
@@ -505,7 +521,11 @@ func (s *Server) getPull(r *http.Request) (int, any) {
 	if p == nil {
 		return notFound()
 	}
-	return http.StatusOK, s.pullJSON(p)
+	out, err := s.pullJSON(p)
+	if err != nil {
+		return serverError(err)
+	}
+	return http.StatusOK, out
 }
 
 func reviewJSON(k int, rv Review) any {

@@ -51,26 +51,25 @@ func (s *Server) trialMerge(base, head string) (out string, clean bool, err erro
 }
 
 // mergeable is what GitHub would answer for p: nil while it does not know, which under Live is
-// only when a branch is missing. A value set with SetMergeable wins. Any other git failure fails
-// the test, or a worker would wait on the nil forever.
-func (s *Server) mergeable(p *Pull) *bool {
+// only when a branch is missing. A value set with SetMergeable wins. Any other git failure is an
+// error, or a worker would wait on the nil forever.
+func (s *Server) mergeable(p *Pull) (*bool, error) {
 	if s.origin == "" || !p.Open || p.Mergeable != nil {
-		return p.Mergeable
+		return p.Mergeable, nil
 	}
 	base, err := s.git("rev-parse", "-q", "--verify", "refs/heads/"+p.Base)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	head, err := s.git("rev-parse", "-q", "--verify", "refs/heads/"+p.Head)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	_, clean, err := s.trialMerge(base, head)
 	if err != nil {
-		s.t.Errorf("githubtest: trial merge of PR #%d: %v", p.Number, err)
-		return nil
+		return nil, fmt.Errorf("trial merge of PR #%d: %w", p.Number, err)
 	}
-	return &clean
+	return &clean, nil
 }
 
 // merge makes the merge commit GitHub makes and moves p's base to it. GitHub refuses a PR that

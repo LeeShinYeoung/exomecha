@@ -11,6 +11,31 @@ import (
 
 const labelsRoute = "PUT /repos/{owner}/{repo}/issues/{n}/labels"
 
+func TestEnsureLabels(t *testing.T) {
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	var all []string
+	for _, d := range label.All() {
+		all = append(all, d.Name)
+	}
+
+	created, err := client.EnsureLabels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(created, all) || !slices.Equal(s.Labels(), all) {
+		t.Errorf("created %q, the repository has %q, want %q", created, s.Labels(), all)
+	}
+
+	// It runs at every start, so a second call must add nothing.
+	if created, err = client.EnsureLabels(t.Context()); err != nil || len(created) != 0 {
+		t.Errorf("second call created %q, %v, want none", created, err)
+	}
+	if got := s.Labels(); !slices.Equal(got, all) {
+		t.Errorf("labels after a second call = %q, want %q", got, all)
+	}
+}
+
 // A status change that fails must leave the old status, never the old one and the new one: every
 // worker leaves an issue with two statuses alone.
 func TestSetStatus(t *testing.T) {

@@ -54,6 +54,10 @@ func TestConfigFromEnv(t *testing.T) {
 			if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy {
 				t.Errorf("tiers = %v %v %v, want the defaults", c.light, c.normal, c.heavy)
 			}
+			opus := func(effort string) agent.Model { return agent.Model{Name: "opus", Effort: effort} }
+			if d.light != opus("low") || d.normal != opus("high") || d.heavy != opus("xhigh") || d.projectLimit != 2 {
+				t.Errorf("defaults: tiers %v %v %v, sandbox limit %d", d.light, d.normal, d.heavy, d.projectLimit)
+			}
 		}},
 		{name: "set values", env: with(map[string]string{
 			"EXOMECHA_FIVE_HOUR_LIMIT": "50", "EXOMECHA_SANDBOX_LIMIT": "3", "EXOMECHA_TIER_LIGHT": "sonnet:low",

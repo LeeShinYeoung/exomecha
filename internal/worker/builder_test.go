@@ -95,6 +95,7 @@ func TestBuilderPicks(t *testing.T) {
 	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.PRD, string(label.Review))
 	e.gh.AddIssue("no status", "", label.PRD)
 	e.gh.AddIssue("draft", "", label.PRD, string(label.Draft))
+	e.gh.AddIssue("stuck", "", label.PRD, string(label.Stuck))
 	e.sbx.add(e.builderBox(reviewed))
 	e.sbx.add(e.runs.name(resolverRole, waiting))
 
@@ -141,6 +142,8 @@ func TestBuilderPlace(t *testing.T) {
 		{true, status(label.Draft), away},
 		{true, status(), away},
 		{true, status(label.Review), away},
+		{true, status(label.Approved), away},
+		{true, status(label.Stuck), away},
 		{true, []string{string(label.Working)}, away},
 		{false, status(label.Working), away},
 	} {
@@ -307,6 +310,52 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	}
 	if n := len(e.gh.Pulls()); n != 1 {
 		t.Errorf("%d PRs, want the existing one only", n)
+	}
+}
+
+// A PRD Blocked by another starts once that one merges, so a start must see main as it is now.
+func TestBuilderStartsFromTheLatestMain(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	first := e.gh.AddIssue("First", "", label.PRD, string(label.Ready))
+	second := e.gh.AddIssue("Second", "", label.PRD, string(label.Ready))
+	e.step(first)
+	moved := gittest.Commit(t, e.origin, "main", "", map[string]string{"app.txt": "v2\n"})
+
+	e.step(second)
+
+	if got := gittest.Run(t, e.sbx.repo(e.builderBox(second)), "rev-parse", "HEAD"); got != moved {
+		t.Errorf("the second run starts at %s, want main after it moved, %s", got, moved)
+	}
+}
+
+// A person closed the PR without merging and sent the PRD back to ready. Its branch is still there.
+func TestBuilderStartsOverAfterAClosedPR(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	branch := branchName(prd)
+	gittest.Commit(t, e.origin, branch, "main", map[string]string{"old.txt": "old\n"})
+	old := e.gh.AddPull(branch, "main")
+	e.gh.ClosePull(old)
+	name := e.builderBox(prd)
+	base := gittest.Head(e.origin, "main")
+
+	e.step(prd)
+	wantNotContains(t, "claude input", e.readCtl(name, "input.md"), "## Existing PR")
+	if got := gittest.Run(t, e.sbx.repo(name), "rev-parse", "HEAD"); got != base {
+		t.Errorf("the run starts at %s, want main %s", got, base)
+	}
+	e.play(name, commit(t, "feat: start over", map[string]string{"new.txt": "new\n"}), builderDone)
+	e.step(prd)
+
+	e.wantStatus(prd, label.Review)
+	if got := gittest.Parents(t, e.origin, branch); len(got) != 1 || got[0] != base {
+		t.Errorf("%s parents = %v, want main %s", branch, got, base)
+	}
+	pulls := e.gh.Pulls()
+	if len(pulls) != 2 || pulls[0].Open || !pulls[1].Open || pulls[1].Head != branch {
+		t.Errorf("pulls = %+v, want the closed one and a new open one", pulls)
 	}
 }
 
