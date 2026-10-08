@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
 //go:embed defaults
@@ -81,13 +83,13 @@ func (r *runs) defaults(ctx context.Context, ro role, n int) error {
 	if _, err := r.Sandboxes.Exec(ctx, name, "", nil, "sh", "-c", `mkdir -p "$2" && cp -R "$1/." "$2/"`, "sh", dir, claudeHome); err != nil {
 		return err
 	}
-	return r.installPlugins(ctx, name, n, merged)
+	return r.installPlugins(ctx, name, merged)
 }
 
 // installPlugins installs the enabled plugins before claude starts: claude -p installs a missing
 // one in the background and loads it only from the next session on, and a run has only one. A
 // plugin that fails to install is left out of the run.
-func (r *runs) installPlugins(ctx context.Context, name string, n int, settings []byte) error {
+func (r *runs) installPlugins(ctx context.Context, name string, settings []byte) error {
 	var s struct {
 		Marketplaces map[string]struct {
 			Source struct{ Repo, URL string }
@@ -95,7 +97,7 @@ func (r *runs) installPlugins(ctx context.Context, name string, n int, settings 
 		Enabled map[string]bool `json:"enabledPlugins"`
 	}
 	if err := json.Unmarshal(settings, &s); err != nil {
-		slog.Warn("could not read the default claude plugins", "issue", n, "sandbox", name, "err", err)
+		slog.WarnContext(ctx, "side task failed", logging.Task, "read the default claude plugins", logging.Err, err)
 		return nil
 	}
 	// install finds a plugin only in a marketplace that was added, even one the settings declare.
@@ -113,14 +115,14 @@ func (r *runs) installPlugins(ctx context.Context, name string, n int, settings 
 		// The timeout inside the sandbox stops claude. This one only covers sbx itself hanging.
 		runCtx, cancel := context.WithTimeout(ctx, pluginTimeout+time.Minute)
 		args := append([]string{"timeout", strconv.Itoa(int(pluginTimeout.Seconds())), "claude", "plugin"}, c...)
-		out, err := r.Sandboxes.Exec(runCtx, name, "", nil, args...)
+		_, err := r.Sandboxes.Exec(runCtx, name, "", nil, args...)
 		cancel()
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			slog.Warn("default claude plugin step failed, the run goes on without it", "issue", n, "sandbox", name,
-				"command", "claude plugin "+strings.Join(c, " "), "output", strings.TrimSpace(string(out)), "err", err)
+			// The run goes on without the plugin.
+			slog.WarnContext(ctx, "side task failed", logging.Task, "claude plugin "+strings.Join(c, " "), logging.Err, err)
 		}
 	}
 	return nil

@@ -120,7 +120,7 @@ func TestOutcome(t *testing.T) {
 			name := e.runs.name(builderRole, 7)
 			e.writeCtl(name, "exit", c.exit+"\n")
 			e.writeCtl(name, "stream.jsonl", c.stream)
-			res, failure, _, limited := e.runs.outcome(name)
+			res, failure, limited, _ := e.runs.outcome(name)
 			if limited != c.limited || (c.failure == "") != (failure == "") || !strings.Contains(failure, c.failure) {
 				t.Errorf("outcome = failure %q, limited %v, want failure %q, limited %v", failure, limited, c.failure, c.limited)
 			}
@@ -154,23 +154,22 @@ func TestOutcomeDoesNotFollowLinks(t *testing.T) {
 			if _, failure, _, _ := e.runs.outcome(name); failure == "" {
 				t.Errorf("a %s linked to a file outside was read", file)
 			}
-			if got := e.runs.tail(name, file); got != "" {
+			if got, err := tailCtl(e.runs.ctl(name), file, 1<<20); err == nil {
 				t.Errorf("tail of a linked %s = %q", file, got)
 			}
 		})
 	}
 }
 
-func TestTailKeepsABoundedValidEnd(t *testing.T) {
+func TestTailCtlKeepsTheEnd(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	name := e.runs.name(builderRole, 7)
-	// Three bytes per character and eight here, so the cut at tailLimit lands inside a character.
-	e.writeCtl(name, "setup.log", strings.Repeat("한", 300_000)+"the end.")
+	e.writeCtl(name, "setup.log", strings.Repeat("x", 3000)+"the end.")
 
-	got := e.runs.tail(name, "setup.log")
-	if len(got) > tailLimit || !strings.HasSuffix(got, "한the end.") || !strings.HasPrefix(got, "한") {
-		t.Errorf("tail = %d bytes, ends %q", len(got), got[max(0, len(got)-12):])
+	got, err := tailCtl(e.runs.ctl(name), "setup.log", 100)
+	if err != nil || len(got) != 100 || !strings.HasSuffix(string(got), "xthe end.") {
+		t.Errorf("tail = %d bytes ending %q, %v, want the last 100", len(got), got[max(0, len(got)-12):], err)
 	}
 }
 

@@ -35,13 +35,13 @@ func (e *env) testSpec() (spec, string) {
 	return spec{branch: branchName(1), base: base, head: base, input: "the PRD\n\n"}, e.runs.name(builderRole, 1)
 }
 
-func (e *env) open(s spec) string {
+func (e *env) open(s spec) *problem {
 	e.t.Helper()
-	problem, err := e.runs.open(e.t.Context(), builderRole, 1, s)
+	p, err := e.runs.open(e.t.Context(), builderRole, 1, s)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return problem
+	return p
 }
 
 func (e *env) startedModel(name string) agent.Model {
@@ -76,8 +76,8 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 	e.envr.hosts = []string{"registry.npmjs.org", "*.pypi.org"}
 	s, name := e.testSpec()
 
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 
 	box := e.sbx.box(name)
@@ -139,13 +139,13 @@ func TestRunsNeverSeeTheToken(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
 	s, builder := e.testSpec()
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 	reader := e.runs.name(reviewerRole, 1)
 	s.branch = ""
-	if problem, err := e.runs.open(t.Context(), reviewerRole, 1, s); problem != "" || err != nil {
-		t.Fatalf("reviewer open = %q, %v", problem, err)
+	if p, err := e.runs.open(t.Context(), reviewerRole, 1, s); p != nil || err != nil {
+		t.Fatalf("reviewer open = %+v, %v", p, err)
 	}
 
 	holds := func(ss []string) bool {
@@ -188,8 +188,8 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	s.branch = ""
 	name := e.runs.name(reviewerRole, 1)
 
-	if problem, err := e.runs.open(t.Context(), reviewerRole, 1, s); problem != "" || err != nil {
-		t.Fatalf("open = %q, %v", problem, err)
+	if p, err := e.runs.open(t.Context(), reviewerRole, 1, s); p != nil || err != nil {
+		t.Fatalf("open = %+v, %v", p, err)
 	}
 
 	box := e.sbx.box(name)
@@ -225,18 +225,20 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 }
 
 func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
-	log := captureLog(t)
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.", detail: "step 3/5: a secret in the build output"})
+	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.",
+		detail: "build failed", output: "step 3/5: a secret in the build output"})
 	s, name := e.testSpec()
 
-	if problem := e.open(s); problem != "The Dockerfile on the base branch does not build." {
-		t.Errorf("problem = %q, want only the reason", problem)
+	p := e.open(s)
+	if p == nil || p.why != "The Dockerfile on the base branch does not build." {
+		t.Fatalf("problem = %+v, want only the reason", p)
 	}
+	wantContains(t, "kept build output", p.outputs["build.log"], "a secret in the build output")
 	if e.sbx.exists(name) {
 		t.Error("a sandbox was created")
 	}
-	wantContains(t, "log", log.String(), "a secret in the build output")
 }
 
 func TestOpenRunsTheRolesModel(t *testing.T) {
@@ -263,8 +265,8 @@ func TestOpenRunsTheRolesModel(t *testing.T) {
 				s.branch = ""
 			}
 			s.tier = c.tier
-			if problem, err := e.runs.open(t.Context(), c.ro, 1, s); problem != "" || err != nil {
-				t.Fatalf("open = %q, %v", problem, err)
+			if p, err := e.runs.open(t.Context(), c.ro, 1, s); p != nil || err != nil {
+				t.Fatalf("open = %+v, %v", p, err)
 			}
 			if got := e.startedModel(e.runs.name(c.ro, 1)); got != c.want {
 				t.Errorf("claude got %v, want %v", got, c.want)
@@ -282,8 +284,8 @@ func TestOpenWithoutAModelCreatesNoSandbox(t *testing.T) {
 			delete(e.runs.Models, label.Normal)
 			e.runs.ResolverModel = agent.Model{}
 			s, _ := e.testSpec()
-			if problem, err := e.runs.open(t.Context(), ro, 1, s); problem != "" || err == nil {
-				t.Errorf("open = %q, %v, want an error", problem, err)
+			if p, err := e.runs.open(t.Context(), ro, 1, s); p != nil || err == nil {
+				t.Errorf("open = %+v, %v, want an error", p, err)
 			}
 			if name := e.runs.name(ro, 1); e.sbx.exists(name) {
 				t.Error("a sandbox was created")
@@ -297,8 +299,8 @@ func TestOpenEnvironmentError(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.envr.err = errors.New("sbx template ls: daemon not running")
 	s, _ := e.testSpec()
-	if problem, err := e.runs.open(t.Context(), builderRole, 1, s); problem != "" || err == nil {
-		t.Errorf("open = %q, %v, want an error and no problem", problem, err)
+	if p, err := e.runs.open(t.Context(), builderRole, 1, s); p != nil || err == nil {
+		t.Errorf("open = %+v, %v, want an error and no problem", p, err)
 	}
 }
 
@@ -321,8 +323,8 @@ func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
 	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
 	s, name := e.testSpec()
 
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 	b, err := os.ReadFile(filepath.Join(e.sbx.repo(name), setupMarker))
 	if err != nil || string(b) != "prd 1\n" {
@@ -334,28 +336,28 @@ func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
 }
 
 // wantOpenProblem opens a run whose setup script breaks a rule, and checks that claude never started.
-func (e *env) wantOpenProblem(s spec, subs ...string) string {
+func (e *env) wantOpenProblem(s spec, subs ...string) *problem {
 	e.t.Helper()
 	name := e.runs.name(builderRole, 1)
-	problem := e.open(s)
-	if problem == "" {
+	p := e.open(s)
+	if p == nil {
 		e.t.Fatal("open succeeded, want a problem with the setup script")
 	}
-	wantContains(e.t, "setup problem", problem, subs...)
+	wantContains(e.t, "setup problem", p.why, subs...)
 	if starts := e.sbx.box(name).starts; len(starts) != 0 {
 		e.t.Errorf("claude started after a rejected setup script: %q", starts)
 	}
-	return problem
+	return p
 }
 
 func TestSetupFailure(t *testing.T) {
-	log := captureLog(t)
+	t.Parallel()
 	// exit 0 is never reached: the script stops at the first failing command.
 	e := newEnv(t, setupRepo("echo 'a secret in the output' >&2\nfalse\nexit 0\n"))
-	s, _ := e.testSpec()
-	problem := e.wantOpenProblem(s, "`"+setupScript+"` did not end cleanly (exit status 1)", "exomecha's log")
-	wantNotContains(t, "setup problem", problem, "a secret in the output", "merge the base branch")
-	wantContains(t, "log", log.String(), "a secret in the output")
+	s, name := e.testSpec()
+	p := e.wantOpenProblem(s, "`"+setupScript+"` did not end cleanly (exit status 1)")
+	wantNotContains(t, "setup problem", p.why, "a secret in the output", "merge the base branch")
+	wantContains(t, "setup.log", e.readCtl(name, "setup.log"), "a secret in the output")
 }
 
 func TestSetupUsesPipefail(t *testing.T) {
@@ -374,11 +376,11 @@ func TestSetupTimesOut(t *testing.T) {
 }
 
 func TestSetupLeavesChanges(t *testing.T) {
-	log := captureLog(t)
+	t.Parallel()
 	e := newEnv(t, setupRepo("echo stray > stray.txt\n"))
 	s, _ := e.testSpec()
-	e.wantOpenProblem(s, "changed the working copy")
-	wantContains(t, "log", log.String(), "?? stray.txt")
+	p := e.wantOpenProblem(s, "changed the working copy")
+	wantContains(t, "kept git status", p.outputs["git-status.log"], "?? stray.txt")
 }
 
 func TestSetupCommits(t *testing.T) {
@@ -409,8 +411,8 @@ func TestSetupMayLeaveAServiceRunning(t *testing.T) {
 	e := newEnv(t, setupRepo("sleep 60 &\necho started\n"))
 	s, name := e.testSpec()
 	begin := time.Now()
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 	if took := time.Since(begin); took > 30*time.Second {
 		t.Errorf("open waited %v for the script's service", took)

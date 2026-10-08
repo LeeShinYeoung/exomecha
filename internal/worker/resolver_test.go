@@ -242,7 +242,7 @@ func TestResolverCommitsCleanMergeThroughClaude(t *testing.T) {
 
 // A project setting can make git refuse the merge with no conflict, the same way on every try.
 func TestResolverStuckWhenTheMergeFailsWithoutAConflict(t *testing.T) {
-	log := captureLog(t)
+	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", setupScript: "git config merge.verifySignatures true\n"})
 	prd, _, head := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
@@ -252,7 +252,7 @@ func TestResolverStuckWhenTheMergeFailsWithoutAConflict(t *testing.T) {
 	comment := e.lastComment(prd)
 	wantStuckComment(t, comment, "Merging `main` into this PRD's branch in the sandbox failed without a conflict", label.Review)
 	wantNotContains(t, "stuck comment", comment, "GPG signature")
-	wantContains(t, "log", log.String(), "does not have a GPG signature")
+	wantContains(t, "kept merge output", e.wantKept(e.resolverBox(prd), "merge.log"), "does not have a GPG signature")
 	e.wantRemoved(e.resolverBox(prd))
 	if got := gittest.Head(e.origin, branchName(prd)); got != head {
 		t.Errorf("branch moved to %s, want it left at %s", got, head)

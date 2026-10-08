@@ -80,8 +80,8 @@ func TestOpenGivesClaudeTheDefaults(t *testing.T) {
 	}
 	writeFile(t, home, "settings.json", `{"permissions": {"defaultMode": "bypassPermissions"}, "themeId": 1}`)
 
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 
 	if got, err := os.ReadFile(filepath.Join(home, "rules", "style.md")); err != nil || string(got) != "Write short sentences.\n" {
@@ -112,8 +112,8 @@ func TestOpenWithoutDefaults(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	s, name := e.testSpec()
 
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 
 	if _, err := os.Stat(filepath.Join(e.sbx.disk(name), ".claude")); !os.IsNotExist(err) {
@@ -131,14 +131,14 @@ func TestOpenGoesOnWhenAPluginFails(t *testing.T) {
 	e.sbx.failExec = "plugin install"
 	s, name := e.testSpec()
 
-	if problem := e.open(s); problem != "" {
-		t.Fatalf("open problem: %s", problem)
+	if p := e.open(s); p != nil {
+		t.Fatalf("open problem: %s", p.why)
 	}
 
 	if starts := e.sbx.box(name).starts; len(starts) != 1 {
 		t.Errorf("starts = %q, want one", starts)
 	}
-	wantContains(t, "log", log.String(), "claude plugin install on@market")
+	wantContains(t, "log", log.String(), `level=WARN msg="side task failed" task="claude plugin install on@market"`)
 }
 
 func TestOpenBadDefaultSettings(t *testing.T) {

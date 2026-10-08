@@ -15,6 +15,7 @@ import (
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
@@ -35,7 +36,6 @@ const (
 
 	// Far more than any run writes. It only bounds what a misbehaving run can make exomecha read.
 	streamLimit = 256 << 20
-	tailLimit   = 4000
 )
 
 type state int
@@ -66,7 +66,7 @@ const (
 	idle    action = iota
 	begin          // the worker's start
 	harvest        // the worker's collect
-	fail           // stuck at once, keeping the run's files
+	fail           // stuck at once, keeping what the run printed
 	drop           // remove the run and leave the labels alone
 	restart        // remove the run without a failure, and builder's PRD goes back to ready
 )
@@ -290,7 +290,6 @@ func (r *runs) step(ctx context.Context, ro role, n int, row row,
 		if err := r.Sandboxes.Remove(ctx, name); err != nil {
 			return fmt.Errorf("remove sandbox %s: %w", name, err)
 		}
-		slog.Info("removed a finished reader's sandbox", "sandbox", name)
 	}
 	switch row[run.state] {
 	case begin:
@@ -298,23 +297,21 @@ func (r *runs) step(ctx context.Context, ro role, n int, row row,
 	case harvest:
 		return collect(ctx, run)
 	case fail:
-		return r.failed(ctx, ro, n, r.why(run.state), "")
+		if run.state == dead || run.state == gone {
+			slog.ErrorContext(ctx, "the run lost its sandbox", logging.Sandbox, name, logging.Reason, r.why(run.state))
+		}
+		return r.failed(ctx, ro, n, r.why(run.state))
 	case drop:
 		return r.drop(ctx, ro, n)
 	case restart:
-		return r.restart(ctx, ro, n, r.why(run.state))
+		return r.restart(ctx, ro, n)
 	}
 	return nil
 }
 
-// why says what happened to a run in state s, for the comment on a failure or the log of a restart.
+// why says what happened to a run that failed in state s, for the stuck comment.
 func (r *runs) why(s state) string {
 	switch s {
-	case none:
-		return "the issue had no run"
-	case preparing:
-		// Only a start holds the issue's lock while preparing, so this one was cut off.
-		return "its start was cut off"
 	case stalled:
 		return fmt.Sprintf("claude's output did not change for %d minutes", int(stallAfter.Minutes()))
 	case dead:
@@ -325,26 +322,10 @@ func (r *runs) why(s state) string {
 	return s.String()
 }
 
-// remove deletes the sandbox, which stops everything in it, and then its directory. keep moves
-// the run's files to failed/<name> first, for a person to read.
-func (r *runs) remove(ctx context.Context, name string, keep bool) error {
+// remove deletes the sandbox, which stops everything in it, and then its directory.
+func (r *runs) remove(ctx context.Context, name string) error {
 	if err := r.Sandboxes.Remove(ctx, name); err != nil {
 		return fmt.Errorf("remove sandbox %s: %w", name, err)
-	}
-	if keep {
-		kept := filepath.Join(r.SandboxDir, "failed", name)
-		err := os.RemoveAll(kept)
-		if err == nil {
-			err = os.MkdirAll(filepath.Dir(kept), 0o755)
-		}
-		if err == nil {
-			err = os.Rename(r.ctl(name), kept)
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("keep the failed run's files", "sandbox", name, "err", err)
-		} else if err == nil {
-			slog.Info("kept the failed run's files", "sandbox", name, "dir", kept)
-		}
 	}
 	if err := os.RemoveAll(r.dir(name)); err != nil {
 		return err
@@ -354,37 +335,30 @@ func (r *runs) remove(ctx context.Context, name string, keep bool) error {
 	r.mu.Lock()
 	delete(r.seen, name)
 	r.mu.Unlock()
-	slog.Info("removed sandbox", "sandbox", name)
 	return nil
 }
 
 func (r *runs) done(ctx context.Context, ro role, n int) error {
-	return r.remove(ctx, r.name(ro, n), false)
+	return r.remove(ctx, r.name(ro, n))
 }
 
+// stuck sends the issue to stuck and keeps what the run printed for the person it goes to.
 func (r *runs) stuck(ctx context.Context, ro role, n int, reason string) error {
-	if err := toStuck(ctx, r.GitHub, n, ro.name, ro.from, ro.back, reason); err != nil {
+	kept := r.keep(ctx, ro, n, nil)
+	// Stuck goes first. With the run gone and the label as it was, a failed GitHub call would start another run.
+	if err := toStuck(ctx, r.GitHub, n, ro.name, ro.from, ro.back, reason, kept); err != nil {
 		return err
 	}
-	return r.remove(ctx, r.name(ro, n), false)
+	return r.remove(ctx, r.name(ro, n))
 }
 
-// failed sends the issue to stuck at once and keeps the run's files for a person to read.
-func (r *runs) failed(ctx context.Context, ro role, n int, why, detail string) error {
-	name := r.name(ro, n)
-	slog.Warn("run failed", "role", ro.name, "issue", n, "sandbox", name, "why", why, "detail", detail, "stderr", r.tail(name, "stderr.log"))
-	// Stuck goes first. With the run gone and the label as it was, a failed GitHub call would start another run.
-	if err := toStuck(ctx, r.GitHub, n, ro.name, ro.from, ro.back,
-		fmt.Sprintf("The AI's run failed because %s. The details are in exomecha's log.", why)); err != nil {
-		return err
-	}
-	return r.remove(ctx, name, true)
+func (r *runs) failed(ctx context.Context, ro role, n int, why string) error {
+	return r.stuck(ctx, ro, n, fmt.Sprintf("The AI's run failed because %s.", why))
 }
 
 // restart removes the run without counting it as a failure. builder's PRD goes back to ready.
-func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
-	slog.Info("starting a run over", "role", ro.name, "issue", n, "why", why)
-	if err := r.remove(ctx, r.name(ro, n), false); err != nil {
+func (r *runs) restart(ctx context.Context, ro role, n int) error {
+	if err := r.remove(ctx, r.name(ro, n)); err != nil {
 		return err
 	}
 	if ro.ready != label.None {
@@ -395,6 +369,5 @@ func (r *runs) restart(ctx context.Context, ro role, n int, why string) error {
 
 // drop removes a run its issue no longer needs, and leaves the labels to whoever moved them.
 func (r *runs) drop(ctx context.Context, ro role, n int) error {
-	slog.Info("removing a run its issue no longer needs", "role", ro.name, "issue", n)
-	return r.remove(ctx, r.name(ro, n), false)
+	return r.remove(ctx, r.name(ro, n))
 }

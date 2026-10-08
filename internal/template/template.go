@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
@@ -42,12 +43,15 @@ type Sandboxes interface {
 // PRD's stuck comment.
 type Problem struct {
 	Reason string
-	Output string // Log only: build output can hold secrets.
+	output string // never in the comment: build output can hold secrets
 }
 
 func (p *Problem) Error() string { return p.Reason }
 
 func (p *Problem) Why() string { return p.Reason }
+
+// Output is the end of what the build printed, for the PRD's kept outputs.
+func (p *Problem) Output() string { return p.output }
 
 type Env struct {
 	files  Files
@@ -141,26 +145,20 @@ func (e *Env) ensure(ctx context.Context, ref, dockerfile string) error {
 		return err
 	}
 
-	slog.Info("building template", "ref", ref)
-	start := time.Now()
 	if err := e.sbx.Remove(ctx, e.helper); err != nil {
 		return fmt.Errorf("remove leftover build sandbox: %w", err)
 	}
 	err = e.build(ctx, ref, dockerfile, hosts)
-	removeCtx, cancel := context.WithTimeout(context.Background(), removeTimeout)
+	removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeTimeout)
 	defer cancel()
 	if err := e.sbx.Remove(removeCtx, e.helper); err != nil {
-		slog.Warn("remove build sandbox failed, the next build removes it", "sandbox", e.helper, "err", err)
-	}
-	if p, ok := errors.AsType[*Problem](err); ok && p.Output != "" {
-		slog.Warn("template build failed", "ref", ref, "why", p.Reason, "output", p.Output)
+		// The next build removes it.
+		slog.WarnContext(ctx, "side task failed", logging.Task, "remove the build sandbox", logging.Sandbox, e.helper, logging.Err, err)
 	}
 	if err != nil {
 		return err
 	}
-
 	e.removeOld(ctx, ref)
-	slog.Info("built template", "ref", ref, "took", time.Since(start).Round(time.Second))
 	return nil
 }
 
@@ -185,13 +183,13 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 		return ctx.Err()
 	case buildCtx.Err() != nil:
 		return &Problem{
-			Reason: fmt.Sprintf("`%s` did not build within %d minutes. The build output is in exomecha's log. Fix it on the base branch.", dockerfilePath, int(buildTimeout.Minutes())),
-			Output: output,
+			Reason: fmt.Sprintf("`%s` did not build within %d minutes. Fix it on the base branch.", dockerfilePath, int(buildTimeout.Minutes())),
+			output: output,
 		}
 	default:
 		return &Problem{
-			Reason: fmt.Sprintf("`%s` failed to build (%v). The build output is in exomecha's log. Fix it on the base branch.", dockerfilePath, err),
-			Output: output,
+			Reason: fmt.Sprintf("`%s` failed to build (%v). Fix it on the base branch.", dockerfilePath, err),
+			output: output,
 		}
 	}
 
@@ -212,7 +210,7 @@ func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string)
 func (e *Env) removeOld(ctx context.Context, ref string) {
 	images, err := e.sbx.Templates(ctx)
 	if err != nil {
-		slog.Warn("list templates to remove old ones failed", "err", err)
+		slog.WarnContext(ctx, "side task failed", logging.Task, "list templates to remove old ones", logging.Err, err)
 		return
 	}
 	current, ok := find(images, ref)
@@ -226,10 +224,8 @@ func (e *Env) removeOld(ctx context.Context, ref string) {
 		}
 		old := img.Ref()
 		if err := e.sbx.RemoveTemplate(ctx, old); err != nil {
-			slog.Warn("remove old template failed", "ref", old, "err", err)
-			continue
+			slog.WarnContext(ctx, "side task failed", logging.Task, "remove an old template", logging.Template, old, logging.Err, err)
 		}
-		slog.Info("removed old template", "ref", old)
 	}
 }
 

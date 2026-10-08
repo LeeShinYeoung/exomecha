@@ -67,7 +67,7 @@ func TestE2EHappyPath(t *testing.T) {
 func TestE2EStuckAndBack(t *testing.T) {
 	e2e(t, false)
 	w := newWorld(t, "stuck", project(), func(c *config) { c.ciGrace = time.Hour })
-	w.allow("sent to stuck")
+	w.allowStuck()
 	prd := w.filePRD(officialPRD, string(label.Ready), string(label.Light))
 	w.start()
 
@@ -98,7 +98,7 @@ func TestE2EStuckAndBack(t *testing.T) {
 func TestE2EBlockedHost(t *testing.T) {
 	e2e(t, false)
 	w := newWorld(t, "host", project(), func(c *config) { c.ciGrace = time.Hour })
-	w.allow("sent to stuck")
+	w.allowStuck()
 	prd := w.filePRD(pagePRD, string(label.Ready), string(label.Light))
 	w.start()
 

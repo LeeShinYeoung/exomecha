@@ -53,7 +53,7 @@ func TestE2EConflict(t *testing.T) {
 func TestE2EContradiction(t *testing.T) {
 	e2e(t, false)
 	w := newWorld(t, "contra", project(), func(c *config) { c.ciGrace = time.Hour })
-	w.allow("sent to stuck")
+	w.allowStuck()
 	prd, _ := w.seedReview(shoutPRD, shoutDone)
 	w.push("main", "", "docs: greet.sh takes no flags", mainNoFlags)
 	before := w.head(branchOf(prd))

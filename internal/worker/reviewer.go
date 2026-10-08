@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -110,12 +109,11 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 		if err := r.finish(ctx, n); err != nil {
 			return err
 		}
-		slog.Info("closed a PRD whose PR was merged", "prd", n)
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
 		return toStuck(ctx, r.GitHub, n, reviewerRole.name, prd.Status(), label.Ready,
-			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)))
+			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)), "")
 	case failing:
 		var b strings.Builder
 		b.WriteString("CI failed.\n\n")
@@ -205,7 +203,7 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		return err
 	}
 	if in.moved(pr.HeadSHA, "") {
-		return r.runs.restart(ctx, reviewerRole, n, "the PR branch changed during the review")
+		return r.runs.restart(ctx, reviewerRole, n)
 	}
 	switch out.Verdict {
 	case "changes":
@@ -219,9 +217,8 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 		if err := r.GitHub.SetStatus(ctx, n, label.Review, label.Approved); err != nil {
 			return err
 		}
-		slog.Info("approved, for a person to merge", "prd", n, "pr", pr.Number)
 	default:
-		return r.runs.failed(ctx, reviewerRole, n, badResult, fmt.Sprintf("verdict %q", out.Verdict))
+		return r.runs.failed(ctx, reviewerRole, n, badResult)
 	}
 	return r.runs.done(ctx, reviewerRole, n)
 }
@@ -246,12 +243,10 @@ func (r *reviewer) requeue(ctx context.Context, n, pr int, kind, review string) 
 		return err
 	}
 	if sent >= r.ReviewLimit {
+		// A review sent for a failed CI has no run, and keeps nothing.
+		kept := r.runs.keep(ctx, reviewerRole, n, nil)
 		return toStuck(ctx, r.GitHub, n, reviewerRole.name, label.Review, label.Ready, fmt.Sprintf(
-			"reviewer sent PR #%d back to builder %d times, the limit, and its latest review on the PR still asks for changes.", pr, sent))
+			"reviewer sent PR #%d back to builder %d times, the limit, and its latest review on the PR still asks for changes.", pr, sent), kept)
 	}
-	if err := r.GitHub.SetStatus(ctx, n, label.Review, label.Ready); err != nil {
-		return err
-	}
-	slog.Info("sent back to builder", "prd", n, "pr", pr, "why", kind)
-	return nil
+	return r.GitHub.SetStatus(ctx, n, label.Review, label.Ready)
 }

@@ -6,6 +6,8 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -39,6 +41,8 @@ type Deps struct {
 	Environment Environment
 	// SandboxDir holds one directory per run, shared with the run's sandbox.
 	SandboxDir string
+	// OutputDir keeps what the runs that went to stuck printed, by issue.
+	OutputDir string
 	// SandboxPrefix starts the name of every run's sandbox of this repository and nothing else.
 	SandboxPrefix string
 	// ClaudeDir holds the claude user settings every run's sandbox gets. Empty gives none.
@@ -75,7 +79,7 @@ type Sandboxes interface {
 
 // Environment is the sandbox setup the target project asks for on its base branch.
 // An error whose chain holds a value with a Why() string method is one only a person can fix,
-// and Why() is what to tell them.
+// and Why() is what to tell them. An Output() string method on it gives what the build printed.
 type Environment interface {
 	// An empty ref is sbx's own template, for a project with no Dockerfile for exomecha.
 	Template(ctx context.Context) (ref string, err error)
@@ -384,22 +388,31 @@ func holds(i github.Issue, status label.Status) bool {
 }
 
 // back is where the person sends the PRD after answering, so it returns to the worker that
-// owns the problem: ready leads back to builder, review leads back to resolver.
-func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason string) error {
-	trimmed := trimClosingTags(reason)
-	if trimmed != strings.TrimSpace(reason) {
-		slog.Warn("trimmed closing tags from a stuck reason", "prd", n, "reason", reason)
+// owns the problem: ready leads back to builder, review leads back to resolver. kept is where the
+// run's output is kept, or "" for none. The comment names the place and never holds the output.
+func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason, kept string) error {
+	body := "This PRD is blocked and needs a person.\n\n" + trimClosingTags(reason)
+	if kept != "" {
+		body += "\n\nThe output of this run is kept on the machine running exomecha, in `" + tilde(kept) + "`."
 	}
-	body := "This PRD is blocked and needs a person.\n\n" + trimmed +
-		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
+	body += "\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
 	if err := gh.AddComment(ctx, n, github.Note{Worker: worker, Kind: github.KindStuck}, body); err != nil {
 		return err
 	}
-	if err := gh.SetStatus(ctx, n, from, label.Stuck); err != nil {
-		return err
+	return gh.SetStatus(ctx, n, from, label.Stuck)
+}
+
+// tilde shortens a path in the home directory, whose name gives away this machine's user.
+func tilde(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
 	}
-	slog.Info("sent to stuck", "prd", n)
-	return nil
+	rel, err := filepath.Rel(home, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return path
+	}
+	return filepath.Join("~", rel)
 }
 
 var closingTag = regexp.MustCompile(`</[A-Za-z_][\w.:-]*>$`)

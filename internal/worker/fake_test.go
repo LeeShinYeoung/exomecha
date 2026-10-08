@@ -275,10 +275,11 @@ func (f *fakeEnvironment) AllowedHosts(context.Context) ([]string, error) {
 }
 
 // personError is an environment error only a person can fix, as the environment package reports one.
-type personError struct{ why, detail string }
+type personError struct{ why, detail, output string }
 
-func (e personError) Error() string { return e.detail }
-func (e personError) Why() string   { return e.why }
+func (e personError) Error() string  { return e.detail }
+func (e personError) Why() string    { return e.why }
+func (e personError) Output() string { return e.output }
 
 type clock struct {
 	mu sync.Mutex

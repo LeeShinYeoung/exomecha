@@ -226,6 +226,7 @@ func serve(ctx context.Context, c config) error {
 		Sandboxes:     sbx,
 		Environment:   template.New(g, sbx, c.owner, c.name),
 		SandboxDir:    filepath.Join(c.root, "sandboxes"),
+		OutputDir:     filepath.Join(c.root, "outputs"),
 		SandboxPrefix: sandbox.Prefix(c.owner, c.name),
 		ClaudeDir:     c.claudeDir,
 		ProjectLimit:  c.projectLimit,

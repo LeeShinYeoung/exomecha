@@ -73,6 +73,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
+		OutputDir:     t.TempDir(),
 		SandboxPrefix: sandbox.Prefix("owner", "repo"),
 		ProjectLimit:  2,
 		ReadLimit:     2,
@@ -613,11 +614,12 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		}},
 		{"builder", "failed's AddComment", func(e *env) (int, string) {
 			prd, name := e.startedPRD()
+			e.writeCtl(name, "stderr.log", "the sandbox went away\n")
 			e.sbx.stop(name)
 			return prd, name
 		}, githubFault(commentsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Stuck)
-			e.wantKept(name, "input.md")
+			e.wantKept(name, "stderr.log")
 		}},
 		{"resolver", "start's merge", func(e *env) (int, string) {
 			prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
