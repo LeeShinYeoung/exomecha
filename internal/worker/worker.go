@@ -227,12 +227,19 @@ func (l *locks) unlock(n int) {
 //go:embed prompts/*.md
 var prompts embed.FS
 
+// prompt is what a worker reads before its input: how exomecha works, which every worker reads
+// the same, then the worker's own job.
 func prompt(name string) string {
-	b, err := prompts.ReadFile("prompts/" + name + ".md")
-	if err != nil {
-		panic(err)
+	var b strings.Builder
+	for _, file := range []string{"process", name} {
+		text, err := prompts.ReadFile("prompts/" + file + ".md")
+		if err != nil {
+			panic(err)
+		}
+		b.Write(text)
+		b.WriteString("\n")
 	}
-	return string(b)
+	return b.String()
 }
 
 // record is the start of every run's input: the PRD, where its work is, and everything written on

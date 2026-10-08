@@ -165,6 +165,17 @@ func wantInts(t *testing.T, what string, got, want []int) {
 	}
 }
 
+func TestPromptStartsWithTheProcess(t *testing.T) {
+	t.Parallel()
+	for _, ro := range []role{builderRole, reviewerRole, resolverRole} {
+		p := prompt(ro.name)
+		if !strings.HasPrefix(p, "# How exomecha works\n") {
+			t.Errorf("%s's prompt does not start with how exomecha works", ro.name)
+		}
+		wantInOrder(t, ro.name+"'s prompt", p, "## How to read the record", "# exomecha "+ro.name+"\n")
+	}
+}
+
 func TestTrimClosingTags(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ in, want string }{
