@@ -8,7 +8,7 @@ exomecha watches the labels on a repository's GitHub issues. Three workers build
 [person] /exomecha:complete-prd       → PRDs of one PR each (all decisions, a decision ledger, acceptance criteria, test scenarios, a tier label), from the conversation or from drafts, each Blocked by any earlier one it needs → status:ready
 
 [builder]   ready, all blockers closed → working → code in a sandbox and PR → status:review. A PRD with no status or status:draft is left alone
-[reviewer]  review → check CI → AI review → ready if something needs fixing, otherwise an approval on the PR → status:approved
+[reviewer]  review → check CI → AI review → ready if something needs fixing (stuck after 5 send-backs in a row), otherwise an approval on the PR → status:approved
 [person]    approved → merge the PR → PRD closed. Or ask for changes on the PR or the PRD → status:ready
 [resolver]  review with a conflicting PR → merge the base branch and resolve in a sandbox → stays in review (stuck if it can't). approved with a conflicting PR → back to review first
 Any worker blocked by the PRD itself → status:stuck + a comment with the reason → a person closes it, or answers and sets ready
@@ -52,6 +52,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
    - Optional: `EXOMECHA_FIVE_HOUR_LIMIT` (default 90) and `EXOMECHA_WEEKLY_LIMIT` (default 80), in percent of the Claude plan's 5-hour and weekly limits. exomecha starts no new work at or above them.
    - Optional: `EXOMECHA_SANDBOX_LIMIT` (default 2), how many PRD sandboxes builder and resolver may have at once, together.
    - Optional: `EXOMECHA_READ_SANDBOX_LIMIT` (default 2), how many reviewer sandboxes, which only read the code, may exist at once. `EXOMECHA_SANDBOX_LIMIT` does not count them.
+   - Optional: `EXOMECHA_REVIEW_LIMIT` (default 5), how many times reviewer sends a PR back to builder, for a failed CI or a review that asks for changes, before a person decides. The count starts again after reviewer approves the PR or a person answers a stuck PRD.
    - Optional: `EXOMECHA_TIER_LIGHT` (default `opus:low`), `EXOMECHA_TIER_NORMAL` (default `opus:high`) and `EXOMECHA_TIER_HEAVY` (default `opus:xhigh`), the claude model and effort of each tier, as `model:effort`. Effort is one of low, medium, high, xhigh and max. The model must support that effort and claude's auto permission mode, which haiku does not. reviewer runs on heavy, and builder on its PRD's tier.
    - Optional: `EXOMECHA_RESOLVER_MODEL` (default `opus:medium`), the claude model and effort of every resolver run, as `model:effort`. A conflict asks the same judgment whatever the PRD's tier, so resolver does not follow the tier label.
    - At start exomecha makes a short claude call on each of these models, on this machine, and does not start when claude does not run the model in auto permission mode or does not know it.
@@ -101,6 +102,7 @@ The worker's comment says why it is blocked and what needs deciding.
   - `status:ready` when builder got stuck. builder continues on the existing PR branch.
   - `status:review` when resolver got stuck on a conflict. resolver merges the base branch again and settles the conflict the way you answered.
   - `status:review` when reviewer's run failed. reviewer reviews the PR again.
+  - `status:ready` when reviewer sent the PR back `EXOMECHA_REVIEW_LIMIT` times. Its last review on the PR says what it still wants. Answer what builder should do, and builder continues on the same PR with a new count.
 - When the AI says the sandbox blocked a host, add that host to `.exomecha/allowed-hosts` on the base branch if the PRD really needs it. Then relabel the PRD the way the comment says.
 - When `.exomecha/setup.sh` failed, there is nothing to answer. The script's output is in exomecha's log. Fix the script on the base branch, or merge the base branch into the PRD's branch if the comment says the branch is behind. Then relabel the PRD the way the comment says.
 - When `.exomecha/Dockerfile` failed to build or ran over 30 minutes, or `.exomecha/allowed-hosts` has a bad line, there is nothing to answer either. The build output is only in exomecha's log. Fix the file on the base branch, then relabel the PRD the way the comment says.

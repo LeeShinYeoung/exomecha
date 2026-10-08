@@ -57,6 +57,46 @@ func TestLatestReview(t *testing.T) {
 	want("CI failed after the approval", "CI failed")
 }
 
+func TestSendBacks(t *testing.T) {
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	prd := s.AddIssue("PRD", "")
+	pr := s.AddPull("exomecha/prd-1", "main")
+	want := func(what string, n int) {
+		t.Helper()
+		if got, err := client.SendBacks(t.Context(), prd, pr); err != nil || got != n {
+			t.Errorf("%s: SendBacks = %d, %v, want %d", what, got, err, n)
+		}
+	}
+	review := func(body string) {
+		t.Helper()
+		if err := client.AddReview(t.Context(), pr, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want("no review", 0)
+	review("fix the typo")
+	review("CI failed.")
+	s.AddReview(pr, "a person's review")
+	s.AddPendingReview(pr, Marker+"\nnot sent yet")
+	s.AddOutsiderReview(pr, Marker+"\nan outsider's review with the marker")
+	s.AddComment(prd, "a person's comment")
+	want("two send-backs among other reviews", 2)
+	if err := client.AddApproval(t.Context(), pr, "adds the greeting"); err != nil {
+		t.Fatal(err)
+	}
+	want("approved", 0)
+	review("rename it")
+	want("after the approval", 1)
+	if err := client.AddComment(t.Context(), prd, "This PRD is blocked and needs a person."); err != nil {
+		t.Fatal(err)
+	}
+	want("after a stuck comment", 0)
+	review("still wrong")
+	want("after the stuck comment", 1)
+}
+
 func TestPRComments(t *testing.T) {
 	s := githubtest.New(t)
 	client := clientOf(t, s)

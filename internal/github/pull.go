@@ -105,6 +105,45 @@ func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
 	return latest, nil
 }
 
+// SendBacks counts exomecha's reviews on PR pr that sent PRD prd back to builder since a person last
+// stepped in: since exomecha's latest approval on the PR or its latest comment on the PRD, which
+// asked a person to answer.
+func (c *Client) SendBacks(ctx context.Context, prd, pr int) (int, error) {
+	comments, err := c.Comments(ctx, prd)
+	if err != nil {
+		return 0, err
+	}
+	var since time.Time
+	for _, cm := range comments {
+		if cm.Exomecha && cm.Trusted {
+			since = cm.CreatedAt
+		}
+	}
+	var sent []time.Time
+	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, pr, &gh.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return 0, err
+		}
+		body := r.GetBody()
+		if r.GetState() == "PENDING" || !byExomecha(body) || !trusted(r.GetAuthorAssociation()) {
+			continue
+		}
+		at := r.GetSubmittedAt().Time
+		if !strings.HasPrefix(withoutMarker(body), approval) {
+			sent = append(sent, at)
+		} else if at.After(since) {
+			since = at
+		}
+	}
+	n := 0
+	for _, at := range sent {
+		if at.After(since) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // PRComments returns what was written on the PR, oldest first: comments on the conversation, the
 // bodies of reviews, and comments on lines of the diff.
 func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) {
