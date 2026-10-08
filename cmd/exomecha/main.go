@@ -31,12 +31,13 @@ func main() {
 }
 
 // config is what one exomecha runs with. main reads it from the environment. Only the e2e tests
-// set the fields after the tier models.
+// set the fields after the models.
 type config struct {
 	owner, name, base, token string
 	fiveHour, weekly         float64
 	projectLimit, readLimit  int
 	light, normal, heavy     agent.Model
+	resolver                 agent.Model
 
 	apiURL, gitURL, root string // empty: GitHub's API, github.com, ~/.exomecha/<owner>/<name>
 	interval, ciGrace    time.Duration
@@ -53,6 +54,7 @@ func defaults() config {
 		light:        agent.Model{Name: "opus", Effort: "low"},
 		normal:       agent.Model{Name: "opus", Effort: "high"},
 		heavy:        agent.Model{Name: "opus", Effort: "xhigh"},
+		resolver:     agent.Model{Name: "opus", Effort: "medium"},
 	}
 }
 
@@ -82,13 +84,16 @@ func configFromEnv() (config, error) {
 	if c.readLimit, err = limit("EXOMECHA_READ_SANDBOX_LIMIT", c.readLimit); err != nil {
 		return config{}, err
 	}
-	if c.light, err = tierModel("EXOMECHA_TIER_LIGHT", c.light); err != nil {
+	if c.light, err = envModel("EXOMECHA_TIER_LIGHT", c.light); err != nil {
 		return config{}, err
 	}
-	if c.normal, err = tierModel("EXOMECHA_TIER_NORMAL", c.normal); err != nil {
+	if c.normal, err = envModel("EXOMECHA_TIER_NORMAL", c.normal); err != nil {
 		return config{}, err
 	}
-	if c.heavy, err = tierModel("EXOMECHA_TIER_HEAVY", c.heavy); err != nil {
+	if c.heavy, err = envModel("EXOMECHA_TIER_HEAVY", c.heavy); err != nil {
+		return config{}, err
+	}
+	if c.resolver, err = envModel("EXOMECHA_RESOLVER_MODEL", c.resolver); err != nil {
 		return config{}, err
 	}
 	return c, nil
@@ -130,7 +135,10 @@ func serve(ctx context.Context, c config) error {
 	for _, t := range []struct {
 		env   string
 		model agent.Model
-	}{{"EXOMECHA_TIER_LIGHT", c.light}, {"EXOMECHA_TIER_NORMAL", c.normal}, {"EXOMECHA_TIER_HEAVY", c.heavy}} {
+	}{
+		{"EXOMECHA_TIER_LIGHT", c.light}, {"EXOMECHA_TIER_NORMAL", c.normal}, {"EXOMECHA_TIER_HEAVY", c.heavy},
+		{"EXOMECHA_RESOLVER_MODEL", c.resolver},
+	} {
 		if checked[t.model.Name] {
 			continue
 		}
@@ -184,6 +192,7 @@ func serve(ctx context.Context, c config) error {
 		GitName:       author,
 		GitEmail:      email,
 		Models:        map[label.Tier]agent.Model{label.Light: c.light, label.Normal: c.normal, label.Heavy: c.heavy},
+		ResolverModel: c.resolver,
 		Interval:      c.interval,
 		CIGrace:       c.ciGrace,
 	}
@@ -198,7 +207,7 @@ func serve(ctx context.Context, c config) error {
 
 	slog.Info("exomecha started", "repo", c.owner+"/"+c.name, "base", c.base, "five_hour_limit", c.fiveHour,
 		"weekly_limit", c.weekly, "sandbox_limit", c.projectLimit, "read_sandbox_limit", c.readLimit,
-		"tier_light", c.light, "tier_normal", c.normal, "tier_heavy", c.heavy)
+		"tier_light", c.light, "tier_normal", c.normal, "tier_heavy", c.heavy, "resolver_model", c.resolver)
 	check := agent.Claude{}.Usage
 	if c.usage != nil {
 		check = c.usage
@@ -225,7 +234,7 @@ func usageLimit(name string, fallback float64) (float64, error) {
 	return float64(n) / 100, nil
 }
 
-func tierModel(name string, fallback agent.Model) (agent.Model, error) {
+func envModel(name string, fallback agent.Model) (agent.Model, error) {
 	v := os.Getenv(name)
 	if v == "" {
 		return fallback, nil

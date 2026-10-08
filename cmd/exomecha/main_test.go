@@ -18,7 +18,7 @@ func TestMain(m *testing.M) {
 var envNames = []string{
 	"EXOMECHA_REPO", "EXOMECHA_BASE_BRANCH", "EXOMECHA_GITHUB_TOKEN",
 	"EXOMECHA_FIVE_HOUR_LIMIT", "EXOMECHA_WEEKLY_LIMIT", "EXOMECHA_SANDBOX_LIMIT", "EXOMECHA_READ_SANDBOX_LIMIT",
-	"EXOMECHA_TIER_LIGHT", "EXOMECHA_TIER_NORMAL", "EXOMECHA_TIER_HEAVY",
+	"EXOMECHA_TIER_LIGHT", "EXOMECHA_TIER_NORMAL", "EXOMECHA_TIER_HEAVY", "EXOMECHA_RESOLVER_MODEL",
 }
 
 func TestConfigFromEnv(t *testing.T) {
@@ -51,23 +51,28 @@ func TestConfigFromEnv(t *testing.T) {
 			if c.fiveHour != d.fiveHour || c.weekly != d.weekly || c.projectLimit != d.projectLimit || c.readLimit != d.readLimit {
 				t.Errorf("limits = %v %v %d %d, want the defaults", c.fiveHour, c.weekly, c.projectLimit, c.readLimit)
 			}
-			if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy {
-				t.Errorf("tiers = %v %v %v, want the defaults", c.light, c.normal, c.heavy)
+			if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy || c.resolver != d.resolver {
+				t.Errorf("models = %v %v %v %v, want the defaults", c.light, c.normal, c.heavy, c.resolver)
 			}
 			opus := func(effort string) agent.Model { return agent.Model{Name: "opus", Effort: effort} }
-			if d.light != opus("low") || d.normal != opus("high") || d.heavy != opus("xhigh") || d.projectLimit != 2 {
-				t.Errorf("defaults: tiers %v %v %v, sandbox limit %d", d.light, d.normal, d.heavy, d.projectLimit)
+			if d.light != opus("low") || d.normal != opus("high") || d.heavy != opus("xhigh") || d.resolver != opus("medium") || d.projectLimit != 2 {
+				t.Errorf("defaults: models %v %v %v %v, sandbox limit %d", d.light, d.normal, d.heavy, d.resolver, d.projectLimit)
 			}
 		}},
 		{name: "set values", env: with(map[string]string{
 			"EXOMECHA_FIVE_HOUR_LIMIT": "50", "EXOMECHA_SANDBOX_LIMIT": "3", "EXOMECHA_TIER_LIGHT": "sonnet:low",
+			"EXOMECHA_RESOLVER_MODEL": "sonnet:high",
 		}), check: func(t *testing.T, c config) {
 			if c.fiveHour != 0.5 || c.projectLimit != 3 || c.light != (agent.Model{Name: "sonnet", Effort: "low"}) {
 				t.Errorf("five-hour %v, sandbox limit %d, light %v", c.fiveHour, c.projectLimit, c.light)
 			}
+			if c.resolver != (agent.Model{Name: "sonnet", Effort: "high"}) {
+				t.Errorf("resolver %v", c.resolver)
+			}
 		}},
 		{name: "usage limit out of range", env: with(map[string]string{"EXOMECHA_WEEKLY_LIMIT": "0"}), wantErr: "EXOMECHA_WEEKLY_LIMIT"},
 		{name: "model without effort", env: with(map[string]string{"EXOMECHA_TIER_HEAVY": "opus"}), wantErr: "EXOMECHA_TIER_HEAVY"},
+		{name: "resolver model without effort", env: with(map[string]string{"EXOMECHA_RESOLVER_MODEL": "opus"}), wantErr: "EXOMECHA_RESOLVER_MODEL"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			for _, k := range envNames {

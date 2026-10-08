@@ -41,6 +41,8 @@ var testModels = map[label.Tier]agent.Model{
 	label.Heavy:  {Name: "heavy-model", Effort: "high"},
 }
 
+var testResolverModel = agent.Model{Name: "resolver-model", Effort: "xhigh"}
+
 func TestMain(m *testing.M) { gittest.Main(m) }
 
 // Unlike any word a run would hold by chance, so finding it anywhere is a leak.
@@ -77,6 +79,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
 		Models:        maps.Clone(testModels),
+		ResolverModel: testResolverModel,
 	}
 	e.newRuns()
 	return e

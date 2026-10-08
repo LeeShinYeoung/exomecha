@@ -150,9 +150,12 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 // only a person can fix what stopped it. On problem or error the caller removes the sandbox.
 func (r *runs) open(ctx context.Context, ro role, n int, s spec) (problem string, err error) {
 	tier := cmp.Or(s.tier, ro.tier)
-	model, ok := r.Models[tier]
-	if !ok {
-		return "", fmt.Errorf("no model for %s", tier)
+	model := r.Models[tier]
+	if ro.model != nil {
+		model = ro.model(r.Deps)
+	}
+	if model == (agent.Model{}) {
+		return "", fmt.Errorf("no model for %s", cmp.Or(string(tier), ro.name))
 	}
 	ref, problem, err := r.create(ctx, ro, n)
 	if problem != "" || err != nil {
