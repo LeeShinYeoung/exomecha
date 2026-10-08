@@ -20,7 +20,7 @@ EXOMECHA_TEST_E2E=1 go test -run TestE2E -parallel 4 -timeout 60m ./cmd/exomecha
 - Add `-v` to follow it, and `-run TestE2EConflict` to run one scenario.
 - `-short` runs only the core scenarios: HappyPath, Restart, SentBackByPerson and Conflict.
 - On a 16 GB Mac with 8 cores the whole suite took about 3 minutes at `-parallel 4`. A run takes about 50 seconds, half of it starting the sandbox. `-parallel 5` was no faster, since every scenario ran slower, and `-parallel 6` overloaded the machine until scenarios timed out.
-- The first line of output names a file with the log of the whole run. A failing scenario prints its PRDs, PRs, sandboxes and its part of the log.
+- The first line of output names a file with the log of the whole run. A failing scenario prints its PRDs, PRs, sandboxes, the outputs kept for its stuck PRDs and its part of the log. A scenario fails at the first WARN or ERROR about it, or the first PRD in stuck it did not send there.
 - Each scenario removes its sandboxes when it ends, also when it fails. Stopping the run with Ctrl-C or `-timeout` skips that, and the next run removes them.
 
 Component tests that need the real sbx or claude run only when asked:
@@ -78,6 +78,7 @@ What the fake cannot show needs real GitHub. Check it after changes to the skill
 ### Labels and the token
 
 - Start exomecha. `gh label list -R $R` shows the ten labels. Stop and start it again: still ten, and no error in the log.
+- `~/.exomecha/<owner>/<repo>/logs/exomecha.log` holds the same lines as the terminal, and only you can read it. Start a second exomecha for the same repository while the first runs: it says another one is already running and exits with status 1.
 - File a small PRD with `prd` and `status:ready`. It goes through builder and reviewer to `status:approved` with no permission error in the log.
 
 ### Skills
