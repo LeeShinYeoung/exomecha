@@ -129,7 +129,7 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 		if err != nil {
 			return spec{}, err
 		}
-		input, err := prdInput(ctx, b.GitHub, prd)
+		input, err := record(ctx, b.GitHub, b.Git.BaseRef(), prd, pr)
 		if err != nil {
 			return spec{}, err
 		}
@@ -142,19 +142,6 @@ func (b *builder) start(ctx context.Context, prd github.Issue) error {
 			return spec{}, fmt.Errorf("PR #%d has no branch %s", pr, branch)
 		}
 		s.head = remote
-		s.input += fmt.Sprintf("## Existing PR\n\nPR #%d already has earlier work on this PRD. The current directory is its branch.\n\n", pr)
-		onPR, err := prComments(ctx, b.GitHub, pr)
-		if err != nil {
-			return spec{}, err
-		}
-		s.input += onPR
-		review, err := b.GitHub.LatestReview(ctx, pr)
-		if err != nil {
-			return spec{}, err
-		}
-		if review != "" {
-			s.input += "## Last review (exomecha's latest review on this PR: changes to make or CI failures)\n\n" + review + "\n"
-		}
 		s.input += b.ciLogs(ctx, n, remote)
 		return s, nil
 	})
@@ -237,6 +224,10 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		if err != nil {
 			return err
 		}
+	}
+	// Every run's summary goes on the PR, where the record shows the next worker what this run did.
+	if err := b.GitHub.AddComment(ctx, pr, github.Note{Worker: builderRole.name, Kind: github.KindSummary}, out.Summary); err != nil {
+		return err
 	}
 	if err := b.GitHub.SetStatus(ctx, n, label.Working, label.Review); err != nil {
 		return err

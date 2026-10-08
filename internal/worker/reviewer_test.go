@@ -155,8 +155,8 @@ func TestReviewerRequeuesOnFailedCI(t *testing.T) {
 	if len(reviews) != 1 {
 		t.Fatalf("reviews = %+v, want one", reviews)
 	}
-	if reviews[0].Event != "COMMENT" || !strings.HasPrefix(reviews[0].Body, github.Marker) {
-		t.Errorf("review = %+v, want a COMMENT review starting with the marker", reviews[0])
+	if n, _, _ := github.ParseNote(reviews[0].Body); reviews[0].Event != "COMMENT" || n != (github.Note{Worker: "reviewer", Kind: github.KindCI}) {
+		t.Errorf("review = %+v, want a COMMENT review with reviewer's CI note", reviews[0])
 	}
 	wantContains(t, "review", reviews[0].Body, "test: failure http://ci/test")
 	wantNotContains(t, "review", reviews[0].Body, "lint")
@@ -275,7 +275,9 @@ func (e *env) wantApproved(prd, pr int) {
 		e.t.Fatal("no review on the PR")
 	}
 	last := p.Reviews[len(p.Reviews)-1]
-	if last.Event != "COMMENT" || !strings.HasPrefix(last.Body, github.Marker+"\nexomecha's reviewer approved this PR.") || !strings.HasSuffix(last.Body, "fine") {
+	n, text, _ := github.ParseNote(last.Body)
+	if last.Event != "COMMENT" || n != (github.Note{Worker: "reviewer", Kind: github.KindApproved}) ||
+		!strings.HasPrefix(text, "exomecha's reviewer approved this PR.") || !strings.HasSuffix(text, "fine") {
 		e.t.Errorf("last review = %+v, want exomecha's approval with the AI's summary", last)
 	}
 }
@@ -284,6 +286,9 @@ func TestReviewerReadsAPersonsCommentsOnThePR(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _ := e.reviewPRD()
+	if err := e.deps.GitHub.AddReview(t.Context(), pr, github.Note{Worker: "reviewer", Kind: github.KindChanges}, "add a log line"); err != nil {
+		t.Fatal(err)
+	}
 	e.gh.AddLineComment(pr, "feature.txt", 1, "keep it short")
 	e.gh.AddPullComment(pr, "also log it")
 	e.gh.AddOutsiderReview(pr, "an outsider's review")
@@ -291,8 +296,10 @@ func TestReviewerReadsAPersonsCommentsOnThePR(t *testing.T) {
 	e.review(prd)
 
 	input := e.readCtl(e.reviewerBox(prd), "input.md")
-	wantContains(t, "claude input", input, "## Comments on the PR",
-		"(person, on feature.txt line 1)\n\nkeep it short", "(person)\n\nalso log it")
+	onPR := fmt.Sprintf("PR #%d", pr)
+	wantContains(t, "claude input", input, "## Record", "git diff origin/main...HEAD",
+		"(reviewer changes, "+onPR+")\n\nadd a log line",
+		"(person, "+onPR+", on feature.txt line 1)\n\nkeep it short", "(person, "+onPR+")\n\nalso log it")
 	wantNotContains(t, "claude input", input, "an outsider's review")
 }
 
@@ -388,7 +395,7 @@ func TestReviewerChangesRequeues(t *testing.T) {
 	if p.Merged {
 		t.Error("PR merged despite requested changes")
 	}
-	if len(p.Reviews) != 1 || p.Reviews[0].Body != github.Marker+"\nrename the function" {
+	if len(p.Reviews) != 1 || p.Reviews[0].Body != github.Noted(github.Note{Worker: "reviewer", Kind: github.KindChanges}, "rename the function") {
 		t.Errorf("reviews = %+v", p.Reviews)
 	}
 	e.wantRemoved(name)

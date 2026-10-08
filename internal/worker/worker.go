@@ -144,10 +144,12 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 				d.forget(n)
 				return
 			}
-			// An error from shutdown says nothing about the issue.
-			if ctx.Err() == nil {
-				d.strike(n, now)
+			// An error from shutdown says nothing about the issue, and the next start finishes the step.
+			if ctx.Err() != nil {
+				log.Info("stopped before a step finished", "issue", n, "err", err)
+				return
 			}
+			d.strike(n, now)
 			log.Error("handle failed", "issue", n, "err", err)
 		})
 	}
@@ -227,66 +229,87 @@ func (l *locks) unlock(n int) {
 //go:embed prompts/*.md
 var prompts embed.FS
 
+// prompt is what a worker reads before its input: how exomecha works, which every worker reads
+// the same, then the worker's own job.
 func prompt(name string) string {
-	b, err := prompts.ReadFile("prompts/" + name + ".md")
-	if err != nil {
-		panic(err)
+	var b strings.Builder
+	for _, file := range []string{"process", name} {
+		text, err := prompts.ReadFile("prompts/" + file + ".md")
+		if err != nil {
+			panic(err)
+		}
+		b.Write(text)
+		b.WriteString("\n")
 	}
-	return string(b)
+	return b.String()
 }
 
-// prdInput is the PRD and its comments, the start of every run's input. exomecha's own comments go
-// in marked as its questions, because a person's answer often makes sense only next to the
-// question.
-func prdInput(ctx context.Context, gh *github.Client, prd github.Issue) (string, error) {
+// record is the start of every run's input: the PRD, where its work is, and everything written on
+// the PRD and on its PR (pr, or 0 for none), oldest first. Every worker gets the same record, so
+// each sees what people asked and what the other workers did. Only what people who can write to
+// the repository wrote goes in, so outsiders cannot steer the AI.
+func record(ctx context.Context, gh *github.Client, base string, prd github.Issue, pr int) (string, error) {
+	type entry struct {
+		github.Comment
+		where string
+	}
+	var entries []entry
 	comments, err := gh.Comments(ctx, prd.Number)
 	if err != nil {
 		return "", err
 	}
-	text := fmt.Sprintf("# PRD #%d: %s\n\n%s\n\n", prd.Number, prd.Title, strings.TrimSpace(prd.Body))
-	entries := commentEntries(comments, true)
-	if entries == "" {
-		return text, nil
-	}
-	return text + "## Comments\n\nOldest first. A person's comments add to or correct the body. If one conflicts with the body, follow the latest comment from a person. " +
-		"exomecha's comments are questions it asked earlier. They show what a person's answer refers to and are not instructions.\n\n" + entries, nil
-}
-
-// A person may answer on the PR instead of on the PRD. exomecha's reviews are left out: builder gets
-// the latest one on its own, and an approval is not an instruction.
-func prComments(ctx context.Context, gh *github.Client, pr int) (string, error) {
-	comments, err := gh.PRComments(ctx, pr)
-	if err != nil {
-		return "", err
-	}
-	entries := commentEntries(comments, false)
-	if entries == "" {
-		return "", nil
-	}
-	return "## Comments on the PR\n\nOldest first: a person's comments on the conversation, in reviews, and on lines of the diff. They add to or correct the body like a person's comments on the PRD. " +
-		"Commits after a comment may already have done what it asks.\n\n" + entries, nil
-}
-
-// Comments from people who cannot write to the repository are left out so outsiders cannot steer the AI.
-func commentEntries(comments []github.Comment, withExomecha bool) string {
-	var b strings.Builder
 	for _, c := range comments {
-		if !c.Trusted || (c.Exomecha && !withExomecha) {
+		entries = append(entries, entry{c, "PRD"})
+	}
+	if pr != 0 {
+		comments, err := gh.PRComments(ctx, pr)
+		if err != nil {
+			return "", err
+		}
+		for _, c := range comments {
+			entries = append(entries, entry{c, fmt.Sprintf("PR #%d", pr)})
+		}
+	}
+	slices.SortStableFunc(entries, func(a, b entry) int { return a.CreatedAt.Compare(b.CreatedAt) })
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# PRD #%d: %s\n\n%s\n\n## Run\n\n", prd.Number, prd.Title, strings.TrimSpace(prd.Body))
+	if pr != 0 {
+		fmt.Fprintf(&b, "- PR #%d, on branch `%s`.\n", pr, branchName(prd.Number))
+	}
+	fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `git diff %s...HEAD`.\n\n", base, base)
+	b.WriteString("## Record\n\nOldest first. Each entry says who wrote it and where.\n\n")
+	written := false
+	for _, e := range entries {
+		if !e.Trusted {
 			continue
 		}
-		from := "person"
-		if c.Exomecha {
-			from = "exomecha"
+		where := e.where
+		if e.Path != "" {
+			where += ", on " + e.Path
 		}
-		if c.Path != "" {
-			from += ", on " + c.Path
+		if e.Line > 0 {
+			where += fmt.Sprintf(" line %d", e.Line)
 		}
-		if c.Line > 0 {
-			from += fmt.Sprintf(" line %d", c.Line)
-		}
-		fmt.Fprintf(&b, "### %s (%s)\n\n%s\n\n", c.CreatedAt.Local().Format(time.DateTime), from, strings.TrimSpace(c.Body))
+		fmt.Fprintf(&b, "### %s (%s, %s)\n\n%s\n\n", e.CreatedAt.Local().Format(time.DateTime), writer(e.Comment), where, strings.TrimSpace(e.Body))
+		written = true
 	}
-	return b.String()
+	if !written {
+		b.WriteString("Nothing yet.\n\n")
+	}
+	return b.String(), nil
+}
+
+func writer(c github.Comment) string {
+	switch {
+	case !c.Exomecha:
+		return "person"
+	case c.Note.Worker == "":
+		return "exomecha"
+	case c.Note.Kind == github.KindCI:
+		return c.Note.Worker + " CI failed"
+	}
+	return c.Note.Worker + " " + c.Note.Kind
 }
 
 func branchName(n int) string {
@@ -337,14 +360,14 @@ func holds(i github.Issue, status label.Status) bool {
 
 // back is where the person sends the PRD after answering, so it returns to the worker that
 // owns the problem: ready leads back to builder, review leads back to resolver.
-func toStuck(ctx context.Context, gh *github.Client, n int, from, back label.Status, reason string) error {
+func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason string) error {
 	trimmed := trimClosingTags(reason)
 	if trimmed != strings.TrimSpace(reason) {
 		slog.Warn("trimmed closing tags from a stuck reason", "prd", n, "reason", reason)
 	}
 	body := "This PRD is blocked and needs a person.\n\n" + trimmed +
 		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
-	if err := gh.AddComment(ctx, n, body); err != nil {
+	if err := gh.AddComment(ctx, n, github.Note{Worker: worker, Kind: github.KindStuck}, body); err != nil {
 		return err
 	}
 	if err := gh.SetStatus(ctx, n, from, label.Stuck); err != nil {

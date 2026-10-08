@@ -29,32 +29,27 @@ func TestMerged(t *testing.T) {
 	want("closed after a merged one", false)
 }
 
-func TestLatestReview(t *testing.T) {
-	s := githubtest.New(t)
-	client := clientOf(t, s)
-	pr := s.AddPull("exomecha/prd-1", "main")
-	want := func(what, review string) {
-		t.Helper()
-		if got, err := client.LatestReview(t.Context(), pr); err != nil || got != review {
-			t.Errorf("%s: LatestReview = %q, %v, want %q", what, got, err, review)
+func TestParseNote(t *testing.T) {
+	for _, c := range []struct {
+		body, text string
+		note       Note
+		ok         bool
+	}{
+		{Noted(Note{Worker: "resolver", Kind: KindResolved}, "kept both sides"), "kept both sides", Note{"resolver", KindResolved}, true},
+		{Marker + "\nfrom before notes", "from before notes", Note{}, true},
+		{"  " + Marker + "\n\nwith space around\n", "with space around", Note{}, true},
+		{"a person's comment", "a person's comment", Note{}, false},
+		{"<!-- exomechanic -->\nnot exomecha's", "<!-- exomechanic -->\nnot exomecha's", Note{}, false},
+		{"<!-- exomecha", "<!-- exomecha", Note{}, false},
+	} {
+		n, text, ok := ParseNote(c.body)
+		if n != c.note || text != c.text || ok != c.ok {
+			t.Errorf("ParseNote(%q) = %v, %q, %v, want %v, %q, %v", c.body, n, text, ok, c.note, c.text, c.ok)
 		}
 	}
-
-	want("no review", "")
-	if err := client.AddReview(t.Context(), pr, "fix the typo"); err != nil {
-		t.Fatal(err)
+	if got := Noted(Note{Worker: "builder", Kind: KindSummary}, "did it"); got != "<!-- exomecha:builder:summary -->\n**exomecha builder**\n\ndid it" {
+		t.Errorf("Noted = %q", got)
 	}
-	s.AddReview(pr, "a person's review")
-	s.AddOutsiderReview(pr, Marker+"\nan outsider's review with the marker")
-	want("changes asked", "fix the typo")
-	if err := client.AddApproval(t.Context(), pr, "adds the greeting"); err != nil {
-		t.Fatal(err)
-	}
-	want("approved after the changes", "")
-	if err := client.AddReview(t.Context(), pr, "CI failed"); err != nil {
-		t.Fatal(err)
-	}
-	want("CI failed after the approval", "CI failed")
 }
 
 func TestSendBacks(t *testing.T) {
@@ -68,33 +63,36 @@ func TestSendBacks(t *testing.T) {
 			t.Errorf("%s: SendBacks = %d, %v, want %d", what, got, err, n)
 		}
 	}
-	review := func(body string) {
+	review := func(kind, body string) {
 		t.Helper()
-		if err := client.AddReview(t.Context(), pr, body); err != nil {
+		if err := client.AddReview(t.Context(), pr, Note{Worker: "reviewer", Kind: kind}, body); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	want("no review", 0)
-	review("fix the typo")
-	review("CI failed.")
+	review(KindChanges, "fix the typo")
+	review(KindCI, "CI failed.")
+	s.AddReview(pr, Marker+"\nfrom before reviews had a note")
 	s.AddReview(pr, "a person's review")
 	s.AddPendingReview(pr, Marker+"\nnot sent yet")
 	s.AddOutsiderReview(pr, Marker+"\nan outsider's review with the marker")
 	s.AddComment(prd, "a person's comment")
-	want("two send-backs among other reviews", 2)
+	want("three send-backs among other reviews", 3)
 	if err := client.AddApproval(t.Context(), pr, "adds the greeting"); err != nil {
 		t.Fatal(err)
 	}
 	want("approved", 0)
-	review("rename it")
+	review(KindChanges, "rename it")
 	want("after the approval", 1)
-	if err := client.AddComment(t.Context(), prd, "This PRD is blocked and needs a person."); err != nil {
+	if err := client.AddComment(t.Context(), prd, Note{Worker: "builder", Kind: KindStuck}, "This PRD is blocked."); err != nil {
 		t.Fatal(err)
 	}
 	want("after a stuck comment", 0)
-	review("still wrong")
+	review(KindChanges, "still wrong")
 	want("after the stuck comment", 1)
+	s.AddReview(pr, Marker+"\n"+approval+"\n\nfrom before reviews had a note")
+	want("after an approval from before reviews had a note", 0)
 }
 
 func TestFailedJobLogs(t *testing.T) {
@@ -153,7 +151,7 @@ func TestPRComments(t *testing.T) {
 	s.AddPendingReview(pr, "not sent yet")
 	s.AddOutsiderReview(pr, "an outsider's review")
 	s.AddLineComment(pr, "hello.go", 0, "split this file")
-	if err := client.AddReview(t.Context(), pr, "fix the typo"); err != nil {
+	if err := client.AddReview(t.Context(), pr, Note{Worker: "reviewer", Kind: KindChanges}, "fix the typo"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,14 +161,14 @@ func TestPRComments(t *testing.T) {
 	}
 	var lines []string
 	for _, c := range got {
-		lines = append(lines, fmt.Sprintf("%s:%d %q trusted=%v exomecha=%v", c.Path, c.Line, c.Body, c.Trusted, c.Exomecha))
+		lines = append(lines, fmt.Sprintf("%s:%d %q trusted=%v exomecha=%v %v", c.Path, c.Line, c.Body, c.Trusted, c.Exomecha, c.Note))
 	}
 	want := []string{
-		`hello.go:12 "rename this" trusted=true exomecha=false`,
-		`:0 "also update the README" trusted=true exomecha=false`,
-		`:0 "an outsider's review" trusted=false exomecha=false`,
-		`hello.go:0 "split this file" trusted=true exomecha=false`,
-		`:0 "fix the typo" trusted=true exomecha=true`,
+		`hello.go:12 "rename this" trusted=true exomecha=false { }`,
+		`:0 "also update the README" trusted=true exomecha=false { }`,
+		`:0 "an outsider's review" trusted=false exomecha=false { }`,
+		`hello.go:0 "split this file" trusted=true exomecha=false { }`,
+		`:0 "fix the typo" trusted=true exomecha=true {reviewer changes}`,
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Errorf("PRComments =\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))

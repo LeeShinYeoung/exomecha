@@ -145,10 +145,34 @@ func wantNotContains(t *testing.T, what, s string, subs ...string) {
 	}
 }
 
+// wantInOrder checks that subs appear in s in the order given.
+func wantInOrder(t *testing.T, what, s string, subs ...string) {
+	t.Helper()
+	last := -1
+	for _, sub := range subs {
+		i := strings.Index(s, sub)
+		if i < last {
+			t.Errorf("%s has %q before the entry it should follow:\n%s", what, sub, s)
+		}
+		last = i
+	}
+}
+
 func wantInts(t *testing.T, what string, got, want []int) {
 	t.Helper()
 	if !slices.Equal(got, want) {
 		t.Errorf("%s = %v, want %v", what, got, want)
+	}
+}
+
+func TestPromptStartsWithTheProcess(t *testing.T) {
+	t.Parallel()
+	for _, ro := range []role{builderRole, reviewerRole, resolverRole} {
+		p := prompt(ro.name)
+		if !strings.HasPrefix(p, "# How exomecha works\n") {
+			t.Errorf("%s's prompt does not start with how exomecha works", ro.name)
+		}
+		wantInOrder(t, ro.name+"'s prompt", p, "## How to read the record", "# exomecha "+ro.name+"\n")
 	}
 }
 
@@ -173,8 +197,8 @@ func TestTrimClosingTags(t *testing.T) {
 // since that decides which worker gets the PRD back. A PRD's comment says to remove the label.
 func wantStuckComment(t *testing.T, comment, reason string, back label.Status) {
 	t.Helper()
-	if !strings.HasPrefix(comment, github.Marker) {
-		t.Errorf("stuck comment does not start with the exomecha marker:\n%s", comment)
+	if n, _, ok := github.ParseNote(comment); !ok || n.Kind != github.KindStuck || n.Worker == "" {
+		t.Errorf("stuck comment does not start with a worker's stuck note:\n%s", comment)
 	}
 	again := "relabel it `" + string(back) + "`"
 	if back == label.None {
@@ -346,13 +370,16 @@ func TestRoundForgetsItemsNoLongerPicked(t *testing.T) {
 	wantInts(t, "tries", w.took(), []int{1, 1})
 }
 
+// A step cut off by shutdown is no error either, so the log does not say one.
 func TestRoundDoesNotStrikeOnShutdown(t *testing.T) {
-	t.Parallel()
+	log := captureLog(t)
 	w := &fakeWorker{picks: []int{1}, errs: map[int]error{1: context.Canceled}}
 	r := newRounds(w, newClock())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	r.run(ctx)
+	wantContains(t, "log", log.String(), "stopped before a step finished")
+	wantNotContains(t, "log", log.String(), "level=ERROR")
 	w.errs[1] = nil
 	r.run(t.Context())
 	wantInts(t, "tries", w.took(), []int{1, 1})
@@ -557,7 +584,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		{"resolver", "start's merge", func(e *env) (int, string) {
 			prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 			return prd, e.resolverBox(prd)
-		}, execFault("git merge"), resolverHandle, func(e *env, n int, name string) {
+		}, execFault("merge --no-commit"), resolverHandle, func(e *env, n int, name string) {
 			e.wantState(name, running)
 		}},
 		{"resolver", "collect's push", func(e *env) (int, string) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,12 +19,13 @@ func TestE2ESentBackByReview(t *testing.T) {
 
 	w.waitFor("the review", aStart+aRun, func() bool { return w.status(prd) != label.Review })
 	w.wantStatus(prd, label.Ready)
-	if rs := w.reviews(pr); len(rs) != 1 || !strings.HasPrefix(rs[0].Body, github.Marker) || approvals(rs) != 0 {
-		t.Fatalf("reviews = %+v, want one review from exomecha asking for changes", rs)
+	rs := w.reviews(pr)
+	if note, _, _ := github.ParseNote(lastOf(rs).Body); len(rs) != 1 || note != (github.Note{Worker: "reviewer", Kind: github.KindChanges}) {
+		t.Fatalf("reviews = %+v, want one review from reviewer asking for changes", rs)
 	}
 	builder := w.box(prd, "builder")
 	w.waitFor("builder to start on the review", aRound+aStart, func() bool { return w.started(builder) })
-	if in := w.input(builder); !strings.Contains(in, "## Existing PR") || !strings.Contains(in, "## Last review") {
+	if in := w.input(builder); !strings.Contains(in, fmt.Sprintf("- PR #%d, on branch", pr)) || !strings.Contains(in, "(reviewer changes, PR #") {
 		t.Errorf("builder's input lacks the PR or the review:\n%s", in)
 	}
 	w.waitFor("the fix", aRun, func() bool { return w.status(prd) == label.Review && w.head(branchOf(prd)) != broken })
@@ -57,12 +59,12 @@ func TestE2ESentBackByPerson(t *testing.T) {
 	builder := w.box(prd, "builder")
 	w.waitFor("builder", aStart, func() bool { return w.started(builder) })
 	in := w.input(builder)
-	for _, want := range []string{"## Comments on the PR", asked, "(person, on greet.sh line 2)", onLine} {
+	for _, want := range []string{"## Record", "(reviewer approved, PR #", asked, fmt.Sprintf("(person, PR #%d, on greet.sh line 2)", pr), onLine} {
 		if !strings.Contains(in, want) {
 			t.Errorf("builder's input lacks %q:\n%s", want, in)
 		}
 	}
-	for _, unwanted := range []string{"## Last review", "Python", "Delete greet.sh"} {
+	for _, unwanted := range []string{"Python", "Delete greet.sh"} {
 		if strings.Contains(in, unwanted) {
 			t.Errorf("builder's input has %q:\n%s", unwanted, in)
 		}

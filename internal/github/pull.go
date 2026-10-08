@@ -73,39 +73,24 @@ func (c *Client) PR(ctx context.Context, number int) (PR, error) {
 }
 
 // COMMENT only: the token owner authored the PR, and GitHub blocks approving or requesting changes on your own PR.
-func (c *Client) AddReview(ctx context.Context, number int, body string) error {
+func (c *Client) AddReview(ctx context.Context, number int, n Note, body string) error {
 	_, _, err := c.api.PullRequests.CreateReview(ctx, c.owner, c.repo, number, &gh.PullRequestReviewRequest{
-		Body:  gh.Ptr(withMarker(body)),
+		Body:  gh.Ptr(Noted(n, body)),
 		Event: gh.Ptr("COMMENT"),
 	})
 	return err
 }
 
-// approval starts the review exomecha leaves when reviewer approves, so LatestReview can tell it
-// from a review that asks for changes.
+// approval starts the review exomecha leaves when reviewer approves. Before reviews had a Note, it
+// was all that told an approval apart.
 const approval = "exomecha's reviewer approved this PR. A person reviews and merges it."
 
 func (c *Client) AddApproval(ctx context.Context, number int, summary string) error {
-	return c.AddReview(ctx, number, approval+"\n\n"+summary)
+	return c.AddReview(ctx, number, Note{Worker: "reviewer", Kind: KindApproved}, approval+"\n\n"+summary)
 }
 
-// LatestReview returns exomecha's latest review, or "" when that review is an approval, since
-// whatever an earlier review asked for was done before it.
-func (c *Client) LatestReview(ctx context.Context, number int) (string, error) {
-	var latest string
-	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, number, &gh.ListOptions{PerPage: 100}) {
-		if err != nil {
-			return "", err
-		}
-		// Anyone can post a review that starts with the marker, so check who wrote it too.
-		if body := r.GetBody(); byExomecha(body) && trusted(r.GetAuthorAssociation()) {
-			latest = withoutMarker(body)
-		}
-	}
-	if strings.HasPrefix(latest, approval) {
-		return "", nil
-	}
-	return latest, nil
+func isApproval(cm Comment) bool {
+	return cm.Note.Kind == KindApproved || cm.Note.Kind == "" && strings.HasPrefix(cm.Body, approval)
 }
 
 // SendBacks counts exomecha's reviews on PR pr that sent PRD prd back to builder since a person last
@@ -127,15 +112,17 @@ func (c *Client) SendBacks(ctx context.Context, prd, pr int) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		body := r.GetBody()
-		if r.GetState() == "PENDING" || !byExomecha(body) || !trusted(r.GetAuthorAssociation()) {
+		cm := commentFrom(r.GetBody(), r.GetAuthorAssociation(), r.GetSubmittedAt().Time)
+		if r.GetState() == "PENDING" || !cm.Exomecha || !cm.Trusted {
 			continue
 		}
-		at := r.GetSubmittedAt().Time
-		if !strings.HasPrefix(withoutMarker(body), approval) {
-			sent = append(sent, at)
-		} else if at.After(since) {
-			since = at
+		switch {
+		case isApproval(cm):
+			if cm.CreatedAt.After(since) {
+				since = cm.CreatedAt
+			}
+		case cm.Note.Kind == "" || cm.Note.Kind == KindChanges || cm.Note.Kind == KindCI:
+			sent = append(sent, cm.CreatedAt)
 		}
 	}
 	n := 0

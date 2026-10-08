@@ -131,7 +131,11 @@ func (r *resolver) start(ctx context.Context, prd github.Issue) error {
 		return err
 	}
 	return r.runs.start(ctx, resolverRole, n, func(ctx context.Context) (spec, error) {
-		input, err := prdInput(ctx, r.GitHub, prd)
+		pr, _, err := r.GitHub.OpenPR(ctx, branch)
+		if err != nil {
+			return spec{}, err
+		}
+		input, err := record(ctx, r.GitHub, r.Git.BaseRef(), prd, pr)
 		if err != nil {
 			return spec{}, err
 		}
@@ -169,6 +173,16 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	}
 	if err := r.Git.PushCommit(ctx, head, branchName(n), false); err != nil {
 		return err
+	}
+	// The record shows reviewer and the next workers how the merge was settled.
+	pr, ok, err := r.GitHub.OpenPR(ctx, branchName(n))
+	if err != nil {
+		return err
+	}
+	if ok {
+		if err := r.GitHub.AddComment(ctx, pr, github.Note{Worker: resolverRole.name, Kind: github.KindResolved}, out.Reason); err != nil {
+			return err
+		}
 	}
 	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
 	slog.Info("merged base branch and pushed", "prd", n, "conflicts", len(in.Conflicts))

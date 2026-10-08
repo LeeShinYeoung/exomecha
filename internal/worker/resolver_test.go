@@ -1,12 +1,14 @@
 package worker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
@@ -118,8 +120,8 @@ func TestResolverPushesResolvedMerge(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, ".git", "MERGE_HEAD")); err != nil {
 		t.Errorf("no merge in progress in the sandbox: %v", err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(repo, "app.txt")); !strings.Contains(string(b), "<<<<<<<") {
-		t.Errorf("app.txt has no conflict markers: %q", b)
+	if b, _ := os.ReadFile(filepath.Join(repo, "app.txt")); !strings.Contains(string(b), "<<<<<<<") || !strings.Contains(string(b), "||||||| ") {
+		t.Errorf("app.txt has no conflict markers with the original lines: %q", b)
 	}
 	input := e.readCtl(name, "input.md")
 	wantContains(t, "claude input", input, "PRD body", "## Conflicted files (merging `origin/main`)", "- app.txt")
@@ -140,6 +142,26 @@ func TestResolverPushesResolvedMerge(t *testing.T) {
 	e.wantRemoved(name)
 	if n := len(e.gh.Issue(prd).Comments); n != 0 {
 		t.Errorf("resolved merge left %d comments", n)
+	}
+}
+
+func TestResolverReadsThePRAndLeavesHowItResolved(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
+	e.gh.AddLineComment(pr, "app.txt", 1, "keep main's line first")
+	e.resolve(prd)
+	name := e.resolverBox(prd)
+	wantContains(t, "claude input", e.readCtl(name, "input.md"),
+		fmt.Sprintf("(person, PR #%d, on app.txt line 1)\n\nkeep main's line first", pr))
+
+	e.play(name, resolveWith(t, "main\nfeature\n"), resolverDone)
+	e.resolve(prd)
+
+	comments := e.gh.Pull(pr).Comments
+	want := github.Noted(github.Note{Worker: "resolver", Kind: github.KindResolved}, "kept both lines")
+	if len(comments) != 1 || comments[0].Body != want {
+		t.Errorf("PR comments = %+v, want resolver's reason", comments)
 	}
 }
 
@@ -242,7 +264,7 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 	name := e.resolverBox(prd)
-	e.sbx.failExec = "git merge"
+	e.sbx.failExec = "merge --no-commit"
 
 	if err := e.resolver().Handle(t.Context(), prd); err == nil {
 		t.Fatal("Handle returned nil for an sbx error")
