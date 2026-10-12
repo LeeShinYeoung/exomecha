@@ -1,0 +1,42 @@
+# exomecha
+
+exomecha has AI turn a PRD, which a person writes as a GitHub issue, into code and PRs. It has two parts: a plugin that people use, and an orchestrator that runs the AI. The README describes how it works.
+
+This file is for agents that build exomecha. The instructions the orchestrator gives the AI in a sandbox are in `internal/worker/prompts`. When you change something this file describes, update this file in the same change.
+
+## Plugin
+
+A Claude Code plugin that people use. Its code is in `skills` and `.claude-plugin`. People write PRDs and prepare the sandboxes with these skills.
+
+- `/exomecha:draft-prd`: records a problem as a draft. The issue gets the `prd` and `status:draft` labels, and no worker takes it.
+- `/exomecha:summary-all-drafts`: summarizes the open drafts, to help pick what to settle next.
+- `/exomecha:complete-prd`: writes a PRD with every decision in it, from the conversation or from drafts. When one PR would be too big, it splits the work into several PRDs, and a PRD that needs an earlier one is blocked by it. Last, it adds `status:ready` and a tier label. The tier picks builder's model.
+- `/exomecha:setup`: writes the files that prepare a PRD's sandbox to the PRD repository, and proves them in a real sandbox.
+
+## Orchestrator
+
+A Go daemon, the `exomecha` command. Its code is in `cmd/exomecha` and `internal`.
+
+### Parts
+
+- **Commands**: `init` (settings and checks), `run` (runs a project), `list` (projects).
+- **Workers**: builder, reviewer and resolver. Each checks the PRDs every minute and takes one step.
+- **Sandboxes**: one sbx sandbox per PRD, with claude running in it.
+- **Project environment**: the `.exomecha` folder of the PRD repository. It prepares builder's and resolver's sandboxes.
+- **Shared clones**: one per repository. Code goes to and from the sandboxes through it, and exomecha pushes from it.
+- **Record**: what is written on the PRD and its PRs. It is the workers' input and output.
+- **Usage gate**: stops new work when the Claude plan's usage reaches its limits.
+- **Project folder**: `~/.exomecha/<project>`, with the log, the clones and the runs.
+
+### Status flow
+
+| Status | Who | What | Next |
+|---|---|---|---|
+| `status:ready` | builder | Writes the code and opens the PRs, once no open issue blocks the PRD. | `status:working`, then `status:review` |
+| `status:review` | reviewer | Reviews the PRs once CI passes. | `status:approved` or `status:ready` |
+| `status:review` | resolver | Merges the base branch into a conflicting PR. | stays |
+| `status:approved` | resolver | Sends the PRD back when a PR conflicts. | `status:review` |
+| `status:approved` | person | Merges the PRs. | closed |
+| `status:stuck` | person | Answers the worker's question. | the status the comment names |
+
+A worker that needs a person's decision moves the PRD to `status:stuck`.
