@@ -2,6 +2,7 @@ package github
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,6 +71,10 @@ func TestSendBacks(t *testing.T) {
 		if got, err := client.SendBacks(t.Context(), pr, comments); err != nil || got != n {
 			t.Errorf("%s: SendBacks = %d, %v, want %d", what, got, err, n)
 		}
+		slices.Reverse(comments)
+		if got, err := client.SendBacks(t.Context(), pr, comments); err != nil || got != n {
+			t.Errorf("%s: SendBacks with the PRD's comments newest first = %d, %v, want %d", what, got, err, n)
+		}
 	}
 	review := func(kind, body string) {
 		t.Helper()
@@ -78,6 +83,9 @@ func TestSendBacks(t *testing.T) {
 		}
 	}
 
+	if err := client.AddComment(t.Context(), prd, Note{Worker: "builder", Kind: KindStuck}, "An older question."); err != nil {
+		t.Fatal(err)
+	}
 	want("no review", 0)
 	review(KindChanges, "fix the typo")
 	review(KindCI, "CI failed.")

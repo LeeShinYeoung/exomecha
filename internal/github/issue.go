@@ -168,7 +168,6 @@ func commentFrom(body, association string, at time.Time) Comment {
 	}
 }
 
-// Noted is body as exomecha posts it for worker n.Worker.
 func Noted(n Note, body string) string {
 	return "<!-- exomecha:" + n.Worker + ":" + n.Kind + " -->\n" + header(n.Worker) + "\n\n" + body
 }
