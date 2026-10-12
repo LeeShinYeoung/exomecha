@@ -131,7 +131,7 @@ type problem struct {
 // sends the issue to stuck, and an error leaves builder's PRD ready and returns the error.
 func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Context) (spec, error)) error {
 	name := r.name(ro, n)
-	if ready, err := r.reserve(ctx, ro, name); err != nil || !ready {
+	if reserved, err := r.reserve(ctx, ro, name); err != nil || !reserved {
 		return err
 	}
 	defer r.release(name)

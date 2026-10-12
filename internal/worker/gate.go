@@ -50,11 +50,11 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 	}
 
 	u := g.usage
-	closed := u.Known && (u.Rejected || u.FiveHour.Used >= g.FiveHour || u.Weekly.Used >= g.Weekly)
+	over := u.Known && (u.Rejected || u.FiveHour.Used >= g.FiveHour || u.Weekly.Used >= g.Weekly)
 	// Not ctx: the usage is every worker's, not the PRD's whose start read it.
-	if closed != g.closed {
-		g.closed = closed
-		if closed {
+	if over != g.closed {
+		g.closed = over
+		if over {
 			slog.Warn("Claude usage over the limit, pausing new work",
 				logging.FiveHour, percent(u.FiveHour.Used), logging.Weekly, percent(u.Weekly.Used), logging.Until, g.reopens())
 		} else {
@@ -62,7 +62,7 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 				logging.FiveHour, percent(u.FiveHour.Used), logging.Weekly, percent(u.Weekly.Used))
 		}
 	}
-	return !closed, nil
+	return !over, nil
 }
 
 // markStale makes the next Open read usage again, after a run hit a limit the last reading did

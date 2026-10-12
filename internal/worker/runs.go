@@ -286,31 +286,31 @@ func (r *runs) pick(ctx context.Context, ro role, picked []int) ([]int, error) {
 	return slices.Compact(out), nil
 }
 
-// step takes the action row gives for the state of the run of ro for issue n. start begins a run,
-// and collect takes what a finished run did.
-func (r *runs) step(ctx context.Context, ro role, n int, row row,
+// step takes the action tableRow gives for the state of the run of ro for issue n. start begins a
+// run, and collect takes what a finished run did.
+func (r *runs) step(ctx context.Context, ro role, n int, tableRow row,
 	start func(context.Context) error, collect func(context.Context, run) error) error {
 	name := r.name(ro, n)
-	run, err := r.read(ctx, ro, n)
+	current, err := r.read(ctx, ro, n)
 	if err != nil {
 		return err
 	}
 	// The result stays in the directory, so the slot comes back while the result waits to be collected.
-	if run.state == finished && run.box && !ro.project {
+	if current.state == finished && current.box && !ro.project {
 		if err := r.Sandboxes.Remove(ctx, name); err != nil {
 			return fmt.Errorf("remove sandbox %s: %w", name, err)
 		}
 	}
-	switch row[run.state] {
+	switch tableRow[current.state] {
 	case begin:
 		return start(ctx)
 	case harvest:
-		return collect(ctx, run)
+		return collect(ctx, current)
 	case fail:
-		if run.state == dead || run.state == gone {
-			slog.ErrorContext(ctx, "the run lost its sandbox", logging.Sandbox, name, logging.Reason, r.why(run.state))
+		if current.state == dead || current.state == gone {
+			slog.ErrorContext(ctx, "the run lost its sandbox", logging.Sandbox, name, logging.Reason, r.why(current.state))
 		}
-		return r.failed(ctx, ro, n, r.why(run.state))
+		return r.failed(ctx, ro, n, r.why(current.state))
 	case drop:
 		return r.drop(ctx, ro, n)
 	case restart:

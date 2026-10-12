@@ -16,13 +16,13 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
-// take brings the commits the run left checked out in the repositories of runs into their shared
-// clones, for the worker to push, and returns them in the same order. ok is false when the run went
-// to stuck or starts over instead, and err is set only when a step failed. said is what the AI said
-// about its work, for a stuck comment.
-func (r *runs) take(ctx context.Context, ro role, n int, runs []repoRun, said string) (heads []string, ok bool, err error) {
+// take brings the commits the run left checked out in repos into their shared clones, for the
+// worker to push, and returns them in the same order. ok is false when the run went to stuck or
+// starts over instead, and err is set only when a step failed. said is what the AI said about its
+// work, for a stuck comment.
+func (r *runs) take(ctx context.Context, ro role, n int, repos []repoRun, said string) (heads []string, ok bool, err error) {
 	name := r.name(ro, n)
-	for _, rr := range runs {
+	for _, rr := range repos {
 		repo, found := r.repo(rr.Repo)
 		if !found {
 			return nil, false, r.stuck(ctx, ro, n, fmt.Sprintf("The run changed %s, which is no longer one of the repositories exomecha may change, so nothing was pushed.\n\n%s", rr.Repo, said))

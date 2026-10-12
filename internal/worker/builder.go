@@ -55,16 +55,16 @@ func (*builder) Name() string { return builderRole.name }
 // Pick returns the ready PRDs with no open blocker, every working PRD, and every PRD that has a
 // builder sandbox, whatever its label.
 func (b *builder) Pick(ctx context.Context) ([]int, error) {
-	ready, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Ready))
+	readyPRDs, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Ready))
 	if err != nil {
 		return nil, err
 	}
-	working, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Working))
+	workingPRDs, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Working))
 	if err != nil {
 		return nil, err
 	}
 	var picked []int
-	for _, t := range ready {
+	for _, t := range readyPRDs {
 		unblocked, err := b.unblocked(ctx, t.Number)
 		if err != nil {
 			return nil, err
@@ -73,7 +73,7 @@ func (b *builder) Pick(ctx context.Context) ([]int, error) {
 			picked = append(picked, t.Number)
 		}
 	}
-	for _, t := range working {
+	for _, t := range workingPRDs {
 		picked = append(picked, t.Number)
 	}
 	return b.runs.pick(ctx, builderRole, picked)
@@ -104,7 +104,7 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 	}
 	return b.runs.step(ctx, builderRole, n, builderTable[p],
 		func(ctx context.Context) error { return b.start(ctx, prd, repos) },
-		func(ctx context.Context, run run) error { return b.collect(ctx, prd, run.in) })
+		func(ctx context.Context, got run) error { return b.collect(ctx, prd, got.in) })
 }
 
 func (b *builder) place(prd github.Issue) place {
@@ -119,7 +119,7 @@ func (b *builder) place(prd github.Issue) place {
 
 func (b *builder) start(ctx context.Context, prd github.Issue, repos []*Repo) error {
 	n := prd.Number
-	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
+	if unblocked, err := b.unblocked(ctx, n); err != nil || !unblocked {
 		return err
 	}
 	return b.runs.start(ctx, builderRole, n, func(ctx context.Context) (spec, error) {
@@ -181,14 +181,14 @@ func (b *builder) ciLogs(ctx context.Context, repo *Repo, count int, sha string)
 		prefix = repo.Name + ": "
 	}
 	var out strings.Builder
-	for _, run := range failed {
-		logs, err := repo.GitHub.FailedJobLogs(ctx, run.ID)
+	for _, ciRun := range failed {
+		logs, err := repo.GitHub.FailedJobLogs(ctx, ciRun.ID)
 		if err != nil {
-			slog.WarnContext(ctx, "side task failed", logging.Task, "read the logs of CI run "+run.Name, logging.Err, err)
+			slog.WarnContext(ctx, "side task failed", logging.Task, "read the logs of CI run "+ciRun.Name, logging.Err, err)
 			continue
 		}
 		for _, l := range logs {
-			fmt.Fprintf(&out, "### %s%s: %s\n\n```\n%s\n```\n\n", prefix, run.Name, l.Job, l.Tail)
+			fmt.Fprintf(&out, "### %s%s: %s\n\n```\n%s\n```\n\n", prefix, ciRun.Name, l.Job, l.Tail)
 		}
 	}
 	return out.String()

@@ -32,7 +32,7 @@ const setupTimeout = 10 * time.Minute
 // it exits 0 in time, and it leaves every repository's working copy as git had it. Its output is
 // in setup.log, which a stuck issue keeps. What it leaves running stays, since the AI's tests may
 // need it, and goes away with the sandbox.
-func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep string) (note string, p *problem, err error) {
+func (r *runs) setup(ctx context.Context, ro role, n int, repos []repoRun, prep string) (note string, p *problem, err error) {
 	content, ok, err := r.Prep.Show(ctx, prep, setupScript)
 	if err != nil || !ok {
 		return "", nil, err
@@ -48,7 +48,7 @@ func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep s
 	// The timeout inside the sandbox stops the script. This one only covers sbx itself hanging.
 	runCtx, cancel := context.WithTimeout(ctx, setupTimeout+time.Minute)
 	defer cancel()
-	env := append([]string{"EXOMECHA_PRD=" + strconv.Itoa(n), "EXOMECHA_REPOS=" + reposEnv(runs)}, r.secretEnv(ro)...)
+	env := append([]string{"EXOMECHA_PRD=" + strconv.Itoa(n), "EXOMECHA_REPOS=" + reposEnv(repos)}, r.secretEnv(ro)...)
 	out, err := r.Sandboxes.Exec(runCtx, name, repoDir, env, "sh", "-c", script, "sh", r.ctl(name))
 	if err != nil {
 		return "", nil, fmt.Errorf("run %s: %w", setupScript, err)
@@ -60,7 +60,7 @@ func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep s
 
 	var changed []string // git status of each repository the script changed
 	if code == 0 {
-		for _, rr := range runs {
+		for _, rr := range repos {
 			out, err := r.git(ctx, name, rr.Dir, "rev-parse", "HEAD")
 			if err != nil {
 				return "", nil, err
@@ -89,7 +89,7 @@ func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep s
 		// Anything git can see, the AI can commit into the PR.
 		what = "changed the working copy. Everything it creates must be ignored by git, and it must not edit tracked files or commit."
 	default:
-		if slices.ContainsFunc(runs, func(rr repoRun) bool { return rr.Merge }) {
+		if slices.ContainsFunc(repos, func(rr repoRun) bool { return rr.Merge }) {
 			return setupNote + " It ran before the merge started.\n\n", nil, nil
 		}
 		return setupNote + " It ran before you started.\n\n", nil, nil
@@ -102,7 +102,7 @@ func (r *runs) setup(ctx context.Context, ro role, n int, runs []repoRun, prep s
 	fix := setupFix
 	// Fixing the base branch cannot help a branch that lacks what the script relies on, such as a
 	// newer .gitignore. Only the PRD repository's own branch can be older than its script.
-	for _, rr := range runs {
+	for _, rr := range repos {
 		if !strings.EqualFold(rr.Repo, r.PRDRepo) {
 			continue
 		}
@@ -130,9 +130,9 @@ func (r *runs) rules(ctx context.Context, prep string) (string, error) {
 
 // reposEnv lists the run's repositories for the setup script, one line each: owner/name, then
 // where it is in the sandbox.
-func reposEnv(runs []repoRun) string {
+func reposEnv(repos []repoRun) string {
 	var lines []string
-	for _, rr := range runs {
+	for _, rr := range repos {
 		lines = append(lines, rr.Repo+" "+rr.Dir)
 	}
 	return strings.Join(lines, "\n")

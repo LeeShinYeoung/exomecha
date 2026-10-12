@@ -106,11 +106,11 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	runs := newRuns(d, gate)
+	shared := newRuns(d, gate)
 	workers := []Worker{
-		&builder{d, runs},
-		&reviewer{d, runs},
-		&resolver{d, runs},
+		&builder{d, shared},
+		&reviewer{d, shared},
+		&resolver{d, shared},
 	}
 	every := cmp.Or(d.Interval, interval)
 	var wg sync.WaitGroup
@@ -361,12 +361,12 @@ func sharedInput(ctx context.Context, d Deps, prd github.Issue, repos []repoWith
 // runSection is the input's Run section: where each repository is, its PR, and its base branch.
 func (d Deps) runSection(n int, repos []repoWithPR) string {
 	var b strings.Builder
-	write := func(rr repoWithPR, git string) {
+	write := func(rr repoWithPR, gitCmd string) {
 		if rr.pr != 0 {
 			fmt.Fprintf(&b, "- PR %s, on branch `%s`.\n", d.issueRef(d.PRDRepo, rr.repo.Name, rr.pr), branchName(n))
 		}
 		base := rr.repo.Git.BaseRef()
-		fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `%s diff %s...HEAD`.\n", base, git, base)
+		fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `%s diff %s...HEAD`.\n", base, gitCmd, base)
 		fmt.Fprintf(&b, "- Commit messages here end with `PRD: %s`.\n\n", d.ref(rr.repo.Name, n))
 	}
 	if len(repos) == 1 {

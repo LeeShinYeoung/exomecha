@@ -83,12 +83,12 @@ func trimKept(root, newest string, limit int64) error {
 		return err
 	}
 	for _, issue := range issues {
-		runs, err := os.ReadDir(filepath.Join(root, issue.Name()))
+		runDirs, err := os.ReadDir(filepath.Join(root, issue.Name()))
 		if err != nil {
 			return err
 		}
-		for _, run := range runs {
-			dir := filepath.Join(root, issue.Name(), run.Name())
+		for _, runDir := range runDirs {
+			dir := filepath.Join(root, issue.Name(), runDir.Name())
 			files, err := os.ReadDir(dir)
 			if err != nil {
 				return err

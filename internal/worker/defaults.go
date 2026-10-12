@@ -73,17 +73,17 @@ func (r *runs) installDefaults(ctx context.Context, ro role, n int) error {
 			return fmt.Errorf("merge claude settings: %w", err)
 		}
 	}
-	merged, err := json.MarshalIndent(settings, "", "  ")
+	mergedJSON, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), merged, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), mergedJSON, 0o644); err != nil {
 		return err
 	}
 	if _, err := r.Sandboxes.Exec(ctx, name, "", nil, "sh", "-c", `mkdir -p "$2" && cp -R "$1/." "$2/"`, "sh", dir, claudeHome); err != nil {
 		return err
 	}
-	return r.installPlugins(ctx, name, merged)
+	return r.installPlugins(ctx, name, mergedJSON)
 }
 
 // installPlugins installs the enabled plugins before claude starts: claude -p installs a missing

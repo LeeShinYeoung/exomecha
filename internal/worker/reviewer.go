@@ -114,7 +114,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	}
 	err = r.runs.step(ctx, reviewerRole, n, reviewerTable[p],
 		func(ctx context.Context) error { return r.start(ctx, prd, prs) },
-		func(ctx context.Context, run run) error { return r.collect(ctx, n, prs, run.in) })
+		func(ctx context.Context, got run) error { return r.collect(ctx, n, prs, got.in) })
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,7 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue, repos []*Repo) (p
 		if p.open.Mergeable == nil {
 			return waiting, prs, nil, nil
 		}
-		ci, runs, err := p.repo.GitHub.CheckCI(ctx, p.open.HeadSHA)
+		ci, ciRuns, err := p.repo.GitHub.CheckCI(ctx, p.open.HeadSHA)
 		if err != nil {
 			return away, prs, nil, err
 		}
@@ -200,11 +200,11 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue, repos []*Repo) (p
 		case github.CIRunning:
 			wait = true
 		case github.CIFailed:
-			for _, run := range runs {
+			for _, ciRun := range ciRuns {
 				if len(open) > 1 {
-					run.Name = p.repo.Name + ": " + run.Name
+					ciRun.Name = p.repo.Name + ": " + ciRun.Name
 				}
-				failed = append(failed, run)
+				failed = append(failed, ciRun)
 			}
 		case github.CINone:
 			at, err := p.repo.GitHub.CommitTime(ctx, p.open.HeadSHA)

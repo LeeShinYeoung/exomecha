@@ -87,7 +87,7 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	}
 	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
 		func(ctx context.Context) error { return r.start(ctx, prd, prs) },
-		func(ctx context.Context, run run) error { return r.collect(ctx, n, run.in) })
+		func(ctx context.Context, got run) error { return r.collect(ctx, n, got.in) })
 }
 
 // place is away for a PRD whose Repositories section is wrong, which reviewer sends to stuck.
@@ -190,12 +190,12 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		return err
 	}
 	for i, rr := range merges {
-		problem, err := r.unfinished(ctx, n, rr, heads[i])
+		wrong, err := r.unfinished(ctx, n, rr, heads[i])
 		if err != nil {
 			return err
 		}
-		if problem != "" {
-			return r.runs.stuck(ctx, resolverRole, n, problem+"\n\n"+out.Reason)
+		if wrong != "" {
+			return r.runs.stuck(ctx, resolverRole, n, wrong+"\n\n"+out.Reason)
 		}
 	}
 	for i, rr := range merges {
