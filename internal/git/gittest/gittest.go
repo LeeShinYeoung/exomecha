@@ -17,10 +17,10 @@ func Main(m *testing.M) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
 	cfg := filepath.Join(dir, "gitconfig")
 	const content = "[user]\n\tname = exomecha test\n\temail = test@example.com\n"
 	if err := os.WriteFile(cfg, []byte(content), 0o644); err != nil {
+		os.RemoveAll(dir)
 		log.Fatal(err)
 	}
 	// GIT_CONFIG_COUNT and its keys outrank every config file, so the caller's must not reach the tests.
@@ -32,6 +32,7 @@ func Main(m *testing.M) {
 	os.Setenv("GIT_CONFIG_GLOBAL", cfg)
 	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	m.Run()
+	os.RemoveAll(dir)
 }
 
 func Run(t *testing.T, dir string, args ...string) string {
