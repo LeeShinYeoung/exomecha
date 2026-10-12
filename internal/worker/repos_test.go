@@ -282,8 +282,8 @@ func TestReviewerApprovesThePRsTogetherAndClosesThePRDAfterBothMerge(t *testing.
 	}
 
 	api.gh.MergePull(apiPR)
-	if picked, err := e.reviewer().Pick(t.Context()); err != nil || len(picked) != 1 {
-		t.Errorf("Pick after one merge = %v, %v, want the PRD", picked, err)
+	if picked, err := e.reviewer().Pick(t.Context()); err != nil || len(picked) != 0 {
+		t.Errorf("Pick after one merge = %v, %v, want none while the other PR is open", picked, err)
 	}
 	e.review(prd)
 	if !e.gh.Issue(prd).Open {
@@ -297,6 +297,27 @@ func TestReviewerApprovesThePRsTogetherAndClosesThePRDAfterBothMerge(t *testing.
 		t.Error("the PRD is still open after both PRs merged")
 	}
 	e.wantStatus(prd, label.None)
+}
+
+// reviewer acts on an approved PRD once a PR is closed without a merge, or none is open. Picking it
+// sooner would leave it idle every round.
+func TestReviewerPicksAnApprovedPRDOnlyWhenItActs(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	api := e.addRepo("api", map[string]string{"api.txt": "v1\n"})
+	oneMerged, _, mergedPR := e.reviewPRDs(api)
+	oneClosed, _, closedPR := e.reviewPRDs(api)
+	for _, prd := range []int{oneMerged, oneClosed} {
+		e.gh.Relabel(prd, string(label.Review), string(label.Approved))
+	}
+	api.gh.MergePull(mergedPR)
+	api.gh.ClosePull(closedPR)
+
+	picked, err := e.reviewer().Pick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInts(t, "Pick", picked, []int{oneClosed})
 }
 
 func TestReviewerStuckWhenOneOfThePRsIsClosed(t *testing.T) {

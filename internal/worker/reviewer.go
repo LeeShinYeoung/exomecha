@@ -52,8 +52,8 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Pick returns the PRDs in review whose PRs do not conflict, the approved PRDs with a repository
-// whose PR is no longer open, and every PRD that has a reviewer run. A PRD whose Repositories
+// Pick returns the PRDs in review whose PRs do not conflict, the approved PRDs with no PR left open
+// or a PR closed without a merge, and every PRD that has a reviewer run. A PRD whose Repositories
 // section is wrong is picked too, so Handle sends it to stuck.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
@@ -71,17 +71,13 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 			picked = append(picked, t.Number)
 			continue
 		}
-		// An approved PRD whose PR conflicts is resolver's. reviewer has nothing to do while every
-		// PR is still open anyway.
-		for _, repo := range repos {
-			_, open, err := repo.GitHub.OpenPR(ctx, branchName(t.Number))
-			if err != nil {
-				return nil, err
-			}
-			if !open {
-				picked = append(picked, t.Number)
-				break
-			}
+		// The same rule Handle follows, so a PRD that waits for a person is not picked every round.
+		p, _, _, err := r.look(ctx, t, repos)
+		if err != nil {
+			return nil, err
+		}
+		if p != away {
+			picked = append(picked, t.Number)
 		}
 	}
 	for _, t := range prds {
