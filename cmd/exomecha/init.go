@@ -121,62 +121,69 @@ func fullNames(ts []target) []string {
 }
 
 // ask asks for the settings, with the ones in current as the defaults that an empty answer keeps.
-// An answer that does not parse, or a PRD repository checkPRD refuses, asks again.
+// An answer that does not parse, a PRD repository checkPRD refuses, or no token asks again.
 func ask(ctx context.Context, in *bufio.Reader, out io.Writer, current settings, readToken func() (string, error), checkPRD func(target) error) (answers, error) {
 	var a answers
-	line := func(question, value string) (string, error) {
-		fmt.Fprint(out, prompt(question, value))
-		s, err := read(ctx, func() (string, error) { return in.ReadString('\n') })
-		if errors.Is(err, io.EOF) {
-			return "", errors.New("the answers ended before the settings were complete")
+	readLine := func() (string, error) { return in.ReadString('\n') }
+	// shown is value as the question shows it, which for the token is only its end.
+	answer := func(question, value, shown string, readAnswer func() (string, error), validate func(string) error) (string, error) {
+		for {
+			fmt.Fprint(out, prompt(question, shown))
+			s, err := read(ctx, readAnswer)
+			if errors.Is(err, io.EOF) {
+				return "", errors.New("the answers ended before the settings were complete")
+			}
+			if err != nil {
+				return "", err
+			}
+			s = cmp.Or(strings.TrimSpace(s), value)
+			if err = validate(s); err == nil {
+				return s, nil
+			}
+			fmt.Fprintln(out, err)
 		}
-		if err != nil {
-			return "", err
-		}
-		return cmp.Or(strings.TrimSpace(s), value), nil
 	}
-	for {
-		s, err := line("Repositories PRDs may change, as owner/name separated by commas", strings.Join(current.Repos, ", "))
-		if err != nil {
-			return a, err
-		}
+
+	repos := strings.Join(current.Repos, ", ")
+	_, err := answer("Repositories PRDs may change, as owner/name separated by commas", repos, repos, readLine, func(s string) error {
+		var err error
 		// A file can give one repository a PRD repository of its own, which is asked for below.
 		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil && len(a.repos) == 1 && current.PRDRepo == "" {
 			err = checkPRD(a.repos[0])
 		}
-		if err == nil {
-			break
-		}
-		fmt.Fprintln(out, err)
-	}
-	for len(a.repos) > 1 || current.PRDRepo != "" {
-		s, err := line("PRD repository, whose issues are the PRDs, as owner/name", current.PRDRepo)
-		if err != nil {
-			return a, err
-		}
-		t, err := parseTarget("prd_repo", s)
-		if err == nil {
-			err = checkPRD(t)
-		}
-		if err != nil {
-			fmt.Fprintln(out, err)
-			continue
-		}
-		a.prd = s
-		break
-	}
-	s, err := line("Base branch of every repository", cmp.Or(current.BaseBranch, "main"))
+		return err
+	})
 	if err != nil {
 		return a, err
 	}
-	a.base = s
-	for a.token == "" {
-		fmt.Fprint(out, prompt("GitHub token (not shown as you type)", masked(current.GitHubToken)))
-		token, err := read(ctx, readToken)
+
+	if len(a.repos) > 1 || current.PRDRepo != "" {
+		a.prd, err = answer("PRD repository, whose issues are the PRDs, as owner/name", current.PRDRepo, current.PRDRepo, readLine, func(s string) error {
+			t, err := parseTarget("prd_repo", s)
+			if err != nil {
+				return err
+			}
+			return checkPRD(t)
+		})
 		if err != nil {
 			return a, err
 		}
-		a.token = cmp.Or(strings.TrimSpace(token), current.GitHubToken)
+	}
+
+	base := cmp.Or(current.BaseBranch, "main")
+	a.base, err = answer("Base branch of every repository", base, base, readLine, func(string) error { return nil })
+	if err != nil {
+		return a, err
+	}
+
+	a.token, err = answer("GitHub token (not shown as you type)", current.GitHubToken, masked(current.GitHubToken), readToken, func(s string) error {
+		if s == "" {
+			return errors.New("the GitHub token must be set")
+		}
+		return nil
+	})
+	if err != nil {
+		return a, err
 	}
 	return a, nil
 }

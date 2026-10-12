@@ -34,8 +34,8 @@ func TestList(t *testing.T) {
 	defer held.Close()
 
 	var out strings.Builder
-	if err := list(home, &out); err != nil {
-		t.Fatal(err)
+	if err := list(home, &out); err == nil || !strings.Contains(err.Error(), "broken.yaml: repos, base_branch and github_token") {
+		t.Errorf("list = %v, want the problem of broken.yaml", err)
 	}
 	var rows [][]string
 	for line := range strings.Lines(out.String()) {
@@ -47,7 +47,7 @@ func TestList(t *testing.T) {
 		{"broken", "-", "-"},
 		{"side", "me/side", "no"},
 	}
-	if len(rows) != len(want)+1 || !slices.EqualFunc(rows[:len(want)], want, slices.Equal) || !strings.Contains(out.String(), "broken.yaml: repos, base_branch and github_token") {
+	if !slices.EqualFunc(rows, want, slices.Equal) {
 		t.Errorf("list printed:\n%s", out.String())
 	}
 	if _, err := os.Stat(projectRoot(home, "side")); !os.IsNotExist(err) {
