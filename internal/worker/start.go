@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -29,6 +30,10 @@ echo $? > "$ctl/exit.tmp"
 # A reader must never see a half-written exit file.
 mv "$ctl/exit.tmp" "$ctl/exit"
 `
+
+// sbx ls answers in seconds. Every start waits on the slot lock while it runs, so one that hangs
+// must give up.
+var listTimeout = time.Minute
 
 // errNoSlot means the slots filled up between reserve and the create, which only a sandbox made
 // outside this exomecha can do.
@@ -65,7 +70,9 @@ var roles = []role{builderRole, resolverRole, reviewerRole}
 // stays right across restarts, and every start of that kind that holds a slot. self is the start
 // asking. The caller holds slots.
 func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error) {
-	boxes, err := r.Sandboxes.List(ctx)
+	listCtx, cancel := context.WithTimeout(ctx, listTimeout)
+	boxes, err := r.Sandboxes.List(listCtx)
+	cancel()
 	if err != nil {
 		return false, err
 	}

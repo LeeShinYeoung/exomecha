@@ -31,6 +31,8 @@ type fakeSandboxes struct {
 	fail  map[string]error // by sbx verb: create, allow, exec, start, secret, remove
 	// An exec whose command line contains this fails, as sbx failing that one command.
 	failExec string
+	// listHangs makes List wait until its context ends, as a hung sbx ls does.
+	listHangs bool
 }
 
 type fakeBox struct {
@@ -86,8 +88,13 @@ func (f *fakeSandboxes) failing(verb string) error {
 	return f.fail[verb]
 }
 
-func (f *fakeSandboxes) List(context.Context) ([]sandbox.Box, error) {
+func (f *fakeSandboxes) List(ctx context.Context) ([]sandbox.Box, error) {
 	f.mu.Lock()
+	if f.listHangs {
+		f.mu.Unlock()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	defer f.mu.Unlock()
 	var out []sandbox.Box
 	for name, b := range f.boxes {
@@ -297,6 +304,20 @@ type personError struct{ why, detail, output string }
 func (e personError) Error() string  { return e.detail }
 func (e personError) Why() string    { return e.why }
 func (e personError) Output() string { return e.output }
+
+// returns runs f and fails the test when f is still going after a while, as a call that hangs is.
+func returns(t *testing.T, what string, f func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- f() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s still waits", what)
+		return nil
+	}
+}
 
 type clock struct {
 	mu sync.Mutex

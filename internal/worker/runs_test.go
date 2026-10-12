@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -256,6 +258,23 @@ func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
 	e.wantReserve(builderRole, 4, false)
 	e.sbx.drop(first)
 	e.wantReserve(builderRole, 4, true)
+}
+
+// Every start waits on the slot lock while sbx ls runs, so a hung one must give up.
+func TestReserveGivesUpOnAHungList(t *testing.T) {
+	old := listTimeout
+	listTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { listTimeout = old })
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.sbx.listHangs = true
+
+	err := returns(t, "reserve", func() error {
+		_, err := e.runs.reserve(t.Context(), builderRole, e.builderBox(1))
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("reserve = %v, want it to give up on sbx ls", err)
+	}
 }
 
 // A reader's result is all in its directory, so a finished reader run needs no sandbox. A project
