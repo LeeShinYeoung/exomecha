@@ -153,10 +153,20 @@ func TestExecFailure(t *testing.T) {
 
 func TestStart(t *testing.T) {
 	f := newFakeSBX(t)
-	if err := (CLI{}).Start(t.Context(), "box", "/home/agent/repo", "sh", "/ctl/run.sh", "claude", "-p"); err != nil {
+	if err := (CLI{}).Start(t.Context(), "box", "/home/agent/repo", []string{"NPM_TOKEN=x"}, "sh", "/ctl/run.sh", "claude", "-p"); err != nil {
 		t.Fatal(err)
 	}
-	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "box", "sh", "-c", `setsid -f "$@" </dev/null >/dev/null 2>&1`, "sh", "sh", "/ctl/run.sh", "claude", "-p"})
+	f.wantCalls([]string{"exec", "-w", "/home/agent/repo", "-e", "NPM_TOKEN=x", "box", "sh", "-c", `setsid -f "$@" </dev/null >/dev/null 2>&1`, "sh", "sh", "/ctl/run.sh", "claude", "-p"})
+}
+
+func TestSetSecret(t *testing.T) {
+	f := newFakeSBX(t)
+	s := Secret{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com", "*.npm.example.com"}, Command: "/usr/local/bin/npm-token --org acme"}
+	if err := (CLI{}).SetSecret(t.Context(), "box", s); err != nil {
+		t.Fatal(err)
+	}
+	f.wantCalls([]string{"secret", "set-custom", "--sandbox", "box", "--env", "NPM_TOKEN", "--placeholder", "exomecha-secret-npm_token",
+		"--command", "/usr/local/bin/npm-token --org acme", "--host", "npm.pkg.github.com", "--host", "*.npm.example.com"})
 }
 
 func TestAllow(t *testing.T) {

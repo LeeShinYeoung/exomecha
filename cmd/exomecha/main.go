@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,18 +35,29 @@ func main() {
 	}
 }
 
+// target is a repository exomecha works with.
+type target struct {
+	owner, name string
+	// Empty: GitHub's API, github.com. Only the e2e tests set them.
+	apiURL, gitURL string
+}
+
+func (t target) full() string { return t.owner + "/" + t.name }
+
 // config is what one exomecha runs with. main reads it from the environment. run sets the fields
 // after the models to the operator's own, and the e2e tests set them to theirs.
 type config struct {
-	owner, name, base, token string
-	fiveHour, weekly         float64
-	projectLimit, readLimit  int
-	reviewLimit              int
-	light, normal, heavy     agent.Model
-	resolver                 agent.Model
+	prd                     target   // whose issues are the PRDs
+	repos                   []target // the repositories PRDs may change
+	base, token             string
+	secrets                 []sandbox.Secret
+	fiveHour, weekly        float64
+	projectLimit, readLimit int
+	reviewLimit             int
+	light, normal, heavy    agent.Model
+	resolver                agent.Model
 
-	apiURL, gitURL    string // empty: GitHub's API, github.com
-	root              string // what exomecha keeps of this repository
+	root              string // what exomecha keeps of the PRD repository
 	claudeDir         string // empty: no default claude settings
 	interval, ciGrace time.Duration
 	usage             func(context.Context) (agent.Usage, error) // nil: claude's own reading
@@ -67,17 +80,59 @@ func defaults() config {
 
 func configFromEnv() (config, error) {
 	c := defaults()
-	repo := os.Getenv("EXOMECHA_REPO")
+	repos := os.Getenv("EXOMECHA_REPOS")
 	c.base = os.Getenv("EXOMECHA_BASE_BRANCH")
 	c.token = os.Getenv("EXOMECHA_GITHUB_TOKEN")
-	if repo == "" || c.base == "" || c.token == "" {
-		return config{}, errors.New("EXOMECHA_REPO, EXOMECHA_BASE_BRANCH and EXOMECHA_GITHUB_TOKEN must all be set")
+	if repos == "" || c.base == "" || c.token == "" {
+		return config{}, errors.New("EXOMECHA_REPOS, EXOMECHA_BASE_BRANCH and EXOMECHA_GITHUB_TOKEN must all be set")
 	}
-	var ok bool
-	c.owner, c.name, ok = strings.Cut(repo, "/")
-	if !ok || c.owner == "" || c.name == "" || strings.Contains(c.name, "/") {
-		return config{}, fmt.Errorf("EXOMECHA_REPO must be owner/name: %q", repo)
+	for r := range strings.SplitSeq(repos, ",") {
+		t, err := parseTarget("EXOMECHA_REPOS", strings.TrimSpace(r))
+		if err != nil {
+			return config{}, err
+		}
+		for _, o := range c.repos {
+			if strings.EqualFold(o.full(), t.full()) {
+				return config{}, fmt.Errorf("EXOMECHA_REPOS lists %s twice", t.full())
+			}
+			// A sandbox with several repositories gives each a folder named after it.
+			if strings.EqualFold(o.name, t.name) {
+				return config{}, fmt.Errorf("EXOMECHA_REPOS lists two repositories named %s: %s and %s", t.name, o.full(), t.full())
+			}
+		}
+		c.repos = append(c.repos, t)
 	}
+	switch prd := os.Getenv("EXOMECHA_PRD_REPO"); {
+	case prd != "":
+		t, err := parseTarget("EXOMECHA_PRD_REPO", prd)
+		if err != nil {
+			return config{}, err
+		}
+		c.prd = t
+	case len(c.repos) == 1:
+		c.prd = c.repos[0]
+	default:
+		return config{}, errors.New("EXOMECHA_PRD_REPO must be set when EXOMECHA_REPOS lists several repositories")
+	}
+	for _, t := range c.repos {
+		// The same repository under the case GitHub has it, so the PRD repository's clone is shared.
+		if strings.EqualFold(t.full(), c.prd.full()) {
+			c.prd = t
+		}
+	}
+	for _, kv := range os.Environ() {
+		key, value, _ := strings.Cut(kv, "=")
+		name, ok := strings.CutPrefix(key, secretPrefix)
+		if !ok {
+			continue
+		}
+		secret, err := parseSecret(name, value)
+		if err != nil {
+			return config{}, err
+		}
+		c.secrets = append(c.secrets, secret)
+	}
+	slices.SortFunc(c.secrets, func(a, b sandbox.Secret) int { return strings.Compare(a.Env, b.Env) })
 	var err error
 	if c.fiveHour, err = usageLimit("EXOMECHA_FIVE_HOUR_LIMIT", c.fiveHour); err != nil {
 		return config{}, err
@@ -109,6 +164,71 @@ func configFromEnv() (config, error) {
 	return c, nil
 }
 
+const secretPrefix = "EXOMECHA_SECRET_"
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// parseSecret reads EXOMECHA_SECRET_<name>: the hosts, separated by commas, then a space and the
+// command that prints the value.
+func parseSecret(name, value string) (sandbox.Secret, error) {
+	env := secretPrefix + name
+	hosts, command, _ := strings.Cut(strings.TrimSpace(value), " ")
+	s := sandbox.Secret{Env: name, Command: strings.TrimSpace(command)}
+	if !envName.MatchString(name) {
+		return s, fmt.Errorf("%s: %q is not an environment variable name", env, name)
+	}
+	if s.Command == "" {
+		return s, fmt.Errorf("%s must hold the hosts, a space, and the command that prints the value: %q", env, value)
+	}
+	for h := range strings.SplitSeq(hosts, ",") {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			return s, fmt.Errorf("%s lists an empty host: %q", env, hosts)
+		}
+		// The proxy would hand the value to any request the AI makes there, so it could push past exomecha's checks.
+		for _, gh := range []string{"github.com", "api.github.com"} {
+			if hostMatches(strings.ToLower(h), gh) {
+				return s, fmt.Errorf("%s: %s reaches %s, and the AI could use the secret on GitHub", env, h, gh)
+			}
+		}
+		s.Hosts = append(s.Hosts, h)
+	}
+	return s, nil
+}
+
+// hostMatches reports whether an sbx host pattern covers host: "*" stands for one label and "**"
+// for any number of them.
+func hostMatches(pattern, host string) bool {
+	var match func(p, h []string) bool
+	match = func(p, h []string) bool {
+		switch {
+		case len(p) == 0:
+			return len(h) == 0
+		case p[0] == "**":
+			for i := 0; i <= len(h); i++ {
+				if match(p[1:], h[i:]) {
+					return true
+				}
+			}
+			return false
+		case len(h) == 0:
+			return false
+		case p[0] == "*" || p[0] == h[0]:
+			return match(p[1:], h[1:])
+		}
+		return false
+	}
+	return match(strings.Split(pattern, "."), strings.Split(host, "."))
+}
+
+func parseTarget(env, repo string) (target, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return target{}, fmt.Errorf("%s must hold owner/name: %q", env, repo)
+	}
+	return target{owner: owner, name: name}, nil
+}
+
 func run() error {
 	c, err := configFromEnv()
 	if err != nil {
@@ -126,7 +246,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	c.root = filepath.Join(home, ".exomecha", c.owner, c.name)
+	c.root = filepath.Join(home, ".exomecha", c.prd.owner, c.prd.name)
 	// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
 	c.claudeDir = filepath.Join(home, ".exomecha", "claude")
 	if err := os.MkdirAll(c.root, 0o755); err != nil {
@@ -197,13 +317,7 @@ func serve(ctx context.Context, c config) error {
 		}
 	}
 
-	var gh *github.Client
-	var err error
-	if c.apiURL != "" {
-		gh, err = github.NewAt(c.apiURL, c.owner, c.name, c.token)
-	} else {
-		gh, err = github.New(c.owner, c.name, c.token)
-	}
+	gh, err := client(c.prd, c.token)
 	if err != nil {
 		return err
 	}
@@ -216,18 +330,35 @@ func serve(ctx context.Context, c config) error {
 			return fmt.Errorf("write the default claude settings: %w", err)
 		}
 	}
-	g := git.New(c.root, c.owner, c.name, c.base, c.token)
-	if c.gitURL != "" {
-		g = git.NewAt(c.root, c.gitURL, c.base, c.token)
+	var repos []*worker.Repo
+	var prep *git.Git
+	for _, t := range c.repos {
+		repoGH := gh
+		if t != c.prd {
+			if repoGH, err = client(t, c.token); err != nil {
+				return err
+			}
+		}
+		g := clone(c, t)
+		if t == c.prd {
+			prep = g
+		}
+		repos = append(repos, &worker.Repo{Name: t.full(), GitHub: repoGH, Git: g})
+	}
+	if prep == nil {
+		prep = clone(c, c.prd)
 	}
 	deps := worker.Deps{
 		GitHub:        gh,
-		Git:           g,
+		PRDRepo:       c.prd.full(),
+		Repos:         repos,
+		Prep:          prep,
+		Secrets:       c.secrets,
 		Sandboxes:     sbx,
-		Environment:   template.New(g, sbx, c.owner, c.name),
+		Environment:   template.New(prep, sbx, c.prd.owner, c.prd.name),
 		SandboxDir:    filepath.Join(c.root, "sandboxes"),
 		OutputDir:     filepath.Join(c.root, "outputs"),
-		SandboxPrefix: sandbox.Prefix(c.owner, c.name),
+		SandboxPrefix: sandbox.Prefix(c.prd.owner, c.prd.name),
 		ClaudeDir:     c.claudeDir,
 		ProjectLimit:  c.projectLimit,
 		ReadLimit:     c.readLimit,
@@ -245,7 +376,11 @@ func serve(ctx context.Context, c config) error {
 		return fmt.Errorf("ensure labels: %w", err)
 	}
 
-	slog.Info("exomecha started", logging.Repo, c.owner+"/"+c.name, logging.Base, c.base, logging.FiveHourLimit, c.fiveHour,
+	var names []string
+	for _, t := range c.repos {
+		names = append(names, t.full())
+	}
+	slog.Info("exomecha started", logging.Repo, c.prd.full(), logging.Repos, strings.Join(names, ","), logging.Base, c.base, logging.FiveHourLimit, c.fiveHour,
 		logging.WeeklyLimit, c.weekly, logging.SandboxLimit, c.projectLimit, logging.ReadSandboxLimit, c.readLimit,
 		logging.ReviewLimit, c.reviewLimit, logging.TierLight, c.light, logging.TierNormal, c.normal, logging.TierHeavy, c.heavy,
 		logging.ResolverModel, c.resolver, logging.CreatedLabels, created)
@@ -260,6 +395,22 @@ func serve(ctx context.Context, c config) error {
 	worker.Run(ctx, deps, gate)
 	slog.Info("exomecha stopped", logging.Reason, context.Cause(ctx))
 	return nil
+}
+
+func client(t target, token string) (*github.Client, error) {
+	if t.apiURL != "" {
+		return github.NewAt(t.apiURL, t.owner, t.name, token)
+	}
+	return github.New(t.owner, t.name, token)
+}
+
+// clone is exomecha's shared clone of t, under the PRD repository's root.
+func clone(c config, t target) *git.Git {
+	root := filepath.Join(c.root, "repos", t.owner, t.name)
+	if t.gitURL != "" {
+		return git.NewAt(root, t.gitURL, c.base, c.token)
+	}
+	return git.New(root, t.owner, t.name, c.base, c.token)
 }
 
 // usageLimit reads a percentage of a Claude plan limit, at which exomecha stops starting new work.

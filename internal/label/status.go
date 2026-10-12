@@ -19,7 +19,8 @@ var statuses = []Status{Draft, Ready, Working, Review, Approved, Stuck}
 
 // No worker moves a PRD out of none or draft. Only a person makes it ready.
 var transitions = map[Status][]Status{
-	Ready:    {Working},
+	// Stuck: a PRD only a person can fix, such as one that names no repository.
+	Ready:    {Working, Stuck},
 	Working:  {Review, Ready, Stuck},
 	Review:   {Ready, Approved, Stuck},
 	Approved: {Review, Stuck},

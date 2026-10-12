@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
@@ -113,17 +114,26 @@ type run struct {
 // inputs is what exomecha records once claude is running. It lives outside the directory the
 // sandbox shares, so the AI cannot change what its work is checked against.
 type inputs struct {
-	Base      string   `json:"base"`   // the base branch commit the sandbox got
-	Head      string   `json:"head"`   // the commit claude started from
-	Remote    string   `json:"remote"` // the PRD branch on GitHub at the start, "" when there was none
+	Repos []repoRun `json:"repos"`
+}
+
+// repoRun is one repository of a run.
+type repoRun struct {
+	Repo   string `json:"repo"`   // owner/name
+	Dir    string `json:"dir"`    // where it is in the sandbox
+	Base   string `json:"base"`   // the base branch commit the sandbox got
+	Head   string `json:"head"`   // the commit claude started from
+	Remote string `json:"remote"` // the PRD branch on GitHub at the start, "" when there was none
+	// Merge is set when the run merges the base branch here, and Conflicts lists what conflicted.
+	Merge     bool     `json:"merge,omitempty"`
 	Conflicts []string `json:"conflicts,omitempty"`
 }
 
 // moved reports whether the PRD branch changed during the run: now, its head on GitHub, is neither
 // the one at the start nor pushed, the commit exomecha took from the run. pushed is already there
 // when exomecha pushed it and a later step failed.
-func (in inputs) moved(now, pushed string) bool {
-	return now != in.Remote && now != pushed
+func (r repoRun) moved(now, pushed string) bool {
+	return now != r.Remote && now != pushed
 }
 
 // runs is what the workers share: the sandboxes, the limits on how many run at once, and what
@@ -331,7 +341,9 @@ func (r *runs) remove(ctx context.Context, name string) error {
 		return err
 	}
 	// The ref only matters while a run is harvested, and the next fetch for this name replaces it.
-	r.Git.DropRef(context.WithoutCancel(ctx), name)
+	for _, repo := range r.Repos {
+		repo.Git.DropRef(context.WithoutCancel(ctx), name)
+	}
 	r.mu.Lock()
 	delete(r.seen, name)
 	r.mu.Unlock()
@@ -365,6 +377,15 @@ func (r *runs) restart(ctx context.Context, ro role, n int) error {
 		return r.GitHub.SetStatus(ctx, n, ro.from, ro.ready)
 	}
 	return nil
+}
+
+// invalid sends a PRD whose Repositories section only a person can fix to stuck, after dropping any
+// run of ro for it.
+func (r *runs) invalid(ctx context.Context, ro role, prd github.Issue, why string) error {
+	if err := r.drop(ctx, ro, prd.Number); err != nil {
+		return err
+	}
+	return toStuck(ctx, r.GitHub, prd.Number, ro.name, prd.Status(), ro.back, why, "")
 }
 
 // drop removes a run its issue no longer needs, and leaves the labels to whoever moved them.

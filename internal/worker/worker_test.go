@@ -27,6 +27,8 @@ type env struct {
 	gh     *githubtest.Server
 	origin string
 	clone  string // exomecha's shared clone, which every push to origin goes from
+	repo   *Repo  // owner/repo, the PRD repository and the first repository PRDs may change
+	git    *git.Git
 	sbx    *fakeSandboxes
 	envr   *fakeEnvironment
 	clock  *clock
@@ -67,9 +69,13 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		envr:   &fakeEnvironment{},
 		clock:  newClock(),
 	}
+	e.git = git.NewAt(gitRoot, origin, "main", testToken)
+	e.repo = &Repo{Name: s.Owner + "/" + s.Repo, GitHub: client, Git: e.git}
 	e.deps = Deps{
 		GitHub:        client,
-		Git:           git.NewAt(gitRoot, origin, "main", testToken),
+		PRDRepo:       e.repo.Name,
+		Repos:         []*Repo{e.repo},
+		Prep:          e.git,
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
@@ -85,6 +91,19 @@ func newEnv(t *testing.T, files map[string]string) *env {
 	}
 	e.newRuns()
 	return e
+}
+
+// addPRD files a PRD of the repositories given, or of owner/repo with none.
+func (e *env) addPRD(title, body string, labels ...string) int {
+	return e.gh.AddIssue(title, reposSection(e.repo)+body, labels...)
+}
+
+func reposSection(repos ...*Repo) string {
+	s := reposHeading + "\n\n"
+	for _, r := range repos {
+		s += "- " + r.Name + "\n"
+	}
+	return s + "\n"
 }
 
 func (e *env) newRuns() {
@@ -458,7 +477,7 @@ func TestRoundDelaysArePerWorker(t *testing.T) {
 func TestRoundRetriesABuilderStartAfterAMinute(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
 	e.sbx.fail["create"] = errors.New("sbx run: daemon not running")
 	r := newRounds(e.builder(), e.clock)
@@ -557,7 +576,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 	resolverHandle := func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }
 	reviewerHandle := func(e *env, n int) error { return e.reviewer().Handle(e.t.Context(), n) }
 	ready := func(e *env) (int, string) {
-		prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+		prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 		return prd, e.builderBox(prd)
 	}
 	built := func(e *env) (int, string) {
@@ -607,7 +626,7 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			e.wantRemoved(name)
 		}},
 		{"builder", "restart's SetStatus", func(e *env) (int, string) {
-			prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Working))
+			prd := e.addPRD("PRD", "", label.PRD, string(label.Working))
 			return prd, e.builderBox(prd)
 		}, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Ready)

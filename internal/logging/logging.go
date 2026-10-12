@@ -28,6 +28,7 @@ const (
 
 	// Only in the start line.
 	Repo             = "repo"
+	Repos            = "repos"
 	Base             = "base"
 	FiveHourLimit    = "five_hour_limit"
 	WeeklyLimit      = "weekly_limit"

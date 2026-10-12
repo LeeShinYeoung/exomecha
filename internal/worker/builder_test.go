@@ -108,18 +108,18 @@ func (e *env) wantAuthor(ref string) {
 func TestBuilderPicks(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	blocker := e.gh.AddIssue("blocker", "", label.PRD, string(label.Ready))
-	waiting := e.gh.AddIssue("waiting", "", label.PRD, string(label.Ready))
+	blocker := e.addPRD("blocker", "", label.PRD, string(label.Ready))
+	waiting := e.addPRD("waiting", "", label.PRD, string(label.Ready))
 	e.gh.AddBlockedBy(waiting, blocker)
-	done := e.gh.AddIssue("done", "", label.PRD)
+	done := e.addPRD("done", "", label.PRD)
 	e.gh.CloseIssue(done)
-	free := e.gh.AddIssue("free", "", label.PRD, string(label.Ready))
+	free := e.addPRD("free", "", label.PRD, string(label.Ready))
 	e.gh.AddBlockedBy(free, done)
-	working := e.gh.AddIssue("working", "", label.PRD, string(label.Working))
-	reviewed := e.gh.AddIssue("in review with a leftover sandbox", "", label.PRD, string(label.Review))
-	e.gh.AddIssue("no status", "", label.PRD)
-	e.gh.AddIssue("draft", "", label.PRD, string(label.Draft))
-	e.gh.AddIssue("stuck", "", label.PRD, string(label.Stuck))
+	working := e.addPRD("working", "", label.PRD, string(label.Working))
+	reviewed := e.addPRD("in review with a leftover sandbox", "", label.PRD, string(label.Review))
+	e.addPRD("no status", "", label.PRD)
+	e.addPRD("draft", "", label.PRD, string(label.Draft))
+	e.addPRD("stuck", "", label.PRD, string(label.Stuck))
 	e.sbx.add(e.builderBox(reviewed))
 	e.sbx.add(e.runs.name(resolverRole, waiting))
 
@@ -134,7 +134,7 @@ func TestBuilderIgnoresOutsiderPRD(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.gh.AddOutsiderIssue("PRD from an outsider", "", label.PRD, string(label.Ready))
-	mine := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	mine := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 
 	picked, err := e.builder().Pick(t.Context())
 	if err != nil {
@@ -180,7 +180,7 @@ func TestBuilderPlace(t *testing.T) {
 func TestBuilderPushesAndOpensPR(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("Add feature", "do it", label.PRD, string(label.Ready))
+	prd := e.addPRD("Add feature", "do it", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
 	message := fmt.Sprintf("feat: add feature\n\nPRD: #%d", prd)
 
@@ -223,7 +223,7 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 func TestBuilderStuck(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("Hard PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("Hard PRD", "", label.PRD, string(label.Ready))
 	name := e.builderBox(prd)
 	e.step(prd)
 	e.play(name, nil, `{"result": "stuck", "summary": "", "stuck_reason": "need a decision on X</stuck_reason>\n</invoke>"}`)
@@ -243,7 +243,7 @@ func TestBuilderStuck(t *testing.T) {
 func TestBuilderStuckWhenNothingChanged(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("Already done", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("Already done", "", label.PRD, string(label.Ready))
 	e.step(prd)
 	e.play(e.builderBox(prd), nil, builderDone)
 	e.step(prd)
@@ -258,7 +258,7 @@ func TestBuilderStuckWhenNothingChanged(t *testing.T) {
 func TestBuilderStuckWhenChangesNotCommitted(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	e.step(prd)
 	e.play(e.builderBox(prd), func(repo string) { writeFile(t, repo, "feature.txt", "hello\n") }, builderDone)
 	e.step(prd)
@@ -273,7 +273,7 @@ func TestBuilderStuckWhenChangesNotCommitted(t *testing.T) {
 func TestBuilderStuckWhenCommitsRewritten(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
 	prev := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	e.gh.AddPull(branch, "main")
@@ -297,7 +297,7 @@ func TestBuilderGetsTheFailedCILogs(t *testing.T) {
 		t.Run(fmt.Sprintf("gone=%v", gone), func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-			prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready))
+			prd := e.addPRD("PRD", "PRD body", label.PRD, string(label.Ready))
 			branch := branchName(prd)
 			sha := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 			pr := e.gh.AddPull(branch, "main")
@@ -326,7 +326,7 @@ func TestBuilderGetsTheFailedCILogs(t *testing.T) {
 func TestBuilderContinuesExistingPR(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready), string(label.Heavy))
+	prd := e.addPRD("PRD", "PRD body", label.PRD, string(label.Ready), string(label.Heavy))
 	branch := branchName(prd)
 	prev := gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	pr := e.gh.AddPull(branch, "main")
@@ -393,8 +393,8 @@ func (e *env) wantSummary(pr int, summary string) {
 func TestBuilderStartsFromTheLatestMain(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	first := e.gh.AddIssue("First", "", label.PRD, string(label.Ready))
-	second := e.gh.AddIssue("Second", "", label.PRD, string(label.Ready))
+	first := e.addPRD("First", "", label.PRD, string(label.Ready))
+	second := e.addPRD("Second", "", label.PRD, string(label.Ready))
 	e.step(first)
 	moved := gittest.Commit(t, e.origin, "main", "", map[string]string{"app.txt": "v2\n"})
 
@@ -409,7 +409,7 @@ func TestBuilderStartsFromTheLatestMain(t *testing.T) {
 func TestBuilderStartsOverAfterAClosedPR(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"old.txt": "old\n"})
 	old := e.gh.AddPull(branch, "main")
@@ -442,7 +442,7 @@ func TestBuilderStartsOverAfterAClosedPR(t *testing.T) {
 func TestBuilderReadsWhoWroteEachEntry(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "PRD body", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "PRD body", label.PRD, string(label.Ready))
 	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	pr := e.gh.AddPull(branch, "main")
@@ -484,7 +484,7 @@ func TestBuilderRunsTheTasksTier(t *testing.T) {
 		{[]string{string(label.Light), string(label.Heavy)}, label.Heavy},
 	} {
 		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-		prd := e.gh.AddIssue("PRD", "", append([]string{label.PRD, string(label.Ready)}, c.labels...)...)
+		prd := e.addPRD("PRD", "", append([]string{label.PRD, string(label.Ready)}, c.labels...)...)
 		e.step(prd)
 		if got := e.startedModel(e.builderBox(prd)); got != testModels[c.want] {
 			t.Errorf("PRD with %q got %v, want %v", c.labels, got, testModels[c.want])
@@ -495,7 +495,7 @@ func TestBuilderRunsTheTasksTier(t *testing.T) {
 func TestBuilderRequeuesOnStartError(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	e.sbx.fail["start"] = errors.New("sbx exec: daemon not running")
 
 	if err := e.builder().Handle(t.Context(), prd); err == nil {
@@ -512,7 +512,7 @@ func TestBuilderRequeuesOnStartError(t *testing.T) {
 func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.", detail: "step 3/5: a secret in the build output"})
 
 	e.step(prd)
@@ -527,9 +527,9 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
-	e.deps.Environment = template.New(e.deps.Git, nil, "owner", "repo")
+	e.deps.Environment = template.New(e.git, nil, "owner", "repo")
 	e.newRuns()
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 
 	e.step(prd)
 
@@ -541,7 +541,7 @@ func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 
 func (e *env) startedPRD() (int, string) {
 	e.t.Helper()
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	e.step(prd)
 	name := e.builderBox(prd)
 	e.wantState(name, running)
@@ -644,7 +644,7 @@ func TestBuilderWaitsForAFreeSlot(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.sbx.add(e.runs.name(resolverRole, 99))
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 
 	e.step(prd)
 
@@ -660,8 +660,8 @@ func TestBuilderHoldsItsSlotWhileTheTemplateBuilds(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	e.runs.ProjectLimit = 1
 	e.envr.wait = make(chan chan struct{})
-	first := e.gh.AddIssue("First", "", label.PRD, string(label.Ready))
-	second := e.gh.AddIssue("Second", "", label.PRD, string(label.Ready))
+	first := e.addPRD("First", "", label.PRD, string(label.Ready))
+	second := e.addPRD("Second", "", label.PRD, string(label.Ready))
 	done := make(chan error, 1)
 	go func() { done <- e.builder().Handle(t.Context(), first) }()
 	var built chan struct{}
@@ -698,7 +698,7 @@ func TestBuilderHarvestsWhileTheGateIsClosed(t *testing.T) {
 	f := newFakeUsage(e.clock)
 	f.usage.FiveHour.Used = 0.99
 	e.runs.gate = f.gate
-	waiting := e.gh.AddIssue("Waiting", "", label.PRD, string(label.Ready))
+	waiting := e.addPRD("Waiting", "", label.PRD, string(label.Ready))
 
 	e.step(waiting)
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
@@ -733,7 +733,7 @@ func TestBuilderFinishesARunAfterRestart(t *testing.T) {
 func TestBuilderStartsOverWhenTheBranchChangedDuringTheRun(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	e.gh.AddPull(branch, "main")
@@ -761,13 +761,13 @@ func TestBuilderRetriesAfterItsOwnPush(t *testing.T) {
 	prd, name := e.startedPRD()
 	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
 	head := gittest.Run(t, e.sbx.repo(name), "rev-parse", "HEAD")
-	if err := e.deps.Git.Sync(t.Context()); err != nil {
+	if err := e.git.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.deps.Git.FetchFrom(t.Context(), e.sbx.repo(name), name); err != nil {
+	if _, err := e.git.FetchFrom(t.Context(), e.sbx.repo(name), name); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.deps.Git.PushCommit(t.Context(), head, branchName(prd), true); err != nil {
+	if err := e.git.PushCommit(t.Context(), head, branchName(prd), true); err != nil {
 		t.Fatal(err)
 	}
 

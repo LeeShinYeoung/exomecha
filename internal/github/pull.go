@@ -33,8 +33,9 @@ func (c *Client) OpenPR(ctx context.Context, branch string) (number int, ok bool
 	return prs[0].GetNumber(), true, nil
 }
 
-// Merged reports whether the newest closed PR from branch was merged.
-func (c *Client) Merged(ctx context.Context, branch string) (bool, error) {
+// LastClosedPR returns the newest closed PR from branch and whether it was merged, with ok false
+// when branch has no closed PR.
+func (c *Client) LastClosedPR(ctx context.Context, branch string) (number int, merged, ok bool, err error) {
 	// GitHub lists the newest first.
 	prs, _, err := c.api.PullRequests.List(ctx, c.owner, c.repo, &gh.PullRequestListOptions{
 		State:       "closed",
@@ -42,9 +43,9 @@ func (c *Client) Merged(ctx context.Context, branch string) (bool, error) {
 		ListOptions: gh.ListOptions{PerPage: 1},
 	})
 	if err != nil || len(prs) == 0 {
-		return false, err
+		return 0, false, false, err
 	}
-	return prs[0].MergedAt != nil, nil
+	return prs[0].GetNumber(), prs[0].MergedAt != nil, true, nil
 }
 
 func (c *Client) CreatePR(ctx context.Context, branch, base, title, body string) (int, error) {
@@ -93,16 +94,12 @@ func isApproval(cm Comment) bool {
 	return cm.Note.Kind == KindApproved || cm.Note.Kind == "" && strings.HasPrefix(cm.Body, approval)
 }
 
-// SendBacks counts exomecha's reviews on PR pr that sent PRD prd back to builder since a person last
-// stepped in: since exomecha's latest approval on the PR or its latest comment on the PRD, which
-// asked a person to answer.
-func (c *Client) SendBacks(ctx context.Context, prd, pr int) (int, error) {
-	comments, err := c.Comments(ctx, prd)
-	if err != nil {
-		return 0, err
-	}
+// SendBacks counts exomecha's reviews on PR pr that sent its PRD back to builder since a person last
+// stepped in: since exomecha's latest approval on the PR or its latest comment in prd, the PRD's
+// comments, which asked a person to answer. The PRD can be in another repository.
+func (c *Client) SendBacks(ctx context.Context, pr int, prd []Comment) (int, error) {
 	var since time.Time
-	for _, cm := range comments {
+	for _, cm := range prd {
 		if cm.Exomecha && cm.Trusted {
 			since = cm.CreatedAt
 		}

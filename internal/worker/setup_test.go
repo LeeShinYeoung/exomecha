@@ -67,7 +67,7 @@ func TestBuilderDoesNotPushTheSetupMarker(t *testing.T) {
 func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, setupRepo("echo base > "+setupMarker+"\n"))
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	branch := branchName(prd)
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{
 		setupScript:   "echo branch > " + setupMarker + "\n",
@@ -86,7 +86,7 @@ func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
 func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, setupRepo("touch "+setupMarker+"\nexec sleep 10\n"))
-	prd := e.gh.AddIssue("PRD", "", label.PRD, string(label.Ready))
+	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cancelWhenExists(ctx, cancel, filepath.Join(e.sbx.repo(e.builderBox(prd)), setupMarker))

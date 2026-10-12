@@ -5,14 +5,16 @@ description: Write a PRD (a plan with every decision made) from this conversatio
 
 # Complete a PRD
 
-exomecha builds each PRD as one PR and reviews it without a person, and a person merges the PR once the AI approves it. builder sees only the PRD's body and its comments. Anything the PRD leaves out is missing when the code gets written. **Make every decision here.** After this, a person only merges the approved PR and answers when a PRD is blocked (`status:stuck`).
+exomecha builds each PRD as one PR in each repository it changes and reviews them without a person, and a person merges the PRs once the AI approves them. builder sees only the PRD's body and its comments. Anything the PRD leaves out is missing when the code gets written. **Make every decision here.** After this, a person only merges the approved PRs and answers when a PRD is blocked (`status:stuck`).
 
 ## Rules
 
 - Do not change code.
 - Do not fill decisions with guesses. Close every ledger row as the ledger section says.
 - Do not file while any ledger row is open.
-- One PRD is one PR.
+- One PRD is one PR in each repository it changes. Its Repositories section lists those repositories, even when there is only one.
+- Read the code where this session has it. The repositories may sit in other folders than this one.
+- File the PRDs in the PRD repository, whose issues exomecha watches. When this folder is not its clone, add `--repo <owner/name>` to each `gh` command.
 - The Acceptance criteria and Test scenarios sections are never empty. builder builds to them and reviewer checks the PR against them.
 - Check overlap only with drafts. A PRD that is already ready or further along is not checked. resolver settles conflicts between their PRs.
 
@@ -21,7 +23,7 @@ exomecha builds each PRD as one PR and reviews it without a person, and a person
 1. Find what to complete. The person may give one or more draft numbers, or none.
    - With draft numbers, read each one: `gh issue view <number> --comments`. Each draft becomes its own PRD unless the person merges them.
    - Without a number, this conversation is the source, and the PRD is a new issue.
-2. For each draft, re-check it against the latest base branch, the branch exomecha's PRs target. If you don't know it, ask the person. Run `git fetch origin <base>`, then read `origin/<base>` with `git log`, `git show`, and `git grep`.
+2. For each draft, re-check it against the latest base branch of each repository it changes, the branch exomecha's PRs target. If you don't know it, ask the person. In each repository, run `git fetch origin <base>`, then read `origin/<base>` with `git log`, `git show`, and `git grep`.
    - Has the related code changed since the draft was recorded?
    - Is it already fixed? If so, ask the person whether to close the draft instead.
    - Were the guesses in the investigation notes right?
@@ -45,7 +47,7 @@ exomecha builds each PRD as one PR and reviews it without a person, and a person
 
    When unsure, keep one PRD. The person decides on the split when approving. A draft that is split becomes the first PRD, and the others are new issues.
 6. Write each PRD draft in the plan file under its own heading `# PRD <k>: <title>`, in the order to file them, even when there is only one. Under the heading, write the body in exactly the body format below, with the ledger as its last section. Its Filing row names its issue (new, or the draft's number), its tier (see Tier below), the PRDs it is blocked by, and what was decided for each overlapping draft.
-7. Check each draft with a fresh reader. Give a subagent only that PRD's body and the repository path, and ask: "If you had to implement this with only this text and the repository, how would you do it, and where would you get stuck or have to guess?" For each place it gets stuck, fix the draft if code or the ledger answers it. Otherwise ask the person. Repeat until it no longer gets stuck.
+7. Check each draft with a fresh reader. Give a subagent only that PRD's body and the path of each repository it changes, and ask: "If you had to implement this with only this text and the repository, how would you do it, and where would you get stuck or have to guess?" For each place it gets stuck, fix the draft if code or the ledger answers it. Otherwise ask the person. Repeat until it no longer gets stuck.
 8. Get approval (exit plan mode).
 9. Check that the labels exist: `gh label list --limit 100`. If `prd`, `status:ready` or a tier label you need is missing, do not file. Tell the person that running exomecha once creates the labels.
 10. File the PRDs in order. For each one:
@@ -117,7 +119,7 @@ A small change closes most rows with `code` or `n/a` and needs few questions. A 
 | Edge cases and failure modes | bad input, partial success, timeouts, duplicates, races |
 | Documentation and support | docs that must change |
 | Testing and acceptance | acceptance criteria, test scenarios, fixtures, regressions to check |
-| Filing | target repository, issue (new or the draft's number), title, tier, the PRDs this one is blocked by, what was decided for each overlapping draft |
+| Filing | the repositories it changes, issue (new or the draft's number), title, tier, the PRDs this one is blocked by, what was decided for each overlapping draft |
 
 ## Tier
 
@@ -129,7 +131,13 @@ The tier picks the model that builds the PRD.
 
 ## Body format
 
+exomecha reads the Repositories section to know which repositories to put in the sandbox and where to open PRs, so it comes first, with one `- owner/name` item per repository and nothing else in the list. With several repositories, start each path under Files with the repository's name, such as `api/src/server.go`, which is the folder the repository has in the sandbox.
+
 ```markdown
+## Repositories
+
+- owner/name
+
 ## Background
 
 (why we are doing this, and the facts confirmed in the draft or this conversation)

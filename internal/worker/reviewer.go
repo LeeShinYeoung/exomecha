@@ -52,8 +52,9 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Pick returns the PRDs in review whose PR does not conflict, the approved PRDs whose PR is no
-// longer open, and every PRD that has a reviewer run.
+// Pick returns the PRDs in review whose PRs do not conflict, the approved PRDs with a repository
+// whose PR is no longer open, and every PRD that has a reviewer run. A PRD whose Repositories
+// section is wrong is picked too, so Handle sends it to stuck.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
 	if err != nil {
@@ -65,24 +66,37 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	}
 	var picked []int
 	for _, t := range approved {
-		// An approved PRD whose PR conflicts is resolver's. reviewer has nothing to do for one whose
-		// PR is still open anyway.
-		_, open, err := r.GitHub.OpenPR(ctx, branchName(t.Number))
-		if err != nil {
-			return nil, err
-		}
-		if !open {
+		repos, why := r.prdRepos(t)
+		if why != "" {
 			picked = append(picked, t.Number)
+			continue
+		}
+		// An approved PRD whose PR conflicts is resolver's. reviewer has nothing to do while every
+		// PR is still open anyway.
+		for _, repo := range repos {
+			_, open, err := repo.GitHub.OpenPR(ctx, branchName(t.Number))
+			if err != nil {
+				return nil, err
+			}
+			if !open {
+				picked = append(picked, t.Number)
+				break
+			}
 		}
 	}
 	for _, t := range prds {
+		repos, why := r.prdRepos(t)
+		if why != "" {
+			picked = append(picked, t.Number)
+			continue
+		}
 		// Leaving conflicting PRs to resolver also keeps the two from grabbing the same PRD
 		// at the same moment every minute, which starved resolver.
-		pr, ok, err := prdPR(ctx, r.GitHub, t.Number)
+		prs, err := prdPRs(ctx, repos, t.Number)
 		if err != nil {
 			return nil, err
 		}
-		if !conflicting(pr, ok) {
+		if !conflicting(prs) {
 			picked = append(picked, t.Number)
 		}
 	}
@@ -94,13 +108,17 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
-	p, pr, failed, err := r.look(ctx, prd)
+	repos, why := r.prdRepos(prd)
+	if why != "" && (holds(prd, label.Review) || holds(prd, label.Approved)) {
+		return r.runs.invalid(ctx, reviewerRole, prd, why)
+	}
+	p, prs, failed, err := r.look(ctx, prd, repos)
 	if err != nil {
 		return err
 	}
 	err = r.runs.step(ctx, reviewerRole, n, reviewerTable[p],
-		func(ctx context.Context) error { return r.start(ctx, prd, pr) },
-		func(ctx context.Context, run run) error { return r.collect(ctx, n, pr, run.in) })
+		func(ctx context.Context) error { return r.start(ctx, prd, prs) },
+		func(ctx context.Context, run run) error { return r.collect(ctx, n, prs, run.in) })
 	if err != nil {
 		return err
 	}
@@ -112,89 +130,131 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
-		return toStuck(ctx, r.GitHub, n, reviewerRole.name, prd.Status(), label.Ready,
-			fmt.Sprintf("The PR on branch %s was closed without being merged.", branchName(n)), "")
+		return toStuck(ctx, r.GitHub, n, reviewerRole.name, prd.Status(), label.Ready, r.closedReason(n, prs), "")
 	case failing:
 		var b strings.Builder
 		b.WriteString("CI failed.\n\n")
 		for _, f := range failed {
 			fmt.Fprintf(&b, "- %s: %s %s\n", f.Name, f.Conclusion, f.URL)
 		}
-		if err := r.requeue(ctx, n, pr.Number, github.KindCI, b.String()); err != nil {
+		if err := r.requeue(ctx, n, openPRs(prs), github.KindCI, b.String()); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// look finds the PRD's place, with its open PR, and the CI runs that failed when the place is failing.
-func (r *reviewer) look(ctx context.Context, prd github.Issue) (place, github.PR, []github.Run, error) {
-	approved := holds(prd, label.Approved)
-	if !approved && !holds(prd, label.Review) {
-		return away, github.PR{}, nil, nil
-	}
-	pr, ok, err := prdPR(ctx, r.GitHub, prd.Number)
-	switch {
-	case err != nil:
-		return away, pr, nil, err
-	case !ok:
-		// GitHub closes the PRD on the merge only when the PR targets the default branch, so
-		// exomecha closes it otherwise.
-		done, err := r.GitHub.Merged(ctx, branchName(prd.Number))
-		switch {
-		case err != nil:
-			return away, pr, nil, err
-		case done:
-			return merged, pr, nil, nil
+// closedReason says which of the PRD's PRs was closed without being merged.
+func (r *reviewer) closedReason(n int, prs []repoPR) string {
+	for _, p := range prs {
+		if p.open.Number == 0 && p.closed != 0 && !p.closedMerged {
+			return fmt.Sprintf("PR %s on branch %s was closed without being merged.", r.issueRef(r.PRDRepo, p.repo.Name, p.closed), branchName(n))
 		}
-		return closed, pr, nil, nil
-	// The PR waits for a person to merge it. A conflict is resolver's.
-	case approved:
-		return away, pr, nil, nil
-	case conflicting(pr, ok):
-		return away, pr, nil, nil
-	// GitHub is still computing whether the PR merges.
-	case pr.Mergeable == nil:
-		return waiting, pr, nil, nil
 	}
-	ci, failed, err := r.GitHub.CheckCI(ctx, pr.HeadSHA)
-	if err != nil {
-		return away, pr, nil, err
-	}
-	switch ci {
-	case github.CIRunning:
-		return waiting, pr, nil, nil
-	case github.CIFailed:
-		return failing, pr, failed, nil
-	case github.CINone:
-		at, err := r.GitHub.CommitTime(ctx, pr.HeadSHA)
-		if err != nil {
-			return away, pr, nil, err
-		}
-		if time.Since(at) < cmp.Or(r.CIGrace, ciGrace) {
-			return waiting, pr, nil, nil
-		}
-		// Still no runs after the grace period: treat it as a project without CI.
-	}
-	return ready, pr, nil, nil
+	return fmt.Sprintf("This PRD has no PR on branch %s, open or merged.", branchName(n))
 }
 
-func (r *reviewer) start(ctx context.Context, prd github.Issue, pr github.PR) error {
+// look finds the PRD's place, with its PRs, and the CI runs that failed when the place is failing.
+// Each PR has a place of its own, and the PRD's is the one that comes first: a PR closed without a
+// merge, then one a person or resolver has to act on, then one GitHub or CI has not checked yet.
+func (r *reviewer) look(ctx context.Context, prd github.Issue, repos []*Repo) (place, []repoPR, []github.Run, error) {
+	approved := holds(prd, label.Approved)
+	if !approved && !holds(prd, label.Review) {
+		return away, nil, nil, nil
+	}
+	prs, err := prdPRs(ctx, repos, prd.Number)
+	if err != nil {
+		return away, nil, nil, err
+	}
+	open := openPRs(prs)
+	thrownAway, done := false, false
+	for _, p := range prs {
+		if p.open.Number == 0 && p.closed != 0 {
+			thrownAway = thrownAway || !p.closedMerged
+			done = done || p.closedMerged
+		}
+	}
+	switch {
+	case thrownAway:
+		return closed, prs, nil, nil
+	case len(open) == 0 && done:
+		// GitHub closes the PRD on a merge only when its only PR targets the default branch, so
+		// exomecha closes it otherwise.
+		return merged, prs, nil, nil
+	case len(open) == 0:
+		return closed, prs, nil, nil
+	// The PRs wait for a person to merge them. A conflict is resolver's.
+	case approved:
+		return away, prs, nil, nil
+	case conflicting(prs):
+		return away, prs, nil, nil
+	}
+	var failed []github.Run
+	wait := false
+	for _, p := range open {
+		// GitHub is still computing whether the PR merges.
+		if p.open.Mergeable == nil {
+			return waiting, prs, nil, nil
+		}
+		ci, runs, err := p.repo.GitHub.CheckCI(ctx, p.open.HeadSHA)
+		if err != nil {
+			return away, prs, nil, err
+		}
+		switch ci {
+		case github.CIRunning:
+			wait = true
+		case github.CIFailed:
+			for _, run := range runs {
+				if len(open) > 1 {
+					run.Name = p.repo.Name + ": " + run.Name
+				}
+				failed = append(failed, run)
+			}
+		case github.CINone:
+			at, err := p.repo.GitHub.CommitTime(ctx, p.open.HeadSHA)
+			if err != nil {
+				return away, prs, nil, err
+			}
+			// Still no runs after the grace period: treat it as a project without CI.
+			wait = wait || time.Since(at) < cmp.Or(r.CIGrace, ciGrace)
+		}
+	}
+	switch {
+	case wait:
+		return waiting, prs, nil, nil
+	case len(failed) > 0:
+		return failing, prs, failed, nil
+	}
+	return ready, prs, nil, nil
+}
+
+func (r *reviewer) start(ctx context.Context, prd github.Issue, prs []repoPR) error {
 	n := prd.Number
 	return r.runs.start(ctx, reviewerRole, n, func(ctx context.Context) (spec, error) {
-		base, err := baseCommit(ctx, r.Git)
+		var s spec
+		var shown []runRepo
+		for _, p := range prs {
+			base, err := baseCommit(ctx, p.repo.Git)
+			if err != nil {
+				return spec{}, err
+			}
+			rs := repoSpec{repo: p.repo, base: base, head: base}
+			if p.open.Number != 0 {
+				rs.branch, rs.head, rs.remote = branchName(n), p.open.HeadSHA, p.open.HeadSHA
+			}
+			s.repos = append(s.repos, rs)
+			shown = append(shown, runRepo{repo: p.repo, pr: p.open.Number})
+		}
+		input, err := record(ctx, r.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
-		input, err := record(ctx, r.GitHub, r.Git.BaseRef(), prd, pr.Number)
-		if err != nil {
-			return spec{}, err
-		}
-		return spec{branch: branchName(n), base: base, head: pr.HeadSHA, remote: pr.HeadSHA, input: input}, nil
+		s.input = input
+		return s, nil
 	})
 }
 
-func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) error {
+func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) error {
 	var out struct {
 		Verdict string `json:"verdict"`
 		Body    string `json:"body"`
@@ -202,17 +262,28 @@ func (r *reviewer) collect(ctx context.Context, n int, pr github.PR, in inputs) 
 	if ok, err := r.runs.result(ctx, reviewerRole, n, &out); err != nil || !ok {
 		return err
 	}
-	if in.moved(pr.HeadSHA, "") {
-		return r.runs.restart(ctx, reviewerRole, n)
+	open := openPRs(prs)
+	for _, rr := range in.Repos {
+		now := ""
+		for _, p := range open {
+			if p.repo.Name == rr.Repo {
+				now = p.open.HeadSHA
+			}
+		}
+		if rr.moved(now, "") {
+			return r.runs.restart(ctx, reviewerRole, n)
+		}
 	}
 	switch out.Verdict {
 	case "changes":
-		if err := r.requeue(ctx, n, pr.Number, github.KindChanges, out.Body); err != nil {
+		if err := r.requeue(ctx, n, open, github.KindChanges, out.Body); err != nil {
 			return err
 		}
 	case "approve":
-		if err := r.GitHub.AddApproval(ctx, pr.Number, out.Body); err != nil {
-			return err
+		for _, p := range open {
+			if err := p.repo.GitHub.AddApproval(ctx, p.open.Number, out.Body); err != nil {
+				return err
+			}
 		}
 		if err := r.GitHub.SetStatus(ctx, n, label.Review, label.Approved); err != nil {
 			return err
@@ -232,21 +303,32 @@ func (r *reviewer) finish(ctx context.Context, n int) error {
 	return r.GitHub.ClearStatus(ctx, n)
 }
 
-// requeue leaves a review on the PR and sends the PRD back to builder, or to a person once
+// requeue leaves a review on each open PR and sends the PRD back to builder, or to a person once
 // reviewer has sent it back ReviewLimit times since a person last stepped in.
-func (r *reviewer) requeue(ctx context.Context, n, pr int, kind, review string) error {
-	sent, err := r.GitHub.SendBacks(ctx, n, pr)
+func (r *reviewer) requeue(ctx context.Context, n int, open []repoPR, kind, review string) error {
+	comments, err := r.GitHub.Comments(ctx, n)
 	if err != nil {
 		return err
 	}
-	if err := r.GitHub.AddReview(ctx, pr, github.Note{Worker: reviewerRole.name, Kind: kind}, review); err != nil {
-		return err
+	// A PR opened later counts fewer send-backs, so the PRD's count is the largest.
+	sent := 0
+	for _, p := range open {
+		count, err := p.repo.GitHub.SendBacks(ctx, p.open.Number, comments)
+		if err != nil {
+			return err
+		}
+		sent = max(sent, count)
+	}
+	for _, p := range open {
+		if err := p.repo.GitHub.AddReview(ctx, p.open.Number, github.Note{Worker: reviewerRole.name, Kind: kind}, review); err != nil {
+			return err
+		}
 	}
 	if sent >= r.ReviewLimit {
 		// A review sent for a failed CI has no run, and keeps nothing.
 		kept := r.runs.keep(ctx, reviewerRole, n, nil)
 		return toStuck(ctx, r.GitHub, n, reviewerRole.name, label.Review, label.Ready, fmt.Sprintf(
-			"reviewer sent PR #%d back to builder %d times, the limit, and its latest review on the PR still asks for changes.", pr, sent), kept)
+			"reviewer sent %s back to builder %d times, the limit, and its latest review on the PR still asks for changes.", r.prRefs(open), sent), kept)
 	}
 	return r.GitHub.SetStatus(ctx, n, label.Review, label.Ready)
 }

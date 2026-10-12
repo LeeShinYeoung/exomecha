@@ -1,11 +1,25 @@
 ---
 name: setup
-description: Write the three files exomecha uses to prepare a PRD's sandbox (.exomecha/Dockerfile, .exomecha/setup.sh, .exomecha/allowed-hosts) and prove them in a real sbx sandbox, the way exomecha runs them. Does not commit. Use when a person invokes /exomecha:setup.
+description: Write the files exomecha uses to prepare a PRD's sandbox (.exomecha/Dockerfile, .exomecha/setup.sh, .exomecha/allowed-hosts, .exomecha/sandbox.md) in the PRD repository and prove them in a real sbx sandbox, the way exomecha runs them, for one repository or several. Does not commit. Use when a person invokes /exomecha:setup.
 ---
 
 # Set up the project's sandboxes
 
-exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every PRD gets a fresh sandbox that holds only what git tracks on the base branch: no installed dependencies, no ignored config files, no running services. Three files on the base branch prepare it. Write them for this project and prove they work in a real sandbox.
+exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every PRD gets a fresh sandbox that holds only what git tracks on the base branch of each repository the PRD lists: no installed dependencies, no ignored config files, no running services. Files on the PRD repository's base branch prepare it, one set for every repository exomecha may change (`EXOMECHA_REPOS`). Write them in the PRD repository and prove they work in a real sandbox.
+
+## Where the code is in a sandbox
+
+- A PRD with one repository has it at `/home/agent/repo`.
+- A PRD with several has each at `/home/agent/repo/<name>`, the repository's name without its owner. `/home/agent/repo` itself is a plain folder.
+- claude and the setup script start in `/home/agent/repo` either way. `EXOMECHA_REPOS` lists the PRD's repositories, one line each: `owner/name`, a space, and its folder. One script serves both layouts when it finds each repository's folder there:
+  ```
+  printf '%s\n' "$EXOMECHA_REPOS" | while read -r repo dir; do
+    case $repo in
+      */api) (cd "$dir" && npm ci) ;;
+      */web) (cd "$dir" && pnpm install --frozen-lockfile) ;;
+    esac
+  done
+  ```
 
 ## What exomecha does with the files
 
@@ -13,19 +27,21 @@ exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every PRD gets
 - `.exomecha/allowed-hosts` lists the extra hosts a sandbox may reach. sbx's network policy blocks every host it does not know. A blocked HTTPS request gets a 403 response with the body `Approval required for <host>:443.`, and nobody is there to approve it. exomecha allows the listed hosts in each PRD sandbox and in the template build only. Other sandboxes on the machine are not affected.
 - `.exomecha/setup.sh` runs in each new PRD sandbox before the AI starts:
   - as `bash -eo pipefail -c "<the script's text>"`, so it stops at the first command that fails and `$0` is not the script's path
-  - at the root of the checkout, `/home/agent/repo`
-  - with the PRD number in `EXOMECHA_PRD`, nothing on stdin, and no GitHub token
+  - in `/home/agent/repo`, as above
+  - with the PRD number in `EXOMECHA_PRD`, the repositories in `EXOMECHA_REPOS`, each secret's placeholder in its variable (see Secrets), nothing on stdin, and no GitHub token
   - for at most 10 minutes
   - always the base branch's copy, even for a PR branch
   - with nobody watching. If it fails, the PRD goes to `status:stuck` and a person has to fix the script.
+
+- `.exomecha/sandbox.md` goes into builder's and resolver's input as the sandbox's rules, which take precedence over CLAUDE.md. It holds what the person chose for checks the sandbox cannot run as CLAUDE.md says, in plain sentences for the AI, such as "Run only the unit tests. Do not start containers, since the services they need are only on the developers' machines."
 
 The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and Docker are already there. Docker runs inside the sandbox, so containers the script starts belong to that sandbox only. A sandbox stops when it sits idle, and when it starts again only containers started with `--restart unless-stopped` come back. exomecha blocks `ssh.github.com` in PRD sandboxes, and the script has no GitHub token, so it cannot fetch private repositories from GitHub.
 
 ## Rules
 
-- Change only the three files, and `.gitignore` when the script creates a file git would otherwise see. Do not change anything else.
+- Change only the files in `.exomecha/`, and `.gitignore` when the script creates a file git would otherwise see. Do not change anything else, in any repository.
 - Do not commit. The person commits to the base branch.
-- **No secrets in any of the files.** They are committed. Use the dummy values the project's CI or example config already uses. Tests that need a real secret are not supported yet: report them as not run.
+- **No secrets in any of the files.** They are committed. Use the dummy values the project's CI or example config already uses. A secret that only a request to some host needs, such as a token for a private package registry, goes through sbx (see Secrets). Other tests that need a real secret cannot run in the sandbox: ask the person about them (step 4).
 
 ### Dockerfile
 
@@ -51,6 +67,18 @@ The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and 
 - Never ask for input. End well within 10 minutes. exomecha runs the script for every new sandbox, so keep it fast.
 - Keep it short enough to review by reading it.
 
+### sandbox.md
+
+- Write it only when the person chose how a check runs in the sandbox (step 4). Without such a choice, do not create the file.
+- One short paragraph or list item per choice: what the AI does in the sandbox, and why, so it does not try the other way.
+
+### Secrets
+
+exomecha takes each `EXOMECHA_SECRET_<NAME>` from its `.env` file: the hosts, then a space and a command on the person's machine that prints the value. sbx keeps the value for one sandbox. The sandbox holds only a placeholder in `$<NAME>`, and the sbx proxy puts the value in place of the placeholder in the headers of requests to those hosts.
+
+- Use `$<NAME>` where the project needs the value, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in an `.npmrc` the script writes. Tell the person which `EXOMECHA_SECRET_` lines to add, and that the token needs only read access.
+- Requests from a Docker build or container inside the sandbox do not go through that substitution on their own. If a build there installs private packages, give the build an `.npmrc` of its own (as a build secret) that sends npm through the proxy and trusts its certificate: the lines above, `https-proxy=http://gateway.docker.internal:3128`, `proxy=http://gateway.docker.internal:3128`, and every certificate of `/etc/ssl/certs/ca-certificates.crt` (which holds the proxy's) as a `ca[]="<certificate with \n for each line break>"` line. Expect such an install to take several times longer.
+
 ### allowed-hosts
 
 - One host pattern per line, as `sbx policy allow network` takes it, such as `api.example.com` or `*.example.com`. `#` starts a comment. Blank lines are skipped.
@@ -66,20 +94,21 @@ The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and 
 
 ## Steps
 
-1. Find the base branch: the branch exomecha's PRs target. If you don't know it, ask the person.
-2. Read how the project is installed and checked: CLAUDE.md, the README and setup docs, package manifests and lockfiles, CI workflows, compose files, example config files, and `.gitignore`. A CI workflow is usually the most exact record of a setup from scratch.
+1. Find the base branch, the branch exomecha's PRs target, and the repositories exomecha may change (`EXOMECHA_REPOS`). If you don't know them, ask the person. This folder is the PRD repository, where the files go.
+2. For each repository, read how it is installed and checked where this session has its code: CLAUDE.md, the README and setup docs, package manifests and lockfiles, CI workflows, compose files, example config files, and `.gitignore`. A CI workflow is usually the most exact record of a setup from scratch.
 3. Work out:
-   - what to install once per template: system packages, runtimes, the pinned package manager, browsers (Dockerfile)
+   - what to install once per template, for every repository together: system packages, runtimes, the pinned package managers, browsers (Dockerfile)
    - what each checkout needs: dependencies, ignored config files, services, migrations (setup.sh)
    - every check CLAUDE.md and CI require for a change: lint, unit tests, end-to-end tests
-4. Write `.exomecha/Dockerfile` and `.exomecha/setup.sh`. Leave `.exomecha/allowed-hosts` out until the proof shows a host is needed.
-5. Prove the files as below.
-6. Clean up as below.
-7. Report, and tell the person what is left for them.
+4. Find each check that cannot run in the sandbox as CLAUDE.md says, such as one that needs a database or service only the developers' machines reach, a real secret that is not a request header, or containers the sandbox cannot run in time. Ask the person what the AI should do with each, with the choices that fit, such as running a narrower set of tests, starting a stand-in as a container in setup.sh, or not running it in the sandbox. Write the answers to `.exomecha/sandbox.md`.
+5. Write `.exomecha/Dockerfile` and `.exomecha/setup.sh`. Leave `.exomecha/allowed-hosts` out until the proof shows a host is needed.
+6. Prove the files as below.
+7. Clean up as below.
+8. Report, and tell the person what is left for them.
 
 ## Prove the files
 
-Run sbx on this machine, not inside a sandbox. Use these names, where `<slug>` is the repository's `owner-repo` in lowercase, with every run of characters other than letters and digits turned into one `-`:
+Run sbx on this machine, not inside a sandbox. Use these names, where `<slug>` is the PRD repository's `owner-repo` in lowercase, with every run of characters other than letters and digits turned into one `-`:
 
 - `exomecha-setup-build`: the sandbox that builds the template
 - `exomecha-setup-<slug>:<hash>`: the proof template, with `<hash>` the first 12 characters of `shasum -a 256 .exomecha/Dockerfile`
@@ -109,23 +138,27 @@ A download in the build can hang. If the build prints nothing for several minute
    sbx create --name exomecha-setup-proof --pull never -t exomecha-setup-<slug>:<hash> --deny-network ssh.github.com claude
    sbx policy allow network --sandbox exomecha-setup-proof "<hosts from allowed-hosts, joined with commas>"
    ```
-2. Send the base branch, as it is on the remote. A plain clone of a bundle of a remote-tracking ref comes out empty, so fetch the ref by name:
+   For each secret, have sbx keep it for the proof sandbox, the way exomecha does, and pass `-e <NAME>=<placeholder>` to every `sbx exec` below:
+   ```
+   sbx secret set-custom --sandbox exomecha-setup-proof --host <host> --env <NAME> --placeholder exomecha-secret-<name in lowercase> --command "<command>"
+   ```
+2. Send each repository's base branch, as it is on the remote, into its folder: `/home/agent/repo` with one repository, `/home/agent/repo/<name>` with several. With several, prove the layout with every repository exomecha may change. A plain clone of a bundle of a remote-tracking ref comes out empty, so fetch the ref by name. In each repository's clone:
    ```
    git fetch origin <base>
    git bundle create - origin/<base> | sbx exec -i exomecha-setup-proof sh -c 'cat > /tmp/base.bundle'
-   sbx exec exomecha-setup-proof sh -c 'mkdir -p /home/agent/repo && cd /home/agent/repo && git init -q && git fetch -q /tmp/base.bundle refs/remotes/origin/<base> && git checkout -q -B <base> FETCH_HEAD && rm /tmp/base.bundle'
+   sbx exec exomecha-setup-proof sh -c 'mkdir -p <folder> && cd <folder> && git init -q && git fetch -q /tmp/base.bundle refs/remotes/origin/<base> && git checkout -q -B <base> FETCH_HEAD && rm /tmp/base.bundle'
    ```
-3. Send the files you wrote, and `.gitignore` if you changed it. `sbx cp` would leave them owned by this machine's user id, so pipe them in, one `cat` per file:
+3. When the PRD repository is one of the repositories, send the files you wrote into its folder too, and `.gitignore` if you changed it. `sbx cp` would leave them owned by this machine's user id, so pipe them in, one `cat` per file:
    ```
-   sbx exec exomecha-setup-proof mkdir -p /home/agent/repo/.exomecha
-   sbx exec -i exomecha-setup-proof sh -c 'cat > /home/agent/repo/.exomecha/setup.sh' < .exomecha/setup.sh
+   sbx exec exomecha-setup-proof mkdir -p <folder>/.exomecha
+   sbx exec -i exomecha-setup-proof sh -c 'cat > <folder>/.exomecha/setup.sh' < .exomecha/setup.sh
    ```
-4. Run the script exactly as exomecha does, and time it:
+4. Run the script exactly as exomecha does, and time it. `EXOMECHA_REPOS` holds one line per repository you sent:
    ```
-   time sbx exec -w /home/agent/repo -e EXOMECHA_PRD=1 exomecha-setup-proof bash -eo pipefail -c "$(cat .exomecha/setup.sh)"
+   time sbx exec -w /home/agent/repo -e EXOMECHA_PRD=1 -e "EXOMECHA_REPOS=$(printf 'owner/api /home/agent/repo/api\nowner/web /home/agent/repo/web')" exomecha-setup-proof bash -eo pipefail -c "$(cat .exomecha/setup.sh)"
    ```
-5. `sbx exec -w /home/agent/repo exomecha-setup-proof git status --porcelain` shows only the files you sent.
-6. Run every check CLAUDE.md and CI require for a change, each with `sbx exec -w /home/agent/repo exomecha-setup-proof sh -c '<command>'`, with the environment variables CI sets for that check. They must pass.
+5. `sbx exec -w <folder> exomecha-setup-proof git status --porcelain` shows only the files you sent, in each repository's folder.
+6. Run every check CLAUDE.md and CI require for a change, in each repository's folder, each with `sbx exec -w <folder> exomecha-setup-proof sh -c '<command>'`, with the environment variables CI sets for that check. They must pass, apart from the checks `.exomecha/sandbox.md` says not to run in the sandbox.
 7. `sbx stop exomecha-setup-proof`, then run one check that needs the services again. `sbx exec` starts the sandbox, and the services must come back by themselves.
 8. Run the script a second time. It must succeed again.
 
@@ -142,15 +175,16 @@ When a step fails, find out why. If a host was blocked during the step, allow ju
 
 ## Report
 
-- the three files, in full
+- the files, in full
 - how long the script took
 - every check you ran and what happened
 - each host you added and the step that needs it
 - each host that was blocked but left out, and why
-- what you could not check, such as tests that need a real secret
+- what you could not check, such as tests that need a real secret, and what `.exomecha/sandbox.md` tells the AI instead
+- the `EXOMECHA_SECRET_` lines the person needs to add, with the hosts, without any value
 
 Then tell the person what is left for them:
 
-- Commit the files to the base branch, together with `.gitignore` if you changed it.
+- Commit the files to the PRD repository's base branch, together with `.gitignore` if you changed it.
 - exomecha builds the template the first time a PRD needs it, which takes a few minutes, and again after each change to the Dockerfile.
 - PRs that are already open are older than the files. exomecha still runs the base branch's script in them, and it can fail there when the branch lacks something the script relies on, such as a new `.gitignore` entry. Let those PRs merge first, or merge the base branch into them afterwards.

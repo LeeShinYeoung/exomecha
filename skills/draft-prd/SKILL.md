@@ -17,7 +17,7 @@ Record a problem as a backlog item before the conversation that decides everythi
 
 ## Steps
 
-1. The target repository is this session's git remote (`gh repo view --json nameWithOwner`). GitHub actions use the person's `gh` login.
+1. File the draft in the PRD repository, whose issues exomecha watches. It is usually this session's git remote (`gh repo view --json nameWithOwner`). When it is not, ask the person, and add `--repo <owner/name>` to each `gh` command. GitHub actions use the person's `gh` login.
 2. Read the code related to the problem, enough to tell what happens and where.
 3. Check that the labels exist: `gh label list --limit 100`. If `prd` or `status:draft` is missing, do not file. Tell the person that running exomecha once creates the labels.
 4. Write the body in the format below and file it.
@@ -39,7 +39,7 @@ Record a problem as a backlog item before the conversation that decides everythi
 
 - Confirmed facts:
 - Guesses (not confirmed):
-- Recorded at: <branch investigated>@<first 7 characters of the commit>
+- Recorded at: <repository>, <branch investigated>@<first 7 characters of the commit>, for each repository read
 
 ## Ideas
 

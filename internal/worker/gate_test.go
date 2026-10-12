@@ -177,7 +177,7 @@ func TestNoRunStartsOverTheLimit(t *testing.T) {
 	f := newFakeUsage(newClock())
 	f.usage.FiveHour.Used = 0.95
 	e.runs.gate = f.gate
-	ready := e.gh.AddIssue("ready", "", label.PRD, string(label.Ready))
+	ready := e.addPRD("ready", "", label.PRD, string(label.Ready))
 	review, _, _ := e.reviewPRD()
 	failed, _, sha := e.reviewPRD()
 	e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure", URL: "http://ci/test"})
