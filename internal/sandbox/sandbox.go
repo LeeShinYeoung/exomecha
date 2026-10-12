@@ -35,7 +35,7 @@ func (CLI) List(ctx context.Context) ([]Box, error) {
 	var list struct {
 		Sandboxes []Box `json:"sandboxes"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := decode(out, &list); err != nil {
 		return nil, fmt.Errorf("read sbx ls: %w", err)
 	}
 	return list.Sandboxes, nil
@@ -162,7 +162,7 @@ func (CLI) Templates(ctx context.Context) ([]Template, error) {
 	var list struct {
 		Images []Template `json:"images"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := decode(out, &list); err != nil {
 		return nil, fmt.Errorf("read sbx template ls: %w", err)
 	}
 	return list.Images, nil
@@ -265,7 +265,7 @@ func (CLI) Diagnose(ctx context.Context) ([]Finding, error) {
 		} `json:"checks"`
 	}
 	// sbx does not say how it exits when a check fails, so a report that reads wins over the exit.
-	if jsonErr := json.Unmarshal(out, &report); jsonErr != nil {
+	if jsonErr := decode(out, &report); jsonErr != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -288,7 +288,7 @@ func globalSecret(ctx context.Context, service string) (bool, error) {
 	var list struct {
 		Secrets []json.RawMessage `json:"secrets"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := decode(out, &list); err != nil {
 		return false, fmt.Errorf("read sbx secret ls: %w", err)
 	}
 	return len(list.Secrets) > 0, nil
@@ -347,6 +347,12 @@ func Parse(prefix, name string) (issue int, role string, ok bool) {
 		return 0, "", false
 	}
 	return issue, m[2], true
+}
+
+// decode reads the first JSON value sbx printed. sbx prints a notice about a newer version after
+// it on stdout at times.
+func decode(out []byte, v any) error {
+	return json.NewDecoder(bytes.NewReader(out)).Decode(v)
 }
 
 func run(ctx context.Context, args ...string) ([]byte, error) {

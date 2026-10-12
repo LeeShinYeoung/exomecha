@@ -385,6 +385,22 @@ func TestSignInRemovesTheSandboxWhenLoginFails(t *testing.T) {
 	}
 }
 
+func TestReadsJSONBeforeAnUpdateNotice(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.46.0 in a new home folder, shortened.
+	f.answer("secret", `{
+  "secrets": []
+}
+
+╭──────────────────────────────────╮
+│ Docker Sandboxes Update Available │
+╰──────────────────────────────────╯
+`)
+	if in, err := (CLI{}).ClaudeSignedIn(t.Context()); err != nil || in {
+		t.Errorf("ClaudeSignedIn = %v, %v", in, err)
+	}
+}
+
 func TestDiagnose(t *testing.T) {
 	f := newFakeSBX(t)
 	// From sbx v0.46.0 with its daemon stopped, shortened.
