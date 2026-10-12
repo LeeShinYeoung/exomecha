@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +16,9 @@ const streamWithUsage = `{"type":"system","subtype":"init","session_id":"s"}
 {"type":"result","subtype":"success","is_error":false,"result":"ok"}
 `
 
-func TestParseUsage(t *testing.T) {
-	u, err := parseUsage(strings.NewReader(streamWithUsage))
+func TestUsage(t *testing.T) {
+	fakeClaude(t, streamWithUsage, "", 0)
+	u, err := (Claude{}).Usage(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,25 +28,31 @@ func TestParseUsage(t *testing.T) {
 		Weekly:   Window{Used: 0.31, ResetsAt: time.Unix(1790917200, 0)},
 	}
 	if u != want {
-		t.Errorf("parseUsage = %+v, want %+v", u, want)
+		t.Errorf("Usage = %+v, want %+v", u, want)
 	}
 }
 
-func TestParseUsageRejected(t *testing.T) {
-	stream := strings.Replace(streamWithUsage, `"status":"allowed"`, `"status":"rejected"`, 1)
-	u, err := parseUsage(strings.NewReader(stream))
+func TestUsageRejected(t *testing.T) {
+	// claude refuses the call and exits with an error, but still reports the limits.
+	fakeClaude(t, strings.Replace(streamWithUsage, `"status":"allowed"`, `"status":"rejected"`, 1), "", 1)
+	u, err := (Claude{}).Usage(t.Context())
 	if err != nil || !u.Known || !u.Rejected {
-		t.Errorf("parseUsage = %+v, %v, want a known, rejected usage", u, err)
+		t.Errorf("Usage = %+v, %v, want a known, rejected usage", u, err)
 	}
 }
 
-func TestParseUsageWithoutEvent(t *testing.T) {
+func TestUsageWithoutEvent(t *testing.T) {
 	stream := `{"type":"system","subtype":"init"}
 {"type":"result","subtype":"success","is_error":false,"result":"ok"}
 `
-	u, err := parseUsage(strings.NewReader(stream))
+	fakeClaude(t, stream, "", 0)
+	u, err := (Claude{}).Usage(t.Context())
 	if err != nil || u.Known {
-		t.Errorf("parseUsage = %+v, %v, want an unknown usage", u, err)
+		t.Errorf("Usage = %+v, %v, want an unknown usage", u, err)
+	}
+	fakeClaude(t, "", "Not logged in", 1)
+	if _, err := (Claude{}).Usage(t.Context()); err == nil || !strings.Contains(err.Error(), "Not logged in") {
+		t.Errorf("Usage of a failed run = %v, want the run's stderr", err)
 	}
 }
 
@@ -70,6 +79,39 @@ func TestCheckStream(t *testing.T) {
 			t.Errorf("%s: checkStream = %v, want %q", name, err, c.want)
 		}
 	}
+}
+
+func TestCheckRunFailure(t *testing.T) {
+	for name, c := range map[string]struct {
+		stdout string
+		want   string // in the error besides the run's stderr
+	}{
+		"not started": {"", "run claude"},
+		// As a timeout leaves it.
+		"killed": {`{"type":"system","subtype":"init","permissionMode":"auto"}` + "\n", "without a result"},
+	} {
+		fakeClaude(t, c.stdout, "API Error: Connection reset", 1)
+		err := (Claude{}).Check(t.Context(), Model{Name: "m", Effort: "low"})
+		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "Connection reset") {
+			t.Errorf("%s: Check = %v, want %q and the run's stderr", name, err, c.want)
+		}
+	}
+}
+
+// fakeClaude puts a claude on PATH that prints stdout and stderr and exits with code.
+func fakeClaude(t *testing.T, stdout, stderr string, code int) {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range map[string]string{"out": stdout, "err": stderr} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := fmt.Sprintf("#!/bin/sh\ndir=$(dirname \"$0\")\ncat \"$dir/out\"\ncat \"$dir/err\" >&2\nexit %d\n", code)
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // TestRealCheck calls the real claude on this machine. It spends a little Claude usage, so it runs

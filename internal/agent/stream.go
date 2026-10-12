@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 )
 
 type Stream struct {
 	PermissionMode string // as claude's init line reports it
 	Model          string // as claude's init line reports it
 	Rejected       bool   // claude reported a plan limit as used up
+	UsageKnown     bool   // false when no rate limit event reported the windows
+	FiveHour       Window // as the last rate limit event reports it
+	Weekly         Window // as the last rate limit event reports it
 
 	ended      bool // claude wrote its result line
 	isError    bool
@@ -30,7 +34,8 @@ func ReadStream(r io.Reader) (Stream, error) {
 		switch {
 		case err == io.EOF:
 			return s, nil
-		// A run killed while writing leaves half a line. The stream ends there.
+		// The first text that is not JSON ends the stream, wherever it is, and nothing after it is
+		// read. A run killed while writing leaves half a line at the end.
 		case errors.As(err, &syntax), errors.Is(err, io.ErrUnexpectedEOF):
 			return s, nil
 		case err != nil:
@@ -61,6 +66,26 @@ func ReadStream(r io.Reader) (Stream, error) {
 		case "rate_limit_event":
 			if line.Info.Status == "rejected" {
 				s.Rejected = true
+			}
+			// Apart from line, so a window of another shape cannot hide a rejection.
+			var limits struct {
+				Info struct {
+					Windows map[string]struct {
+						Utilization float64 `json:"utilization"`
+						ResetsAt    int64   `json:"resetsAt"`
+					} `json:"unifiedWindows"`
+				} `json:"rate_limit_info"`
+			}
+			if json.Unmarshal(raw, &limits) == nil {
+				window := func(name string) Window {
+					w, ok := limits.Info.Windows[name]
+					if !ok {
+						return Window{}
+					}
+					return Window{Used: w.Utilization, ResetsAt: time.Unix(w.ResetsAt, 0)}
+				}
+				s.UsageKnown = true
+				s.FiveHour, s.Weekly = window("five_hour"), window("seven_day")
 			}
 		case "result":
 			s.ended = true
