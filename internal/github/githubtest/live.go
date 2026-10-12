@@ -91,9 +91,9 @@ func (s *Server) merge(p *Pull) {
 		s.t.Fatalf("githubtest: PR #%d conflicts with %s and cannot be merged: %s", p.Number, p.Base, out)
 	}
 	tree, _, _ := strings.Cut(out, "\n")
-	message := fmt.Sprintf("Merge pull request #%d from %s/%s", p.Number, s.Owner, p.Head)
+	msg := fmt.Sprintf("Merge pull request #%d from %s/%s", p.Number, s.Owner, p.Head)
 	commit, err := s.git("-c", "user.name=GitHub", "-c", "user.email=noreply@github.com",
-		"commit-tree", tree, "-p", base, "-p", head, "-m", message)
+		"commit-tree", tree, "-p", base, "-p", head, "-m", msg)
 	if err != nil {
 		s.t.Fatalf("githubtest: merge PR #%d: %v", p.Number, err)
 	}
@@ -144,7 +144,6 @@ func (s *Server) OpenPull(head, base, title, body string) int {
 	return s.newPull(head, base, title, body).Number
 }
 
-// SetNextNumber makes the next issue or PR number n.
 func (s *Server) SetNextNumber(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
