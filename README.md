@@ -52,7 +52,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
        cd exomecha
        go install ./cmd/exomecha
        ```
-   - Run `exomecha init <project>`, where `<project>` is a name of your choice made of letters, digits, `-` and `_`. It asks for the repositories PRDs may change, the PRD repository when there are several, the base branch and the GitHub token, which it does not show as you type. It writes them to `~/.exomecha/<project>.yaml`, which only you can read, and lists the optional settings in the file as comments with their defaults. Then it signs sbx in to Claude when sbx has no login (step 3) and checks this machine. Run it again at any time to sign in again and check, without the questions. To change a setting, edit the file.
+   - Run `exomecha init <project>`, where `<project>` is a name of your choice made of letters, digits, `-` and `_`. It asks for the repositories PRDs may change, the PRD repository when there are several, the base branch and the GitHub token, which it does not show as you type. It writes them to `~/.exomecha/<project>.yaml`, which only you can read, and lists the optional settings in the file as comments with their defaults. Then it signs sbx in to Claude when sbx has no login (step 3) and checks this machine. Run it again at any time to sign in again and check, without the questions. To change a setting, edit the file. A PRD repository belongs to one project, so init and run refuse a PRD repository another project already has.
      ```yaml
      repos:
        - acme/api
@@ -92,8 +92,8 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 
 ## Notes
 
-- exomecha's log says only how exomecha itself is doing: when it starts and stops, when one of its own steps fails (sbx, git, GitHub, the Claude usage check) and when that step works again, when it pauses for a rate or usage limit, and when a run loses its sandbox. A line at ERROR means exomecha could not do what it set out to do. Each line goes to the terminal and to `~/.exomecha/<owner>/<repo>/logs/exomecha.log`, under the PRD repository's owner and name, as are all the folders below. Once the file would pass 10MB it becomes `exomecha.log.1` and a new one starts, so the log takes at most 20MB. Only you can read the folder.
-- When a PRD goes to stuck, exomecha keeps what that run printed (claude's output, and the setup script's, the Dockerfile build's or the merge's) in a folder under `~/.exomecha/<owner>/<repo>/outputs/<PRD number>/`, and the stuck comment names the folder. Output can hold secrets, so it never goes into a comment or the log. Each file keeps its last 1MB (the Dockerfile build its last 8KB), and once the folders pass 100MB together the oldest run's go. Only you can read them.
+- exomecha's log says only how exomecha itself is doing: when it starts and stops, when one of its own steps fails (sbx, git, GitHub, the Claude usage check) and when that step works again, when it pauses for a rate or usage limit, and when a run loses its sandbox. A line at ERROR means exomecha could not do what it set out to do. Each line goes to the terminal and to `~/.exomecha/<project>/logs/exomecha.log`, under the project's name, as are all the folders below. Once the file would pass 10MB it becomes `exomecha.log.1` and a new one starts, so the log takes at most 20MB. Only you can read the folder.
+- When a PRD goes to stuck, exomecha keeps what that run printed (claude's output, and the setup script's, the Dockerfile build's or the merge's) in a folder under `~/.exomecha/<project>/outputs/<PRD number>/`, and the stuck comment names the folder. Output can hold secrets, so it never goes into a comment or the log. Each file keeps its last 1MB (the Dockerfile build its last 8KB), and once the folders pass 100MB together the oldest run's go. Only you can read them.
 - Only the usage check and the models' check at start use the claude login on this machine. Every worker runs claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
 - reviewer only reads the code. Its sandboxes start from sbx's default claude template and get only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `limits.read_sandboxes`, take about 625MB each, and are removed at exomecha's next check, within about a minute after claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
 - Every worker's sandbox gets the claude user settings in `~/.exomecha/claude`, laid out like `~/.claude`. exomecha writes the folder the first time it starts: rules on comments and writing in `rules/`, and a `settings.json` that turns on the ponytail and humanizer plugins. After that the folder is yours. Edit a file to change a default and delete it to turn the default off. A change applies from the next sandbox. A deleted folder comes back with the first defaults at the next start. The project's own CLAUDE.md, rules and settings take precedence, so a project can turn a plugin off in its `.claude/settings.json`. exomecha merges `settings.json` into the one in sbx's template and installs the enabled plugins before claude starts, which adds a few seconds to each start. A plugin that fails to install is left out of that run, with a warning in exomecha's log.
@@ -106,7 +106,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 - When CI fails on a PR, reviewer's review lists only the failed runs and their links. When builder picks the PRD up again, exomecha downloads the end of each failed job's log and gives it to builder in its input only. A log holds whatever the project's CI printed, so it never goes into a comment.
 - When there is work to start, exomecha first reads the Claude plan's usage with a small claude call, at most once every three minutes. At or above the limits in Setup it starts nothing new, and checks again only once the limit resets. Work already running finishes, so usage can end up a little over.
 - exomecha sends a PRD's code into its sandbox and takes the AI's commits out with git, then checks them and pushes them from this machine. The GitHub token never enters a sandbox. exomecha's sandboxes cannot reach `ssh.github.com`, because sbx hands this machine's SSH agent to every sandbox.
-- A run keeps going in its sandbox while exomecha is stopped. Ctrl-C leaves working PRDs as they are, and exomecha picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.exomecha/<owner>/<repo>/sandboxes/`.
+- A run keeps going in its sandbox while exomecha is stopped. Ctrl-C leaves working PRDs as they are, and exomecha picks up their runs when it starts again. claude's output streams to `stream.jsonl` in the run's folder under `~/.exomecha/<project>/sandboxes/`.
 - The files in `.exomecha/` are always read from the PRD repository's base branch, whichever repositories a PRD changes.
 - If `.exomecha/sandbox.md` is there, builder's and resolver's input gets it as the sandbox's rules, which take precedence over CLAUDE.md. /exomecha:setup writes it when a check cannot run in the sandbox as CLAUDE.md says, for example "run only the unit tests and start no containers".
 - If the base branch has `.exomecha/Dockerfile`, exomecha builds it into an sbx template the first time builder or resolver needs a sandbox after the file changed. The build runs in a sandbox of its own and takes a few minutes (about 2 to 3 for a Dockerfile that installs Playwright browsers), and the first sandbox from a new template takes about 25 seconds more to start. builder and resolver runs that start during a build wait for it. Once the new template is in, exomecha removes the project's older ones.
@@ -156,7 +156,7 @@ Stop exomecha, then remove what it keeps on this machine for the project:
 
 - its sandboxes, named `exomecha-run-<slug>-...` and `exomecha-build-<slug>`, with `sbx rm --force`
 - its templates, `exomecha-<slug>` with any tag, with `sbx template rm --force`
-- `~/.exomecha/<owner>/<repo>`
+- `~/.exomecha/<project>`
 - `~/.exomecha/<project>.yaml`
 
 `<slug>` is `owner-repo` in lowercase, with every run of characters other than letters and digits turned into one `-`. A slug longer than 32 characters is cut and ends with a short hash of the repository's name. `sbx ls` and `sbx template ls` show the exact names.
@@ -182,7 +182,7 @@ Stop exomecha, then remove what it keeps on this machine for the project:
 - Upgrade while no PRD is in `status:working` and `sbx ls` shows no `exomecha-run-` sandbox. A run started by the older version is not picked up.
 - The repository in `EXOMECHA_REPO` goes in `repos`, as the section above describes. It holds the PRDs as before.
 - Add a `## Repositories` section to each open PRD that a worker has yet to finish, listing the repository as `- owner/name`.
-- exomecha clones each repository again, under `~/.exomecha/<owner>/<repo>/repos/`. You can remove the old clone, `~/.exomecha/<owner>/<repo>/repo`.
+- exomecha clones each repository again, under `~/.exomecha/<project>/repos/`. You can remove the old folder, `~/.exomecha/<owner>/<repo>`.
 
 ## Upgrading from a version with the issue, discuss and prd skills
 

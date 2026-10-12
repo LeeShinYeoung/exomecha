@@ -79,7 +79,7 @@ What the fake cannot show needs real GitHub. Check it after changes to the skill
 ### Labels and the token
 
 - Start exomecha. `gh label list -R $R` shows the ten labels. Stop and start it again: still ten, and no error in the log.
-- `~/.exomecha/<owner>/<repo>/logs/exomecha.log` holds the same lines as the terminal, and only you can read it. Start a second exomecha for the same repository while the first runs: it says another one is already running and exits with status 1.
+- `~/.exomecha/<project>/logs/exomecha.log` holds the same lines as the terminal, and only you can read it. Start a second exomecha for the same project while the first runs: it says another one is already running and exits with status 1.
 - File a small PRD with `prd` and `status:ready`. It goes through builder and reviewer to `status:approved` with no permission error in the log.
 
 ### Skills

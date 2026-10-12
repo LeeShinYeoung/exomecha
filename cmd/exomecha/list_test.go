@@ -23,7 +23,7 @@ func TestList(t *testing.T) {
 	write("acme.yaml", "repos: [acme/api, acme/web]\nprd_repo: acme/plans\nbase_branch: main\ngithub_token: secret\n")
 	write("side.yaml", "repos: [me/side]\nbase_branch: main\ngithub_token: secret\n")
 	write("broken.yaml", "repos: [me/broken]\n")
-	root := projectRoot(home, target{owner: "acme", name: "plans"})
+	root := projectRoot(home, "acme")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestList(t *testing.T) {
 	if len(rows) != len(want)+1 || !slices.EqualFunc(rows[:len(want)], want, slices.Equal) || !strings.Contains(out.String(), "broken.yaml: repos, base_branch and github_token") {
 		t.Errorf("list printed:\n%s", out.String())
 	}
-	if _, err := os.Stat(projectRoot(home, target{owner: "me", name: "side"})); !os.IsNotExist(err) {
+	if _, err := os.Stat(projectRoot(home, "side")); !os.IsNotExist(err) {
 		t.Errorf("list made a folder for side: %v", err)
 	}
 }

@@ -155,9 +155,44 @@ func TestSettingsPath(t *testing.T) {
 	if got, err := settingsPath("/home/me", "acme_api-2"); err != nil || got != "/home/me/.exomecha/acme_api-2.yaml" {
 		t.Errorf("settingsPath = %q, %v", got, err)
 	}
-	for _, bad := range []string{"", "../acme", "acme.yaml", "a b"} {
+	for _, bad := range []string{"", "../acme", "acme.yaml", "a b", "claude", "Claude"} {
 		if _, err := settingsPath("/home/me", bad); err == nil {
 			t.Errorf("settingsPath(%q) took the name", bad)
+		}
+	}
+}
+
+func TestCheckPRDRepo(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".exomecha")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, data string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	acme := write("acme.yaml", "repos: [acme/api, acme/web]\nprd_repo: acme/plans\nbase_branch: main\ngithub_token: secret\n")
+	write("broken.yaml", "repos: [me/broken]\n")
+	other := filepath.Join(dir, "other.yaml")
+
+	if err := checkPRDRepo(home, other, target{owner: "Acme", name: "Plans"}); err == nil || !strings.Contains(err.Error(), "project acme") {
+		t.Errorf("another project's PRD repository = %v, want a refusal that names acme", err)
+	}
+	for _, c := range []struct {
+		path string
+		prd  target
+	}{
+		{acme, target{owner: "acme", name: "plans"}},
+		{other, target{owner: "acme", name: "api"}},
+		{other, target{owner: "me", name: "broken"}},
+	} {
+		if err := checkPRDRepo(home, c.path, c.prd); err != nil {
+			t.Errorf("%s with %s = %v", filepath.Base(c.path), c.prd.full(), err)
 		}
 	}
 }

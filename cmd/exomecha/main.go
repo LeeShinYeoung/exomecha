@@ -91,7 +91,7 @@ type config struct {
 	resolver                agent.Model
 
 	project           string // the name of the project's file, which check's fixes name
-	root              string // what exomecha keeps of the PRD repository
+	root              string // what exomecha keeps of the project
 	claudeDir         string // empty: no default claude settings
 	interval, ciGrace time.Duration
 	usage             func(context.Context) (agent.Usage, error) // nil: claude's own reading
@@ -125,11 +125,14 @@ func run(home, project string) error {
 		return err
 	}
 	c.project = project
+	if err := checkPRDRepo(home, path, c.prd); err != nil {
+		return err
+	}
 
 	// Without this a write to stderr after whatever reads it has gone, such as tee, ends exomecha.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
-	c.root = projectRoot(home, c.prd)
+	c.root = projectRoot(home, project)
 	// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
 	c.claudeDir = filepath.Join(home, ".exomecha", "claude")
 	if err := os.MkdirAll(c.root, 0o755); err != nil {
@@ -151,11 +154,11 @@ func run(home, project string) error {
 	return serve(ctx, c)
 }
 
-func projectRoot(home string, prd target) string {
-	return filepath.Join(home, ".exomecha", prd.owner, prd.name)
+func projectRoot(home, project string) string {
+	return filepath.Join(home, ".exomecha", project)
 }
 
-// lock keeps a second exomecha off the repository: both would take the same PRDs and sandboxes and
+// lock keeps a second exomecha off the project: both would take the same PRDs and sandboxes and
 // write the same log. The OS lets go of the lock when the process ends, however it ends.
 func lock(root string) (*os.File, error) {
 	f, err := os.OpenFile(filepath.Join(root, "lock"), os.O_RDWR|os.O_CREATE, 0o600)
@@ -165,7 +168,7 @@ func lock(root string) (*os.File, error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, errors.New("another exomecha is already running for this repository")
+			return nil, errors.New("another exomecha is already running for this project")
 		}
 		return nil, fmt.Errorf("lock %s: %w", root, err)
 	}

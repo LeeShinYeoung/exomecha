@@ -37,7 +37,7 @@ func initProject(ctx context.Context, home, project string) error {
 			b, err := term.ReadPassword(fd)
 			fmt.Println()
 			return string(b), err
-		})
+		}, func(prd target) error { return checkPRDRepo(home, path, prd) })
 		if err != nil {
 			return err
 		}
@@ -85,8 +85,9 @@ type answers struct {
 	token string
 }
 
-// ask asks for the settings without defaults. An answer that does not parse asks again.
-func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error)) (answers, error) {
+// ask asks for the settings without defaults. An answer that does not parse, or a PRD repository
+// checkPRD refuses, asks again.
+func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error), checkPRD func(target) error) (answers, error) {
 	var a answers
 	line := func(question string) (string, error) {
 		fmt.Fprint(out, question)
@@ -101,7 +102,10 @@ func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error)) (ans
 		if err != nil {
 			return a, err
 		}
-		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil {
+		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil && len(a.repos) == 1 {
+			err = checkPRD(a.repos[0])
+		}
+		if err == nil {
 			break
 		}
 		fmt.Fprintln(out, err)
@@ -111,7 +115,11 @@ func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error)) (ans
 		if err != nil {
 			return a, err
 		}
-		if _, err := parseTarget("prd_repo", s); err != nil {
+		t, err := parseTarget("prd_repo", s)
+		if err == nil {
+			err = checkPRD(t)
+		}
+		if err != nil {
 			fmt.Fprintln(out, err)
 			continue
 		}

@@ -34,7 +34,7 @@ func list(home string, out io.Writer) error {
 			continue
 		}
 		state := "no"
-		if up, err := running(projectRoot(home, c.prd)); err != nil {
+		if up, err := running(projectRoot(home, name)); err != nil {
 			state = "-"
 			problems = append(problems, err)
 		} else if up {
