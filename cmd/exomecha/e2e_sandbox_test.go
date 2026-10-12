@@ -62,7 +62,7 @@ func TestE2EStartRefusesUnknownModel(t *testing.T) {
 	cfg := defaults()
 	cfg.light = agent.Model{Name: "opsu", Effort: "low"}
 	err := serve(t.Context(), cfg)
-	if err == nil || !strings.Contains(err.Error(), "EXOMECHA_TIER_LIGHT") || !strings.Contains(err.Error(), "opsu") {
-		t.Errorf("start with light opsu: %v, want a refusal naming EXOMECHA_TIER_LIGHT and opsu", err)
+	if err == nil || !strings.Contains(err.Error(), "models.light") || !strings.Contains(err.Error(), "opsu") {
+		t.Errorf("start with light opsu: %v, want a refusal naming models.light and opsu", err)
 	}
 }
