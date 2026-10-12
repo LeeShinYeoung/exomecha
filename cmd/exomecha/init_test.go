@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,25 +12,119 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
-func TestAsk(t *testing.T) {
-	in := bufio.NewReader(strings.NewReader("acme/api,acme/api\nacme/api, https://github.com/acme/web.git\nplans\ngit@github.com:acme/plans.git\n\n"))
-	var out strings.Builder
-	tokens := []string{"", " github_pat_x "}
-	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) {
-		token := tokens[0]
-		tokens = tokens[1:]
-		return token, nil
-	}, anyPRD)
-	if err != nil {
-		t.Fatal(err)
+func anyPRD(target) error { return nil }
+
+func TestQuestionsStartFromTheFile(t *testing.T) {
+	current := settings{Repos: []string{"acme/api", "acme/web"}, PRDRepo: "acme/plans", BaseBranch: "develop", GitHubToken: "github_pat_x"}
+	if a := newQuestions(current, anyPRD).answers(); !a.same(current) {
+		t.Errorf("answers = %+v, want the file's %+v", a, current)
 	}
-	if len(a.repos) != 2 || a.repos[0].full() != "acme/api" || a.repos[1].full() != "acme/web" || a.prd != "acme/plans" || a.base != "main" || a.token != "github_pat_x" {
+	if q := newQuestions(settings{}, anyPRD); q.base != "main" || q.repos != "" || q.token != "" {
+		t.Errorf("questions without a file = %+v, want base main and nothing else", q)
+	}
+}
+
+func TestQuestionsCheckRepos(t *testing.T) {
+	var checked []string
+	q := newQuestions(settings{}, func(prd target) error {
+		checked = append(checked, prd.full())
+		if prd.full() == "acme/plans" {
+			return errors.New("project plans already has acme/plans")
+		}
+		return nil
+	})
+	for s, want := range map[string]string{
+		"acme/api,acme/api": "repos lists acme/api twice",
+		"plans":             "repos must hold owner/name",
+		"acme/plans":        "project plans already has acme/plans",
+		"":                  "repos must hold owner/name",
+	} {
+		if err := q.checkRepos(s); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("checkRepos(%q) = %v, want %q", s, err, want)
+		}
+	}
+	checked = nil
+	if err := q.checkRepos("acme/api, https://github.com/acme/web.git"); err != nil || checked != nil {
+		t.Errorf("checkRepos of two repositories = %v, checked %v, want no PRD repository check", err, checked)
+	}
+	if err := q.checkPRDRepo("git@github.com:acme/plans.git"); err == nil {
+		t.Error("checkPRDRepo of another project's repository = nil")
+	}
+}
+
+// One repository holds the PRDs itself, unless the file gives it a PRD repository of its own.
+func TestQuestionsAsksPRD(t *testing.T) {
+	q := newQuestions(settings{}, anyPRD)
+	q.repos = "acme/app"
+	if q.asksPRD() {
+		t.Error("asksPRD with one repository = true")
+	}
+	q.repos = "acme/api, acme/web"
+	if !q.asksPRD() {
+		t.Error("asksPRD with two repositories = false")
+	}
+	q = newQuestions(settings{Repos: []string{"acme/app"}, PRDRepo: "acme/plans"}, anyPRD)
+	if !q.asksPRD() {
+		t.Error("asksPRD with one repository and a PRD repository in the file = false")
+	}
+	var checked []string
+	q.checkPRD = func(prd target) error {
+		checked = append(checked, prd.full())
+		return nil
+	}
+	if err := q.checkRepos("acme/app"); err != nil || checked != nil {
+		t.Errorf("checkRepos = %v, checked %v, want the PRD repository question to check it", err, checked)
+	}
+}
+
+func TestQuestionsAnswers(t *testing.T) {
+	q := newQuestions(settings{}, anyPRD)
+	q.repos, q.prd, q.base, q.token = "acme/api, https://github.com/acme/web.git", "git@github.com:acme/plans.git", " develop ", " github_pat_x "
+	a := q.answers()
+	if !slices.Equal(fullNames(a.repos), []string{"acme/api", "acme/web"}) || a.prd != "acme/plans" || a.base != "develop" || a.token != "github_pat_x" {
 		t.Errorf("answers = %+v", a)
 	}
-	for _, want := range []string{"repos lists acme/api twice", "prd_repo must hold owner/name"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output %q does not say %q", out.String(), want)
+	q.repos = "acme/app"
+	if a := q.answers(); a.prd != "" {
+		t.Errorf("answers with one repository has PRD repository %q, want none", a.prd)
+	}
+}
+
+func TestReport(t *testing.T) {
+	var ran []string
+	pass := func(name string) func(context.Context) (string, []error) {
+		return func(context.Context) (string, []error) {
+			ran = append(ran, name)
+			return name + " passed", nil
 		}
+	}
+	fail := func(name string) func(context.Context) (string, []error) {
+		return func(context.Context) (string, []error) {
+			ran = append(ran, name)
+			return name + " failed", []error{errors.New("fix " + name + "\nwith two lines")}
+		}
+	}
+	var out strings.Builder
+	ok, err := report(t.Context(), &out, false, []item{
+		{group: "A", run: pass("a1")},
+		{group: "A", run: fail("a2")},
+		{group: "B", gate: true, run: fail("b1")},
+		{group: "B", run: pass("b2")},
+		{group: "C", run: pass("c1")},
+	})
+	if err != nil || ok {
+		t.Errorf("report = %v, %v, want not ok", ok, err)
+	}
+	if !slices.Equal(ran, []string{"a1", "a2", "b1", "c1"}) {
+		t.Errorf("ran %v, want b2 skipped after its group's gate failed", ran)
+	}
+	want := "\nA\n  ✓ a1 passed\n  ✗ a2 failed\n    fix a2\n    with two lines\n\nB\n  ✗ b1 failed\n    fix b1\n    with two lines\n\nC\n  ✓ c1 passed\n"
+	if got := out.String(); got != want {
+		t.Errorf("report printed\n%s\nwant\n%s", got, want)
+	}
+
+	if ok, err := report(t.Context(), &strings.Builder{}, false, []item{{group: "A", run: pass("a1")}}); err != nil || !ok {
+		t.Errorf("report of passing items = %v, %v, want ok", ok, err)
 	}
 }
 
@@ -46,91 +138,6 @@ func TestParseTargetTakesCloneURLs(t *testing.T) {
 	// exomecha talks to github.com only.
 	if got, err := parseTarget("repos", "https://gitlab.com/acme/app.git"); err == nil {
 		t.Errorf("parseTarget of a gitlab.com URL = %q, want an error", got.full())
-	}
-}
-
-func TestAskOneRepositoryDoesNotAskForThePRDRepository(t *testing.T) {
-	in := bufio.NewReader(strings.NewReader("acme/app\ndevelop\n"))
-	var out strings.Builder
-	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) { return "secret", nil }, anyPRD)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.prd != "" || a.base != "develop" || strings.Contains(out.String(), "PRD repository") {
-		t.Errorf("answers = %+v, output %q", a, out.String())
-	}
-}
-
-func anyPRD(target) error { return nil }
-
-func TestAskAsksAgainForAPRDRepositoryOfAnotherProject(t *testing.T) {
-	in := bufio.NewReader(strings.NewReader("acme/plans\nacme/api, acme/web\nacme/plans\nacme/web\n\n"))
-	var out strings.Builder
-	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) { return "secret", nil }, func(prd target) error {
-		if prd.full() == "acme/plans" {
-			return errors.New("project plans already has acme/plans")
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(a.repos) != 2 || a.prd != "acme/web" {
-		t.Errorf("answers = %+v", a)
-	}
-	if n := strings.Count(out.String(), "project plans already has acme/plans"); n != 2 {
-		t.Errorf("output says the repository is taken %d times, want 2 (repos and prd_repo):\n%s", n, out.String())
-	}
-}
-
-func TestAskStopsWhenTheAnswersEnd(t *testing.T) {
-	if _, err := ask(t.Context(), bufio.NewReader(strings.NewReader("acme/app\n")), &strings.Builder{}, settings{}, nil, anyPRD); err == nil {
-		t.Error("ask with no base branch answer = nil")
-	}
-}
-
-func TestAskKeepsTheFilesValuesOnEmptyAnswers(t *testing.T) {
-	current := settings{Repos: []string{"acme/api", "acme/web"}, PRDRepo: "acme/plans", BaseBranch: "develop", GitHubToken: "github_pat_abcdefgh1234"}
-	var out strings.Builder
-	a, err := ask(t.Context(), bufio.NewReader(strings.NewReader("\n\n\n")), &out, current, func() (string, error) { return "", nil }, anyPRD)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !a.same(current) {
-		t.Errorf("answers = %+v, want the file's %+v", a, current)
-	}
-	for _, want := range []string{"[acme/api, acme/web]", "[acme/plans]", "[develop]", "[...1234]"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output %q does not show %q", out.String(), want)
-		}
-	}
-	if strings.Contains(out.String(), current.GitHubToken) {
-		t.Errorf("output %q shows the whole token", out.String())
-	}
-}
-
-func TestAskKeepsThePRDRepositoryOfOneRepository(t *testing.T) {
-	current := settings{Repos: []string{"acme/app"}, PRDRepo: "acme/plans", BaseBranch: "main", GitHubToken: "secret"}
-	var checked []string
-	a, err := ask(t.Context(), bufio.NewReader(strings.NewReader("\n\n\n")), &strings.Builder{}, current, func() (string, error) { return "", nil }, func(prd target) error {
-		checked = append(checked, prd.full())
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.prd != "acme/plans" || !slices.Equal(checked, []string{"acme/plans"}) {
-		t.Errorf("PRD repository %q, checked %v, want acme/plans alone", a.prd, checked)
-	}
-}
-
-func TestAskStopsWhenCtxEnds(t *testing.T) {
-	r, w := io.Pipe()
-	defer w.Close()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := ask(ctx, bufio.NewReader(r), &strings.Builder{}, settings{}, nil, anyPRD); !errors.Is(err, context.Canceled) {
-		t.Errorf("ask after ctx ended = %v, want context.Canceled", err)
 	}
 }
 

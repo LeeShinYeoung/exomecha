@@ -68,7 +68,7 @@ What the fake cannot show needs real GitHub. Check it after changes to the skill
    ~/go/bin/exomecha init <name>
    ~/go/bin/exomecha run <name>
    ```
-4. In the practice repository, install the plugin from your exomecha checkout:
+4. init installs the plugin from GitHub for your user. To try the skills of your checkout instead, install the plugin from it in the practice repository:
    ```
    claude plugin marketplace add <path to exomecha> --scope local
    claude plugin install exomecha@exomecha --scope local
