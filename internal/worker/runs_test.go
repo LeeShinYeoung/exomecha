@@ -15,7 +15,7 @@ import (
 
 func (e *env) state(name string) state {
 	e.t.Helper()
-	n, got, _ := sandbox.Parse(e.deps.SandboxPrefix, name)
+	n, got, _ := sandbox.ParseName(e.deps.SandboxPrefix, name)
 	ro := roles[slices.IndexFunc(roles, func(ro role) bool { return ro.name == got })]
 	r, err := e.runs.read(e.t.Context(), ro, n)
 	if err != nil {
@@ -184,7 +184,7 @@ func TestPick(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", sandbox.Name(sandbox.Prefix("other", "repo"), 6, builderRole.name), "impl-run-x"} {
+	for _, name := range []string{prefix + "5-builder", prefix + "3-builder", sandbox.Name(sandbox.RunPrefix("other", "repo"), 6, builderRole.name), "impl-run-x"} {
 		e.sbx.add(name)
 	}
 
@@ -207,7 +207,7 @@ func TestSlotsCountEveryPRDSandbox(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prefix := e.deps.SandboxPrefix
 	e.sbx.add(prefix + "1-builder")
-	e.sbx.add(sandbox.Name(sandbox.Prefix("other", "repo"), 2, builderRole.name))
+	e.sbx.add(sandbox.Name(sandbox.RunPrefix("other", "repo"), 2, builderRole.name))
 	e.wantReserve(builderRole, 9, true)
 	e.runs.release(e.runs.name(builderRole, 9))
 	e.sbx.add(prefix + "2-resolver")

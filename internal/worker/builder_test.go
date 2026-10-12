@@ -71,7 +71,7 @@ func (e *env) wantRemoved(name string) {
 // kept returns the directories that keep what the runs of sandbox name printed.
 func (e *env) kept(name string) []string {
 	e.t.Helper()
-	n, role, ok := sandbox.Parse(e.deps.SandboxPrefix, name)
+	n, role, ok := sandbox.ParseName(e.deps.SandboxPrefix, name)
 	if !ok {
 		e.t.Fatalf("%s is no run's sandbox", name)
 	}
@@ -383,7 +383,7 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 func (e *env) wantSummary(pr int, summary string) {
 	e.t.Helper()
 	comments := e.gh.Pull(pr).Comments
-	want := github.Noted(github.Note{Worker: "builder", Kind: github.KindSummary}, summary)
+	want := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary}, summary)
 	if len(comments) == 0 || comments[len(comments)-1].Body != want {
 		e.t.Errorf("PR comments = %+v, want the last one to be builder's summary %q", comments, summary)
 	}

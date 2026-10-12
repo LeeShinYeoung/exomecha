@@ -80,7 +80,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),
 		OutputDir:     t.TempDir(),
-		SandboxPrefix: sandbox.Prefix("owner", "repo"),
+		SandboxPrefix: sandbox.RunPrefix("owner", "repo"),
 		ProjectLimit:  2,
 		ReadLimit:     2,
 		ReviewLimit:   5,

@@ -44,10 +44,10 @@ const (
 
 const fileLimit = 10 << 20
 
-// Open sends every line to term and to exomecha.log in dir, which only this user can read. The
-// file is never closed: each line goes straight to the OS, which closes it once exomecha ends,
-// after the last line.
-func Open(dir string, term io.Writer) error {
+// SetDefault makes slog's default logger send every line to term and to exomecha.log in dir,
+// which only this user can read. The file is never closed: each line goes straight to the OS,
+// which closes it once exomecha ends, after the last line.
+func SetDefault(dir string, term io.Writer) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

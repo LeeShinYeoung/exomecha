@@ -10,12 +10,12 @@ import (
 	"testing"
 )
 
-func TestOpenWritesTerminalAndFile(t *testing.T) {
+func TestSetDefaultWritesTerminalAndFile(t *testing.T) {
 	prev := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(prev) })
 	dir := filepath.Join(t.TempDir(), "logs")
 	var term bytes.Buffer
-	if err := Open(dir, &term); err != nil {
+	if err := SetDefault(dir, &term); err != nil {
 		t.Fatal(err)
 	}
 	slog.Info("exomecha started", Repo, "o/r")

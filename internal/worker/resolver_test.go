@@ -159,7 +159,7 @@ func TestResolverReadsThePRAndLeavesHowItResolved(t *testing.T) {
 	e.resolve(prd)
 
 	comments := e.gh.Pull(pr).Comments
-	want := github.Noted(github.Note{Worker: "resolver", Kind: github.KindResolved}, "kept both lines")
+	want := github.NoteBody(github.Note{Worker: "resolver", Kind: github.KindResolved}, "kept both lines")
 	if len(comments) != 1 || comments[0].Body != want {
 		t.Errorf("PR comments = %+v, want resolver's reason", comments)
 	}

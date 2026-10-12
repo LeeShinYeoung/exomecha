@@ -40,7 +40,7 @@ func checkSBX(ctx context.Context, project string) []error {
 	for _, f := range failed {
 		problems = append(problems, errors.New(strings.TrimSpace(fmt.Sprintf("sbx diagnose, %s: %s. %s", f.Name, f.Message, f.Hint))))
 	}
-	if has, err := sbx.GlobalGitHubSecret(ctx); err != nil {
+	if has, err := sbx.HasGlobalGitHubSecret(ctx); err != nil {
 		problems = append(problems, fmt.Errorf("check sbx secrets: %w", err))
 	} else if has {
 		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.

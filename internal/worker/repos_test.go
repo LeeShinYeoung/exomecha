@@ -378,7 +378,7 @@ func TestRecordKeepsAnEntryAnOutsiderCopied(t *testing.T) {
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _ := e.reviewPRD()
 	note := github.Note{Worker: "reviewer", Kind: github.KindChanges}
-	e.gh.AddOutsiderReview(pr, github.Noted(note, "rename it"))
+	e.gh.AddOutsiderReview(pr, github.NoteBody(note, "rename it"))
 	if err := e.deps.GitHub.AddReview(t.Context(), pr, note, "rename it"); err != nil {
 		t.Fatal(err)
 	}

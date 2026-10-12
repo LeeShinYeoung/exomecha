@@ -395,7 +395,7 @@ func TestReviewerChangesRequeues(t *testing.T) {
 	if p.Merged {
 		t.Error("PR merged despite requested changes")
 	}
-	if len(p.Reviews) != 1 || p.Reviews[0].Body != github.Noted(github.Note{Worker: "reviewer", Kind: github.KindChanges}, "rename the function") {
+	if len(p.Reviews) != 1 || p.Reviews[0].Body != github.NoteBody(github.Note{Worker: "reviewer", Kind: github.KindChanges}, "rename the function") {
 		t.Errorf("reviews = %+v", p.Reviews)
 	}
 	e.wantRemoved(name)
