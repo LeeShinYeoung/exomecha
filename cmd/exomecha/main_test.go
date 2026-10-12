@@ -50,7 +50,7 @@ func TestParseConfig(t *testing.T) {
 		{name: "empty file", yaml: "", wantErr: "repos, base_branch and github_token"},
 		{name: "repo without owner", yaml: "repos: [app]\nbase_branch: main\ngithub_token: secret\n", wantErr: "repos must hold owner/name"},
 		{name: "empty entry", yaml: "repos: [acme/app, '']\nbase_branch: main\ngithub_token: secret\n", wantErr: "repos must hold owner/name"},
-		{name: "unknown key", yaml: required + "limits:\n  weekley: 50\n", wantErr: "weekley"},
+		{name: "unknown key", yaml: required + "limits:\n  weekley: 50\n", wantErr: "line 5: exomecha has no setting weekley"},
 		{name: "defaults", yaml: required, check: func(t *testing.T, c config) {
 			d := defaults()
 			if c.prd.full() != "acme/app" || len(c.repos) != 1 || c.repos[0] != c.prd || c.base != "main" || c.token != "secret" {

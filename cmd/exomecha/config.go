@@ -44,7 +44,10 @@ type secret struct {
 	Command string   `yaml:"command"`
 }
 
-var projectName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var (
+	projectName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	unknownKey  = regexp.MustCompile(`^(line \d+): field (\S+) not found in type .*$`)
+)
 
 func settingsPath(home, project string) (string, error) {
 	if !projectName.MatchString(project) {
@@ -78,6 +81,13 @@ func parseConfig(data []byte) (config, error) {
 	// A misspelled key would otherwise leave its default in place without a word.
 	dec.KnownFields(true)
 	if err := dec.Decode(&s); err != nil && !errors.Is(err, io.EOF) {
+		// yaml names the Go type the key is missing from, which means nothing to the operator.
+		var typeErr *yaml.TypeError
+		if errors.As(err, &typeErr) {
+			for i, e := range typeErr.Errors {
+				typeErr.Errors[i] = unknownKey.ReplaceAllString(e, "$1: exomecha has no setting $2")
+			}
+		}
 		return config{}, err
 	}
 	c := defaults()
