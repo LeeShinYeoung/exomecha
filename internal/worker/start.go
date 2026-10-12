@@ -88,7 +88,7 @@ func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error)
 	count := 0
 	for name := range used {
 		// Not a plain prefix match: owner/repo-v2's names start with owner/repo's prefix too.
-		_, got, ok := sandbox.Parse(r.SandboxPrefix, name)
+		_, got, ok := sandbox.ParseName(r.SandboxPrefix, name)
 		i := slices.IndexFunc(roles, func(o role) bool { return o.name == got })
 		// A role not in roles counts as a reader's.
 		if ok && (i >= 0 && roles[i].project) == ro.project {

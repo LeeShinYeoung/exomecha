@@ -278,7 +278,7 @@ func (r *runs) pick(ctx context.Context, ro role, picked []int) ([]int, error) {
 	}
 	out := picked
 	for _, name := range names {
-		if n, got, ok := sandbox.Parse(r.SandboxPrefix, name); ok && got == ro.name {
+		if n, got, ok := sandbox.ParseName(r.SandboxPrefix, name); ok && got == ro.name {
 			out = append(out, n)
 		}
 	}

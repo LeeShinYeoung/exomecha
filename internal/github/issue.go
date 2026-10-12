@@ -152,7 +152,7 @@ func (c *Client) Comments(ctx context.Context, number int) ([]Comment, error) {
 // AddComment comments on an issue, or on the conversation of a PR, which is an issue too.
 func (c *Client) AddComment(ctx context.Context, number int, n Note, body string) error {
 	_, _, err := c.api.Issues.CreateComment(ctx, c.owner, c.repo, number, gh.IssueCommentRequest{
-		Body: Noted(n, body),
+		Body: NoteBody(n, body),
 	})
 	return err
 }
@@ -168,14 +168,14 @@ func commentFrom(body, association string, at time.Time) Comment {
 	}
 }
 
-func Noted(n Note, body string) string {
+func NoteBody(n Note, body string) string {
 	return "<!-- exomecha:" + n.Worker + ":" + n.Kind + " -->\n" + header(n.Worker) + "\n\n" + body
 }
 
 func header(worker string) string { return "**exomecha " + worker + "**" }
 
-// ParseNote reads what Noted wrote, or a body that starts with Marker alone. ok is false for a body
-// without either, and text is then body as it is.
+// ParseNote reads what NoteBody wrote, or a body that starts with Marker alone. ok is false for a
+// body without either, and text is then body as it is.
 func ParseNote(body string) (n Note, text string, ok bool) {
 	b := strings.TrimSpace(body)
 	inner, rest, found := strings.Cut(strings.TrimPrefix(b, markerStart), "-->")

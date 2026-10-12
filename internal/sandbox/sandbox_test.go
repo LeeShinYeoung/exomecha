@@ -335,15 +335,15 @@ func TestRemoveWithoutSBX(t *testing.T) {
 	}
 }
 
-func TestGlobalGitHubSecret(t *testing.T) {
+func TestHasGlobalGitHubSecret(t *testing.T) {
 	f := newFakeSBX(t)
 	f.answer("secret", `{"secrets": []}`)
-	if has, err := (CLI{}).GlobalGitHubSecret(t.Context()); err != nil || has {
-		t.Errorf("GlobalGitHubSecret with none = %v, %v", has, err)
+	if has, err := (CLI{}).HasGlobalGitHubSecret(t.Context()); err != nil || has {
+		t.Errorf("HasGlobalGitHubSecret with none = %v, %v", has, err)
 	}
 	f.answer("secret", `{"secrets": [{"scope": "global", "type": "service", "name": "github", "secret": "gh*****"}]}`)
-	if has, err := (CLI{}).GlobalGitHubSecret(t.Context()); err != nil || !has {
-		t.Errorf("GlobalGitHubSecret with one = %v, %v", has, err)
+	if has, err := (CLI{}).HasGlobalGitHubSecret(t.Context()); err != nil || !has {
+		t.Errorf("HasGlobalGitHubSecret with one = %v, %v", has, err)
 	}
 	f.wantCalls(
 		[]string{"secret", "ls", "--global", "--service", "github", "--json"},
@@ -506,8 +506,8 @@ func TestSlugCutAtADash(t *testing.T) {
 	}
 }
 
-func TestPrefix(t *testing.T) {
-	if got := Prefix("LeeShinYeoung", "jazzing"); got != "exomecha-run-leeshinyeoung-jazzing-" {
+func TestRunPrefix(t *testing.T) {
+	if got := RunPrefix("LeeShinYeoung", "jazzing"); got != "exomecha-run-leeshinyeoung-jazzing-" {
 		t.Errorf("Prefix = %q", got)
 	}
 }
@@ -519,7 +519,7 @@ func TestBuildName(t *testing.T) {
 }
 
 func TestNameFits63(t *testing.T) {
-	prefix := Prefix("some-organization", strings.Repeat("long-repository-name-", 3))
+	prefix := RunPrefix("some-organization", strings.Repeat("long-repository-name-", 3))
 	for _, role := range []string{"builder", "resolver", "reviewer"} {
 		if name := Name(prefix, 9999999, role); len(name) > 63 {
 			t.Errorf("%s is %d chars, sbx allows 63", name, len(name))
@@ -527,8 +527,8 @@ func TestNameFits63(t *testing.T) {
 	}
 }
 
-func TestParse(t *testing.T) {
-	prefix := Prefix("o", "r")
+func TestParseName(t *testing.T) {
+	prefix := RunPrefix("o", "r")
 	for _, c := range []struct {
 		name  string
 		issue int
@@ -545,18 +545,18 @@ func TestParse(t *testing.T) {
 		{prefix + "12-Builder", 0, "", false},
 		{prefix + "12-builder-x", 0, "", false},
 		{prefix + "x-12-builder", 0, "", false},
-		{Name(Prefix("o", "r2"), 12, "builder"), 0, "", false},
-		{Name(Prefix("o", "r-2"), 12, "builder"), 0, "", false},
+		{Name(RunPrefix("o", "r2"), 12, "builder"), 0, "", false},
+		{Name(RunPrefix("o", "r-2"), 12, "builder"), 0, "", false},
 		{"exomecha-prd-o-r-12-builder", 0, "", false},
 		{"exomecha-build-o-r", 0, "", false},
 		{"impl-run-12-builder", 0, "", false},
 	} {
-		issue, role, ok := Parse(prefix, c.name)
+		issue, role, ok := ParseName(prefix, c.name)
 		if issue != c.issue || role != c.role || ok != c.ok {
-			t.Errorf("Parse(%q) = %d, %q, %v, want %d, %q, %v", c.name, issue, role, ok, c.issue, c.role, c.ok)
+			t.Errorf("ParseName(%q) = %d, %q, %v, want %d, %q, %v", c.name, issue, role, ok, c.issue, c.role, c.ok)
 		}
 	}
-	if _, _, ok := Parse("", "12-builder"); ok {
+	if _, _, ok := ParseName("", "12-builder"); ok {
 		t.Error("Parse accepted an empty prefix")
 	}
 }

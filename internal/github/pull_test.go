@@ -40,7 +40,7 @@ func TestParseNote(t *testing.T) {
 		note       Note
 		ok         bool
 	}{
-		{Noted(Note{Worker: "resolver", Kind: KindResolved}, "kept both sides"), "kept both sides", Note{"resolver", KindResolved}, true},
+		{NoteBody(Note{Worker: "resolver", Kind: KindResolved}, "kept both sides"), "kept both sides", Note{"resolver", KindResolved}, true},
 		{Marker + "\nfrom before notes", "from before notes", Note{}, true},
 		{"  " + Marker + "\n\nwith space around\n", "with space around", Note{}, true},
 		{"a person's comment", "a person's comment", Note{}, false},
@@ -52,8 +52,8 @@ func TestParseNote(t *testing.T) {
 			t.Errorf("ParseNote(%q) = %v, %q, %v, want %v, %q, %v", c.body, n, text, ok, c.note, c.text, c.ok)
 		}
 	}
-	if got := Noted(Note{Worker: "builder", Kind: KindSummary}, "did it"); got != "<!-- exomecha:builder:summary -->\n**exomecha builder**\n\ndid it" {
-		t.Errorf("Noted = %q", got)
+	if got := NoteBody(Note{Worker: "builder", Kind: KindSummary}, "did it"); got != "<!-- exomecha:builder:summary -->\n**exomecha builder**\n\ndid it" {
+		t.Errorf("NoteBody = %q", got)
 	}
 }
 

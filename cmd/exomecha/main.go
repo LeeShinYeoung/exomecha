@@ -143,7 +143,7 @@ func run(home, project string) error {
 		return err
 	}
 	defer held.Close()
-	if err := logging.Open(filepath.Join(c.root, "logs"), os.Stderr); err != nil {
+	if err := logging.SetDefault(filepath.Join(c.root, "logs"), os.Stderr); err != nil {
 		return err
 	}
 
@@ -237,7 +237,7 @@ func serve(ctx context.Context, c config) error {
 		Environment:   template.New(prep, sbx, c.prd.owner, c.prd.name),
 		SandboxDir:    filepath.Join(c.root, "sandboxes"),
 		OutputDir:     filepath.Join(c.root, "outputs"),
-		SandboxPrefix: sandbox.Prefix(c.prd.owner, c.prd.name),
+		SandboxPrefix: sandbox.RunPrefix(c.prd.owner, c.prd.name),
 		ClaudeDir:     c.claudeDir,
 		ProjectLimit:  c.projectLimit,
 		ReadLimit:     c.readLimit,

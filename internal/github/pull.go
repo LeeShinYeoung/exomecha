@@ -74,7 +74,7 @@ func (c *Client) PR(ctx context.Context, number int) (PR, error) {
 // COMMENT only: the token owner authored the PR, and GitHub blocks approving or requesting changes on your own PR.
 func (c *Client) AddReview(ctx context.Context, number int, n Note, body string) error {
 	_, _, err := c.api.PullRequests.CreateReview(ctx, c.owner, c.repo, number, &gh.PullRequestReviewRequest{
-		Body:  new(Noted(n, body)),
+		Body:  new(NoteBody(n, body)),
 		Event: new("COMMENT"),
 	})
 	return err

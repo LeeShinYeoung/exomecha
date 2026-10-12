@@ -225,9 +225,9 @@ func (CLI) GitURL(name, dir string) string {
 	return "ext::sbx exec -i " + name + " git %s " + dir
 }
 
-// GlobalGitHubSecret reports whether sbx has a GitHub secret for every sandbox. Its proxy would
+// HasGlobalGitHubSecret reports whether sbx has a GitHub secret for every sandbox. Its proxy would
 // hand it to the AI's requests, which could then push past exomecha's checks.
-func (CLI) GlobalGitHubSecret(ctx context.Context) (bool, error) {
+func (CLI) HasGlobalGitHubSecret(ctx context.Context) (bool, error) {
 	return globalSecret(ctx, "github")
 }
 
@@ -328,7 +328,7 @@ func Slug(owner, repo string) string {
 	return strings.TrimRight(slug[:slugMax-len(hash)-1], "-") + "-" + hash
 }
 
-func Prefix(owner, repo string) string {
+func RunPrefix(owner, repo string) string {
 	return "exomecha-run-" + Slug(owner, repo) + "-"
 }
 
@@ -343,7 +343,7 @@ func Name(prefix string, issue int, role string) string {
 // A leading zero would give a second name for the same issue, which Name never builds back.
 var runName = regexp.MustCompile(`^([1-9][0-9]*)-([a-z]+)$`)
 
-func Parse(prefix, name string) (issue int, role string, ok bool) {
+func ParseName(prefix, name string) (issue int, role string, ok bool) {
 	rest, found := strings.CutPrefix(name, prefix)
 	if !found || prefix == "" {
 		return 0, "", false

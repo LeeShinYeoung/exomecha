@@ -63,7 +63,7 @@ func (g *Git) Show(ctx context.Context, commit, path string) (content string, ok
 	return content, true, nil
 }
 
-func (g *Git) ConflictMarkers(ctx context.Context, commit string, files []string) ([]string, error) {
+func (g *Git) ConflictedFiles(ctx context.Context, commit string, files []string) ([]string, error) {
 	var left []string
 	for _, name := range files {
 		// A file that is gone was deleted while resolving.

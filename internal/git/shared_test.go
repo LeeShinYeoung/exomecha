@@ -174,7 +174,7 @@ func TestPushDoesNotRunProjectHooks(t *testing.T) {
 	}
 }
 
-func TestConflictMarkers(t *testing.T) {
+func TestConflictedFiles(t *testing.T) {
 	f := setup(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n"})
 	commit := gittest.Commit(t, f.origin, "main", "", map[string]string{
 		"한글.txt": "<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> origin/main\n",
@@ -184,8 +184,8 @@ func TestConflictMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	left, err := f.git.ConflictMarkers(t.Context(), commit, []string{"한글.txt", "b.txt", "gone.txt"})
+	left, err := f.git.ConflictedFiles(t.Context(), commit, []string{"한글.txt", "b.txt", "gone.txt"})
 	if err != nil || !slices.Equal(left, []string{"한글.txt"}) {
-		t.Errorf("ConflictMarkers = %q, %v, want only 한글.txt", left, err)
+		t.Errorf("ConflictedFiles = %q, %v, want only 한글.txt", left, err)
 	}
 }

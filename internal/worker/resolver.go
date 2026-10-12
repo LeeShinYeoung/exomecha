@@ -245,7 +245,7 @@ func (r *resolver) unfinished(ctx context.Context, n int, rr repoRun, head strin
 	if strings.TrimSpace(merging) != "" {
 		return "The AI said the conflicts were resolved, but the merge" + rr.where() + " was not committed.", nil
 	}
-	left, err := repo.Git.ConflictMarkers(ctx, head, rr.Conflicts)
+	left, err := repo.Git.ConflictedFiles(ctx, head, rr.Conflicts)
 	if err != nil {
 		return "", err
 	}
