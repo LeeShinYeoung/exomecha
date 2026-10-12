@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,7 +20,7 @@ func TestAsk(t *testing.T) {
 		token := tokens[0]
 		tokens = tokens[1:]
 		return token, nil
-	})
+	}, anyPRD)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestAsk(t *testing.T) {
 func TestAskOneRepositoryDoesNotAskForThePRDRepository(t *testing.T) {
 	in := bufio.NewReader(strings.NewReader("acme/app\ndevelop\n"))
 	var out strings.Builder
-	a, err := ask(in, &out, func() (string, error) { return "secret", nil })
+	a, err := ask(in, &out, func() (string, error) { return "secret", nil }, anyPRD)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +46,30 @@ func TestAskOneRepositoryDoesNotAskForThePRDRepository(t *testing.T) {
 	}
 }
 
+func anyPRD(target) error { return nil }
+
+func TestAskAsksAgainForAPRDRepositoryOfAnotherProject(t *testing.T) {
+	in := bufio.NewReader(strings.NewReader("acme/plans\nacme/api, acme/web\nacme/plans\nacme/web\n\n"))
+	var out strings.Builder
+	a, err := ask(in, &out, func() (string, error) { return "secret", nil }, func(prd target) error {
+		if prd.full() == "acme/plans" {
+			return errors.New("project plans already has acme/plans")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.repos) != 2 || a.prd != "acme/web" {
+		t.Errorf("answers = %+v", a)
+	}
+	if n := strings.Count(out.String(), "project plans already has acme/plans"); n != 2 {
+		t.Errorf("output says the repository is taken %d times, want 2 (repos and prd_repo):\n%s", n, out.String())
+	}
+}
+
 func TestAskStopsWhenTheAnswersEnd(t *testing.T) {
-	if _, err := ask(bufio.NewReader(strings.NewReader("acme/app\n")), &strings.Builder{}, nil); err == nil {
+	if _, err := ask(bufio.NewReader(strings.NewReader("acme/app\n")), &strings.Builder{}, nil, anyPRD); err == nil {
 		t.Error("ask with no base branch answer = nil")
 	}
 }

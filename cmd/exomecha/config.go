@@ -54,7 +54,34 @@ func settingsPath(home, project string) (string, error) {
 	if !projectName.MatchString(project) {
 		return "", fmt.Errorf("a project name holds only letters, digits, - and _: %q", project)
 	}
+	// EqualFold: on macOS Claude names the same folder.
+	if strings.EqualFold(project, "claude") {
+		return "", errors.New("the default claude settings have the folder claude, so pick another project name")
+	}
 	return filepath.Join(home, ".exomecha", project+".yaml"), nil
+}
+
+// checkPRDRepo refuses prd when a project other than the one in path has it as its PRD repository.
+// Each project holds the lock of its own folder only, so two would take the same PRDs and sandboxes.
+func checkPRDRepo(home, path string, prd target) error {
+	paths, err := filepath.Glob(filepath.Join(home, ".exomecha", "*.yaml"))
+	if err != nil {
+		return err
+	}
+	self, _ := os.Stat(path)
+	for _, p := range paths {
+		// SameFile, not the name: on macOS run Acme reads acme.yaml.
+		if info, err := os.Stat(p); err != nil || os.SameFile(info, self) {
+			continue
+		}
+		// A file that does not load cannot run, and this check stops it once it does.
+		c, err := loadConfig(p)
+		if err == nil && strings.EqualFold(c.prd.full(), prd.full()) {
+			return fmt.Errorf("project %s already has %s as its PRD repository, and a PRD repository belongs to one project",
+				strings.TrimSuffix(filepath.Base(p), ".yaml"), prd.full())
+		}
+	}
+	return nil
 }
 
 func loadConfig(path string) (config, error) {
