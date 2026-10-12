@@ -50,10 +50,10 @@ func (c *Client) LastClosedPR(ctx context.Context, branch string) (number int, m
 
 func (c *Client) CreatePR(ctx context.Context, branch, base, title, body string) (int, error) {
 	pr, _, err := c.api.PullRequests.Create(ctx, c.owner, c.repo, gh.CreatePullRequest{
-		Title: gh.Ptr(title),
+		Title: new(title),
 		Head:  branch,
 		Base:  base,
-		Body:  gh.Ptr(body),
+		Body:  new(body),
 	})
 	if err != nil {
 		return 0, err
@@ -76,8 +76,8 @@ func (c *Client) PR(ctx context.Context, number int) (PR, error) {
 // COMMENT only: the token owner authored the PR, and GitHub blocks approving or requesting changes on your own PR.
 func (c *Client) AddReview(ctx context.Context, number int, n Note, body string) error {
 	_, _, err := c.api.PullRequests.CreateReview(ctx, c.owner, c.repo, number, &gh.PullRequestReviewRequest{
-		Body:  gh.Ptr(Noted(n, body)),
-		Event: gh.Ptr("COMMENT"),
+		Body:  new(Noted(n, body)),
+		Event: new("COMMENT"),
 	})
 	return err
 }

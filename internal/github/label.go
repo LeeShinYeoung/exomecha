@@ -25,7 +25,7 @@ func (c *Client) EnsureLabels(ctx context.Context) ([]string, error) {
 		}
 		_, _, err := c.api.Issues.CreateLabel(ctx, c.owner, c.repo, gh.CreateIssueLabelRequest{
 			Name:  d.Name,
-			Color: gh.Ptr(d.Color),
+			Color: new(d.Color),
 		})
 		if err != nil {
 			return created, fmt.Errorf("create label %s: %w", d.Name, err)
