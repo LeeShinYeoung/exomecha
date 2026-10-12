@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -47,7 +46,14 @@ func main() {
 		stop()
 	case len(args) == 2 && args[0] == "run":
 		if err := run(home, args[1]); err != nil {
-			slog.Error("exomecha could not start", logging.Err, err)
+			errs := []error{err}
+			// One line per problem the start check found, since a log line keeps no line breaks.
+			if joined, ok := err.(interface{ Unwrap() []error }); ok {
+				errs = joined.Unwrap()
+			}
+			for _, err := range errs {
+				slog.Error("exomecha could not start", logging.Err, err)
+			}
 			os.Exit(1)
 		}
 	case len(args) == 1 && args[0] == "list":
@@ -84,6 +90,7 @@ type config struct {
 	light, normal, heavy    agent.Model
 	resolver                agent.Model
 
+	project           string // the name of the project's file, which check's fixes name
 	root              string // what exomecha keeps of the PRD repository
 	claudeDir         string // empty: no default claude settings
 	interval, ciGrace time.Duration
@@ -117,6 +124,7 @@ func run(home, project string) error {
 	if err != nil {
 		return err
 	}
+	c.project = project
 
 	// Without this a write to stderr after whatever reads it has gone, such as tee, ends exomecha.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
@@ -168,32 +176,10 @@ func lock(root string) (*os.File, error) {
 func serve(ctx context.Context, c config) error {
 	ctx = github.WaitForRateLimit(ctx)
 
-	if _, err := exec.LookPath("sbx"); err != nil {
-		return errors.New("sbx is not installed. Every worker runs claude in Docker Sandboxes")
+	if err := check(ctx, c); err != nil {
+		return err
 	}
 	sbx := sandbox.CLI{}
-	if has, err := sbx.GlobalGitHubSecret(ctx); err != nil {
-		return fmt.Errorf("check sbx secrets: %w", err)
-	} else if has {
-		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.
-		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
-	}
-	// Once per model: the check finds a model's problems, and claude reports nothing about the effort.
-	checked := map[string]bool{}
-	for _, t := range []struct {
-		key   string
-		model agent.Model
-	}{
-		{"models.light", c.light}, {"models.normal", c.normal}, {"models.heavy", c.heavy}, {"models.resolver", c.resolver},
-	} {
-		if checked[t.model.Name] {
-			continue
-		}
-		checked[t.model.Name] = true
-		if err := (agent.Claude{}).Check(ctx, t.model); err != nil {
-			return fmt.Errorf("%s: %w", t.key, err)
-		}
-	}
 
 	gh, err := client(c.prd, c.token)
 	if err != nil {

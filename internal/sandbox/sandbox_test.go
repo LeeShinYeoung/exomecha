@@ -385,6 +385,36 @@ func TestSignInRemovesTheSandboxWhenLoginFails(t *testing.T) {
 	}
 }
 
+func TestDiagnose(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.46.0 with its daemon stopped, shortened.
+	f.answer("diagnose", `{
+ "version": "1.0",
+ "checks": [
+  {"name": "CLI binary", "status": "pass", "message": "found", "detail": "/opt/homebrew/bin/sbx", "hint": ""},
+  {"name": "Binary version", "status": "warn", "message": "update available: v0.47.0 (running v0.46.0)", "detail": "", "hint": "Download the latest release from the link above"},
+  {"name": "Daemon", "status": "fail", "message": "not reachable", "detail": "dial unix sandboxd.sock: connect: no such file or directory", "hint": "Run: sbx daemon start"},
+  {"name": "Authentication", "status": "skip", "message": "Skipped: Daemon failed", "detail": "", "hint": ""}
+ ],
+ "summary": {"pass": 1, "warn": 1, "fail": 1, "skip": 1}
+}`)
+	f.fail("diagnose", "")
+	got, err := (CLI{}).Diagnose(t.Context())
+	want := []Finding{{Name: "Daemon", Message: "not reachable", Hint: "Run: sbx daemon start"}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("Diagnose = %+v, %v, want %+v", got, err, want)
+	}
+	f.wantCalls([]string{"diagnose", "--json"})
+}
+
+func TestDiagnoseFailure(t *testing.T) {
+	f := newFakeSBX(t)
+	f.fail("diagnose", "unknown command")
+	if _, err := (CLI{}).Diagnose(t.Context()); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("Diagnose = %v, want sbx's error", err)
+	}
+}
+
 func TestGitURL(t *testing.T) {
 	if got := (CLI{}).GitURL("box", "/home/agent/repo"); got != "ext::sbx exec -i box git %s /home/agent/repo" {
 		t.Errorf("GitURL = %q", got)

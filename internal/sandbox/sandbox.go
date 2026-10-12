@@ -247,6 +247,39 @@ func (c CLI) SignIn(ctx context.Context, terminal *os.File) error {
 	return nil
 }
 
+// Finding is a check sbx diagnose failed, with sbx's own words about it.
+type Finding struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+	Hint    string `json:"hint"`
+}
+
+// Diagnose returns the checks of sbx diagnose that failed, such as a daemon that does not answer
+// or a missing Docker sign-in.
+func (CLI) Diagnose(ctx context.Context) ([]Finding, error) {
+	out, err := run(ctx, "diagnose", "--json")
+	var report struct {
+		Checks []struct {
+			Finding
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	// sbx does not say how it exits when a check fails, so a report that reads wins over the exit.
+	if jsonErr := json.Unmarshal(out, &report); jsonErr != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("read sbx diagnose: %w", jsonErr)
+	}
+	var failed []Finding
+	for _, c := range report.Checks {
+		if c.Status == "fail" {
+			failed = append(failed, c.Finding)
+		}
+	}
+	return failed, nil
+}
+
 func globalSecret(ctx context.Context, service string) (bool, error) {
 	out, err := run(ctx, "secret", "ls", "--global", "--service", service, "--json")
 	if err != nil {

@@ -147,6 +147,7 @@ func New(t *testing.T) *Server {
 	mux := http.NewServeMux()
 	const repo = "/repos/{owner}/{repo}"
 	s.route(mux, "GET /user", s.getUser)
+	s.route(mux, "GET "+repo, s.getRepo)
 	s.route(mux, "GET "+repo+"/issues", s.listIssues)
 	s.route(mux, "GET "+repo+"/issues/{n}", s.getIssue)
 	s.route(mux, "PATCH "+repo+"/issues/{n}", s.updateIssue)
@@ -303,6 +304,10 @@ func (s *Server) pullJSON(p *Pull) (any, error) {
 
 func (s *Server) getUser(*http.Request) (int, any) {
 	return http.StatusOK, map[string]any{"login": s.Owner, "id": s.UserID, "name": s.UserName}
+}
+
+func (s *Server) getRepo(*http.Request) (int, any) {
+	return http.StatusOK, map[string]any{"name": s.Repo, "full_name": s.Owner + "/" + s.Repo, "owner": map[string]any{"login": s.Owner}}
 }
 
 func (s *Server) newIssue(title, body string, labels []string) *Issue {

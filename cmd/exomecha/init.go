@@ -50,9 +50,11 @@ func initProject(ctx context.Context, home, project string) error {
 	default:
 		fmt.Printf("%s is there already. To change a setting, edit the file.\n", path)
 	}
-	if _, err := loadConfig(path); err != nil {
+	c, err := loadConfig(path)
+	if err != nil {
 		return err
 	}
+	c.project = project
 
 	if _, err := exec.LookPath("sbx"); err == nil {
 		sbx := sandbox.CLI{}
@@ -67,6 +69,12 @@ func initProject(ctx context.Context, home, project string) error {
 			}
 		}
 	}
+
+	fmt.Println("Checking this machine, which takes a minute.")
+	if err := check(ctx, c); err != nil {
+		return fmt.Errorf("fix these, then run exomecha init %s again:\n%w", project, err)
+	}
+	fmt.Printf("Ready. Start the project with: exomecha run %s\n", project)
 	return nil
 }
 

@@ -88,3 +88,23 @@ func TestRealCheck(t *testing.T) {
 	}
 	t.Logf("Check(opsu): %v", err)
 }
+
+func TestParseAuthStatus(t *testing.T) {
+	// From claude 2.x, trimmed.
+	for _, c := range []struct {
+		out  string
+		want bool
+	}{
+		{`{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}`, true},
+		{`{"loggedIn": false}`, false},
+	} {
+		if got, err := parseAuthStatus([]byte(c.out)); err != nil || got != c.want {
+			t.Errorf("parseAuthStatus(%s) = %v, %v, want %v", c.out, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"", "Not logged in", `{"authMethod": "none"}`} {
+		if _, err := parseAuthStatus([]byte(bad)); err == nil {
+			t.Errorf("parseAuthStatus(%q) = nil error", bad)
+		}
+	}
+}
