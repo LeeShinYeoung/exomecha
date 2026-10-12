@@ -52,15 +52,15 @@ func checks(c config) []item {
 	sbx := sandbox.CLI{}
 	claude := agent.Claude{}
 	items := []item{
-		{group: groupSBX, doing: "Looking for sbx", gate: true, run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Checking sbx", gate: true, run: func(ctx context.Context) (string, []error) {
 			if _, err := exec.LookPath("sbx"); err != nil {
 				return "Not installed", []error{errors.New("sbx is not installed. Every worker runs claude in Docker Sandboxes")}
 			}
 			// sbx ls starts sbx's daemon when it is down, which diagnose would report as a failure.
 			if _, err := sbx.List(ctx); err != nil {
-				return "Not answering", []error{err}
+				return "Installed, but the daemon does not respond", []error{err}
 			}
-			return "Installed, daemon running", nil
+			return "Installed and running", nil
 		}},
 		{group: groupSBX, doing: "Running sbx diagnose", run: func(ctx context.Context) (string, []error) {
 			failed, err := sbx.Diagnose(ctx)
@@ -76,28 +76,28 @@ func checks(c config) []item {
 			}
 			return "sbx diagnose found no problems", nil
 		}},
-		{group: groupSBX, doing: "Looking for a global github secret", run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Checking for a GitHub secret shared with every sandbox", run: func(ctx context.Context) (string, []error) {
 			has, err := sbx.HasGlobalGitHubSecret(ctx)
 			switch {
 			case err != nil:
 				return "Could not read the sbx secrets", []error{fmt.Errorf("check sbx secrets: %w", err)}
 			case has:
 				// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.
-				return "A global github secret that every sandbox could use", []error{errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")}
+				return "A GitHub secret is shared with every sandbox", []error{errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")}
 			}
-			return "No global github secret that every sandbox could use", nil
+			return "No GitHub secret shared with every sandbox", nil
 		}},
-		{group: groupSBX, doing: "Reading sbx's Claude login", run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Checking the sandboxes' Claude login", run: func(ctx context.Context) (string, []error) {
 			in, err := sbx.ClaudeSignedIn(ctx)
 			switch {
 			case err != nil:
 				return "Could not read the sbx secrets", []error{fmt.Errorf("check sbx secrets: %w", err)}
 			case !in:
-				return "Not signed in to Claude for the sandboxes", []error{fmt.Errorf("sbx has no Claude login, which every worker's claude runs with. Sign in with: exomecha init %s", c.project)}
+				return "Sandboxes are not signed in to Claude", []error{fmt.Errorf("sbx has no Claude login, which every worker's claude runs with. Sign in with: exomecha init %s", c.project)}
 			}
-			return "Signed in to Claude for the sandboxes", nil
+			return "Sandboxes are signed in to Claude", nil
 		}},
-		{group: groupClaude, doing: "Reading claude's login", gate: true, run: func(ctx context.Context) (string, []error) {
+		{group: groupClaude, doing: "Checking the Claude login on this machine", gate: true, run: func(ctx context.Context) (string, []error) {
 			in, err := claude.SignedIn(ctx)
 			switch {
 			case err != nil:
@@ -105,11 +105,11 @@ func checks(c config) []item {
 			case !in:
 				return "Not signed in on this machine", []error{errors.New("claude on this machine is not signed in, and exomecha reads the usage limits with it. Sign in with: claude auth login")}
 			}
-			return "Signed in on this machine, for the usage limits", nil
+			return "Signed in on this machine (used to read usage limits)", nil
 		}},
 	}
 	items = append(items, modelItems(c)...)
-	items = append(items, item{group: groupClaude, doing: "Looking for the exomecha plugin", initOnly: true, run: func(ctx context.Context) (string, []error) {
+	items = append(items, item{group: groupClaude, doing: "Checking the exomecha plugin (installs it if missing)", initOnly: true, run: func(ctx context.Context) (string, []error) {
 		in, err := claude.PluginInstalled(ctx)
 		if err == nil && in {
 			return "exomecha plugin installed", nil
@@ -130,15 +130,15 @@ func checks(c config) []item {
 		targets = append([]target{c.prd}, targets...)
 	}
 	for _, t := range targets {
-		items = append(items, item{group: groupGitHub, doing: "Reaching " + t.full(), run: func(ctx context.Context) (string, []error) {
+		items = append(items, item{group: groupGitHub, doing: "Checking the token's access to " + t.full(), run: func(ctx context.Context) (string, []error) {
 			gh, err := client(t, c.token)
 			if err == nil {
 				err = gh.Reach(ctx)
 			}
 			if err != nil {
-				return "Token cannot reach " + t.full(), []error{fmt.Errorf("the GitHub token cannot reach %s: %w", t.full(), err)}
+				return "Token cannot access " + t.full(), []error{fmt.Errorf("the GitHub token cannot reach %s: %w", t.full(), err)}
 			}
-			return "Token reaches " + t.full(), nil
+			return "Token can access " + t.full(), nil
 		}})
 	}
 	return items
@@ -167,16 +167,16 @@ func modelItems(c config) []item {
 	}
 	var items []item
 	for _, u := range uses {
-		users := "the model of every tier and resolver"
+		users := "(used by every tier and resolver)"
 		if len(u.keys) < 4 {
-			users = "the model of " + joinAnd(u.keys)
+			users = "(used by " + joinAnd(u.keys) + ")"
 		}
 		name := u.model.Name
 		items = append(items, item{group: groupClaude, doing: "Checking " + name, run: func(ctx context.Context) (string, []error) {
 			if err := (agent.Claude{}).Check(ctx, u.model); err != nil {
-				return name + " is not available, " + users, []error{fmt.Errorf("models.%s: %w", u.keys[0], err)}
+				return name + " is not available " + users, []error{fmt.Errorf("models.%s: %w", u.keys[0], err)}
 			}
-			return name + " is available, " + users, nil
+			return name + " is available " + users, nil
 		}})
 	}
 	return items

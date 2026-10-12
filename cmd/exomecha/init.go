@@ -43,7 +43,7 @@ func initProject(ctx context.Context, home, project string) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	shown := "~" + strings.TrimPrefix(path, home)
-	settingsLine := "Kept " + shown
+	settingsLine := "Settings unchanged in " + shown
 	switch {
 	case term.IsTerminal(int(os.Stdin.Fd())):
 		q := newQuestions(current, func(prd target) error { return checkPRDRepo(home, path, prd) })
@@ -103,7 +103,7 @@ func initProject(ctx context.Context, home, project string) error {
 	printHeading(out, "Next")
 	step := 1
 	if _, err := os.Stat(filepath.Join(setupDir(projectRoot(home, project)), "setup.sh")); errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintln(out, "1. Write the sandbox's setup files: start Claude Code, then enter /exomecha:setup.")
+		fmt.Fprintln(out, "1. Set up the sandbox: start Claude Code and enter the command below.")
 		printCommand(out, "$", "claude")
 		printCommand(out, ">", "/exomecha:setup "+project)
 		step++
@@ -231,8 +231,8 @@ func newQuestions(current settings, checkPRD func(target) error) *questions {
 
 // ask asks one question at a time, and leaves a line with each answer in place of its question.
 func (q *questions) ask(ctx context.Context, out io.Writer) error {
-	const reposTitle, prdTitle, baseTitle, tokenTitle = "Repositories PRDs may change", "PRD repository, whose issues are the PRDs",
-		"Base branch of every repository", "GitHub token"
+	const reposTitle, prdTitle, baseTitle, tokenTitle = "Repositories exomecha works on", "Repository where you file PRDs",
+		"Base branch", "GitHub token"
 	repos := huh.NewInput().Title(reposTitle).Description("owner/name or clone URLs, separated by commas").Value(&q.repos).Validate(q.checkRepos)
 	if err := askOne(ctx, repos); err != nil {
 		return err
@@ -260,7 +260,7 @@ func (q *questions) ask(ctx context.Context, out io.Writer) error {
 		return nil
 	})
 	if q.token != "" {
-		token.Placeholder("Enter keeps the current token (" + masked(q.token) + ")")
+		token.Placeholder("Press Enter to keep the current token (" + masked(q.token) + ")")
 	}
 	if err := askOne(ctx, token); err != nil {
 		return err
