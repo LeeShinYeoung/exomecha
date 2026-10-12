@@ -305,7 +305,9 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 		return "", err
 	}
 	for _, c := range comments {
-		entries = append(entries, entry{c, "PRD"})
+		if c.Trusted {
+			entries = append(entries, entry{c, "PRD"})
+		}
 	}
 	seen := map[string]bool{}
 	for _, rr := range repos {
@@ -317,6 +319,10 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 			return "", err
 		}
 		for _, c := range comments {
+			// Before the dedupe, or an outsider's copy of an entry would hide it.
+			if !c.Trusted {
+				continue
+			}
 			// exomecha posts the same entry on each of a PRD's PRs.
 			key := c.Note.Worker + "\x00" + c.Note.Kind + "\x00" + strings.TrimSpace(c.Body)
 			if c.Exomecha && seen[key] {
@@ -332,11 +338,7 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 	fmt.Fprintf(&b, "# PRD #%d: %s\n\n%s\n\n## Run\n\n", prd.Number, prd.Title, strings.TrimSpace(prd.Body))
 	b.WriteString(d.run(prd.Number, repos))
 	b.WriteString("## Record\n\nOldest first. Each entry says who wrote it and where.\n\n")
-	written := false
 	for _, e := range entries {
-		if !e.Trusted {
-			continue
-		}
 		where := e.where
 		if e.Path != "" {
 			where += ", on " + e.Path
@@ -345,9 +347,8 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 			where += fmt.Sprintf(" line %d", e.Line)
 		}
 		fmt.Fprintf(&b, "### %s (%s, %s)\n\n%s\n\n", e.CreatedAt.Local().Format(time.DateTime), writer(e.Comment), where, strings.TrimSpace(e.Body))
-		written = true
 	}
-	if !written {
+	if len(entries) == 0 {
 		b.WriteString("Nothing yet.\n\n")
 	}
 	return b.String(), nil
