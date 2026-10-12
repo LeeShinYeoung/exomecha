@@ -1,8 +1,10 @@
 package github
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	gh "github.com/google/go-github/v92/github"
@@ -36,29 +38,37 @@ func (c *Client) EnsureLabels(ctx context.Context) ([]string, error) {
 }
 
 // SetStatus replaces the issue's labels in one call, so a failure leaves the old status and never
-// two. A second status a person left goes too.
+// two. It writes nothing unless from is still the issue's only status: a person may have changed
+// it after the caller read the issue.
 func (c *Client) SetStatus(ctx context.Context, number int, from, to label.Status) error {
 	if !label.CanTransition(from, to) {
 		return fmt.Errorf("transition not allowed: %q → %q", from, to)
 	}
-	return c.replaceStatus(ctx, number, to)
+	return c.replaceStatus(ctx, number, from, to)
 }
 
 func (c *Client) ClearStatus(ctx context.Context, number int) error {
-	return c.replaceStatus(ctx, number, label.None)
+	return c.replaceStatus(ctx, number, label.None, label.None)
 }
 
-func (c *Client) replaceStatus(ctx context.Context, number int, to label.Status) error {
+// A from of None, which no transition starts from, clears whatever status the issue has.
+func (c *Client) replaceStatus(ctx context.Context, number int, from, to label.Status) error {
 	issue, err := c.Issue(ctx, number)
 	if err != nil {
 		return err
 	}
 	// Not nil: an issue left with no label must still send GitHub an empty list.
 	labels := []string{}
+	var current []string
 	for _, name := range issue.Labels {
-		if !label.IsStatus(name) {
+		if label.IsStatus(name) {
+			current = append(current, name)
+		} else {
 			labels = append(labels, name)
 		}
+	}
+	if from != label.None && !slices.Equal(current, []string{string(from)}) {
+		return fmt.Errorf("the status of issue #%d is now %s, not %s", number, cmp.Or(strings.Join(current, ", "), "none"), from)
 	}
 	if to != label.None {
 		labels = append(labels, string(to))
