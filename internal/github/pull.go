@@ -221,7 +221,7 @@ type JobLog struct {
 const logLines = 80
 
 // The download goes to wherever GitHub redirects, which is not GitHub's API: it gets no token, and
-// it stays out of the API client's ETag store, which keeps every answer it saw.
+// a log read once stays out of the API client's ETag store.
 var logClient = &http.Client{Timeout: time.Minute}
 
 // FailedJobLogs returns the end of the log of every job that failed in CI run runID.
