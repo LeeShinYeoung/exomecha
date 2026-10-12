@@ -104,9 +104,11 @@ func (g *Git) SendTo(ctx context.Context, url, baseCommit, branch, commit string
 	return err
 }
 
+const fetchedRefs = "refs/exomecha/"
+
 // FetchFrom fetches the HEAD of the repository at url into refs/exomecha/<name> and returns that commit.
 func (g *Git) FetchFrom(ctx context.Context, url, name string) (string, error) {
-	ref := "refs/exomecha/" + name
+	ref := fetchedRefs + name
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	fetchCtx, cancel := context.WithTimeout(ctx, sandboxTransferTimeout)
@@ -122,7 +124,7 @@ func (g *Git) FetchFrom(ctx context.Context, url, name string) (string, error) {
 }
 
 func (g *Git) DropRef(ctx context.Context, name string) error {
-	_, err := g.run(ctx, g.repoDir(), "update-ref", "-d", "refs/exomecha/"+name)
+	_, err := g.run(ctx, g.repoDir(), "update-ref", "-d", fetchedRefs+name)
 	return err
 }
 

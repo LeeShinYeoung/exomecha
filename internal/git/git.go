@@ -44,8 +44,8 @@ func (g *Git) repoDir() string { return filepath.Join(g.root, "repo") }
 // dead connection would otherwise hold mu and stall every worker that needs a fetch.
 var lowSpeedTime = "30"
 
-// run is for every call that does not talk to GitHub. None of exomecha's calls run the project's
-// hooks. The AI's own git commands do not come through here, and the project's commit checks
+// run is for every call that talks to neither GitHub nor a sandbox. None of exomecha's calls run
+// the project's hooks. The AI's own git commands do not come through here, and the project's commit checks
 // still run on them.
 func (g *Git) run(ctx context.Context, dir string, args ...string) (string, error) {
 	return g.command(ctx, dir, nil, args...)
