@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
@@ -59,10 +60,15 @@ func TestE2ESetupAndCommitChecks(t *testing.T) {
 // TestCheckStream covers a model claude does not run in auto permission mode.
 func TestE2EStartRefusesUnknownModel(t *testing.T) {
 	e2e(t, false)
+	gh := githubtest.New(t)
 	cfg := defaults()
+	// The start check asks GitHub for every repository, so without a fake one it would reach the real GitHub.
+	cfg.prd = target{owner: gh.Owner, name: gh.Repo, apiURL: gh.URL}
+	cfg.repos = []target{cfg.prd}
+	cfg.token = "e2e-token"
 	cfg.light = agent.Model{Name: "opsu", Effort: "low"}
 	err := serve(t.Context(), cfg)
-	if err == nil || !strings.Contains(err.Error(), "models.light") || !strings.Contains(err.Error(), "opsu") {
-		t.Errorf("start with light opsu: %v, want a refusal naming models.light and opsu", err)
+	if err == nil || !strings.Contains(err.Error(), "models.light") || !strings.Contains(err.Error(), "opsu") || strings.Contains(err.Error(), "cannot reach") {
+		t.Errorf("start with light opsu: %v, want only a refusal naming models.light and opsu", err)
 	}
 }
