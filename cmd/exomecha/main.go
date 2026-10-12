@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,11 +23,47 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
 
+const usage = `Usage:
+  exomecha init <project>   ask for the project's settings, write ~/.exomecha/<project>.yaml and check this machine
+  exomecha run <project>    run the project in this terminal
+  exomecha list             list the projects and whether each is running
+`
+
 func main() {
 	// Until run opens the log file, lines go to the terminal alone, in the same form.
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	if err := run(); err != nil {
-		slog.Error("exomecha could not start", logging.Err, err)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "exomecha:", err)
+		os.Exit(1)
+	}
+	args := os.Args[1:]
+	switch {
+	case len(args) == 2 && args[0] == "init":
+		// Ctrl-C during the sign-in still removes its sandbox.
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		err = initProject(ctx, home, args[1])
+		stop()
+	case len(args) == 2 && args[0] == "run":
+		if err := run(home, args[1]); err != nil {
+			errs := []error{err}
+			// One line per problem the start check found, since a log line keeps no line breaks.
+			if joined, ok := err.(interface{ Unwrap() []error }); ok {
+				errs = joined.Unwrap()
+			}
+			for _, err := range errs {
+				slog.Error("exomecha could not start", logging.Err, err)
+			}
+			os.Exit(1)
+		}
+	case len(args) == 1 && args[0] == "list":
+		err = list(home, os.Stdout)
+	default:
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "exomecha:", err)
 		os.Exit(1)
 	}
 }
@@ -44,7 +77,7 @@ type target struct {
 
 func (t target) full() string { return t.owner + "/" + t.name }
 
-// config is what one exomecha runs with. main reads it from the environment. run sets the fields
+// config is what one exomecha runs with. run reads it from the project's file and sets the fields
 // after the models to the operator's own, and the e2e tests set them to theirs.
 type config struct {
 	prd                     target   // whose issues are the PRDs
@@ -57,6 +90,7 @@ type config struct {
 	light, normal, heavy    agent.Model
 	resolver                agent.Model
 
+	project           string // the name of the project's file, which check's fixes name
 	root              string // what exomecha keeps of the PRD repository
 	claudeDir         string // empty: no default claude settings
 	interval, ciGrace time.Duration
@@ -78,175 +112,24 @@ func defaults() config {
 	}
 }
 
-func configFromEnv() (config, error) {
-	c := defaults()
-	repos := os.Getenv("EXOMECHA_REPOS")
-	c.base = os.Getenv("EXOMECHA_BASE_BRANCH")
-	c.token = os.Getenv("EXOMECHA_GITHUB_TOKEN")
-	if repos == "" || c.base == "" || c.token == "" {
-		return config{}, errors.New("EXOMECHA_REPOS, EXOMECHA_BASE_BRANCH and EXOMECHA_GITHUB_TOKEN must all be set")
-	}
-	for r := range strings.SplitSeq(repos, ",") {
-		t, err := parseTarget("EXOMECHA_REPOS", strings.TrimSpace(r))
-		if err != nil {
-			return config{}, err
-		}
-		for _, o := range c.repos {
-			if strings.EqualFold(o.full(), t.full()) {
-				return config{}, fmt.Errorf("EXOMECHA_REPOS lists %s twice", t.full())
-			}
-			// A sandbox with several repositories gives each a folder named after it.
-			if strings.EqualFold(o.name, t.name) {
-				return config{}, fmt.Errorf("EXOMECHA_REPOS lists two repositories named %s: %s and %s", t.name, o.full(), t.full())
-			}
-		}
-		c.repos = append(c.repos, t)
-	}
-	switch prd := os.Getenv("EXOMECHA_PRD_REPO"); {
-	case prd != "":
-		t, err := parseTarget("EXOMECHA_PRD_REPO", prd)
-		if err != nil {
-			return config{}, err
-		}
-		c.prd = t
-	case len(c.repos) == 1:
-		c.prd = c.repos[0]
-	default:
-		return config{}, errors.New("EXOMECHA_PRD_REPO must be set when EXOMECHA_REPOS lists several repositories")
-	}
-	for _, t := range c.repos {
-		// The same repository under the case GitHub has it, so the PRD repository's clone is shared.
-		if strings.EqualFold(t.full(), c.prd.full()) {
-			c.prd = t
-		}
-	}
-	for _, kv := range os.Environ() {
-		key, value, _ := strings.Cut(kv, "=")
-		name, ok := strings.CutPrefix(key, secretPrefix)
-		if !ok {
-			continue
-		}
-		secret, err := parseSecret(name, value)
-		if err != nil {
-			return config{}, err
-		}
-		c.secrets = append(c.secrets, secret)
-	}
-	slices.SortFunc(c.secrets, func(a, b sandbox.Secret) int { return strings.Compare(a.Env, b.Env) })
-	var err error
-	if c.fiveHour, err = usageLimit("EXOMECHA_FIVE_HOUR_LIMIT", c.fiveHour); err != nil {
-		return config{}, err
-	}
-	if c.weekly, err = usageLimit("EXOMECHA_WEEKLY_LIMIT", c.weekly); err != nil {
-		return config{}, err
-	}
-	if c.projectLimit, err = limit("EXOMECHA_SANDBOX_LIMIT", c.projectLimit); err != nil {
-		return config{}, err
-	}
-	if c.readLimit, err = limit("EXOMECHA_READ_SANDBOX_LIMIT", c.readLimit); err != nil {
-		return config{}, err
-	}
-	if c.reviewLimit, err = limit("EXOMECHA_REVIEW_LIMIT", c.reviewLimit); err != nil {
-		return config{}, err
-	}
-	if c.light, err = envModel("EXOMECHA_TIER_LIGHT", c.light); err != nil {
-		return config{}, err
-	}
-	if c.normal, err = envModel("EXOMECHA_TIER_NORMAL", c.normal); err != nil {
-		return config{}, err
-	}
-	if c.heavy, err = envModel("EXOMECHA_TIER_HEAVY", c.heavy); err != nil {
-		return config{}, err
-	}
-	if c.resolver, err = envModel("EXOMECHA_RESOLVER_MODEL", c.resolver); err != nil {
-		return config{}, err
-	}
-	return c, nil
-}
-
-const secretPrefix = "EXOMECHA_SECRET_"
-
-var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// parseSecret reads EXOMECHA_SECRET_<name>: the hosts, separated by commas, then a space and the
-// command that prints the value.
-func parseSecret(name, value string) (sandbox.Secret, error) {
-	env := secretPrefix + name
-	hosts, command, _ := strings.Cut(strings.TrimSpace(value), " ")
-	s := sandbox.Secret{Env: name, Command: strings.TrimSpace(command)}
-	if !envName.MatchString(name) {
-		return s, fmt.Errorf("%s: %q is not an environment variable name", env, name)
-	}
-	if s.Command == "" {
-		return s, fmt.Errorf("%s must hold the hosts, a space, and the command that prints the value: %q", env, value)
-	}
-	for h := range strings.SplitSeq(hosts, ",") {
-		h = strings.TrimSpace(h)
-		if h == "" {
-			return s, fmt.Errorf("%s lists an empty host: %q", env, hosts)
-		}
-		// The proxy would hand the value to any request the AI makes there, so it could push past exomecha's checks.
-		for _, gh := range []string{"github.com", "api.github.com"} {
-			if hostMatches(strings.ToLower(h), gh) {
-				return s, fmt.Errorf("%s: %s reaches %s, and the AI could use the secret on GitHub", env, h, gh)
-			}
-		}
-		s.Hosts = append(s.Hosts, h)
-	}
-	return s, nil
-}
-
-// hostMatches reports whether an sbx host pattern covers host: "*" stands for one label and "**"
-// for any number of them.
-func hostMatches(pattern, host string) bool {
-	var match func(p, h []string) bool
-	match = func(p, h []string) bool {
-		switch {
-		case len(p) == 0:
-			return len(h) == 0
-		case p[0] == "**":
-			for i := 0; i <= len(h); i++ {
-				if match(p[1:], h[i:]) {
-					return true
-				}
-			}
-			return false
-		case len(h) == 0:
-			return false
-		case p[0] == "*" || p[0] == h[0]:
-			return match(p[1:], h[1:])
-		}
-		return false
-	}
-	return match(strings.Split(pattern, "."), strings.Split(host, "."))
-}
-
-func parseTarget(env, repo string) (target, error) {
-	owner, name, ok := strings.Cut(repo, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return target{}, fmt.Errorf("%s must hold owner/name: %q", env, repo)
-	}
-	return target{owner: owner, name: name}, nil
-}
-
-func run() error {
-	c, err := configFromEnv()
+func run(home, project string) error {
+	path, err := settingsPath(home, project)
 	if err != nil {
 		return err
 	}
-	// Drop the token from the environment so child processes such as claude don't inherit it.
-	if err := os.Unsetenv("EXOMECHA_GITHUB_TOKEN"); err != nil {
+	c, err := loadConfig(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s has no settings. Make them with: exomecha init %s", project, project)
+	}
+	if err != nil {
 		return err
 	}
+	c.project = project
 
 	// Without this a write to stderr after whatever reads it has gone, such as tee, ends exomecha.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	c.root = filepath.Join(home, ".exomecha", c.prd.owner, c.prd.name)
+	c.root = projectRoot(home, c.prd)
 	// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
 	c.claudeDir = filepath.Join(home, ".exomecha", "claude")
 	if err := os.MkdirAll(c.root, 0o755); err != nil {
@@ -266,6 +149,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	return serve(ctx, c)
+}
+
+func projectRoot(home string, prd target) string {
+	return filepath.Join(home, ".exomecha", prd.owner, prd.name)
 }
 
 // lock keeps a second exomecha off the repository: both would take the same PRDs and sandboxes and
@@ -289,33 +176,10 @@ func lock(root string) (*os.File, error) {
 func serve(ctx context.Context, c config) error {
 	ctx = github.WaitForRateLimit(ctx)
 
-	if _, err := exec.LookPath("sbx"); err != nil {
-		return errors.New("sbx is not installed. Every worker runs claude in Docker Sandboxes")
+	if err := check(ctx, c); err != nil {
+		return err
 	}
 	sbx := sandbox.CLI{}
-	if has, err := sbx.GlobalGitHubSecret(ctx); err != nil {
-		return fmt.Errorf("check sbx secrets: %w", err)
-	} else if has {
-		// The sandbox proxy would hand it to every request the AI makes, so the AI could push past exomecha's checks.
-		return errors.New("sbx has a global github secret, which every sandbox could use. Remove it with: sbx secret rm github --force")
-	}
-	// Once per model: the check finds a model's problems, and claude reports nothing about the effort.
-	checked := map[string]bool{}
-	for _, t := range []struct {
-		env   string
-		model agent.Model
-	}{
-		{"EXOMECHA_TIER_LIGHT", c.light}, {"EXOMECHA_TIER_NORMAL", c.normal}, {"EXOMECHA_TIER_HEAVY", c.heavy},
-		{"EXOMECHA_RESOLVER_MODEL", c.resolver},
-	} {
-		if checked[t.model.Name] {
-			continue
-		}
-		checked[t.model.Name] = true
-		if err := (agent.Claude{}).Check(ctx, t.model); err != nil {
-			return fmt.Errorf("%s: %w", t.env, err)
-		}
-	}
 
 	gh, err := client(c.prd, c.token)
 	if err != nil {
@@ -411,41 +275,4 @@ func clone(c config, t target) *git.Git {
 		return git.NewAt(root, t.gitURL, c.base, c.token)
 	}
 	return git.New(root, t.owner, t.name, c.base, c.token)
-}
-
-// usageLimit reads a percentage of a Claude plan limit, at which exomecha stops starting new work.
-func usageLimit(name string, fallback float64) (float64, error) {
-	v := os.Getenv(name)
-	if v == "" {
-		return fallback, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > 100 {
-		return 0, fmt.Errorf("%s must be a whole number from 1 to 100: %q", name, v)
-	}
-	return float64(n) / 100, nil
-}
-
-func envModel(name string, fallback agent.Model) (agent.Model, error) {
-	v := os.Getenv(name)
-	if v == "" {
-		return fallback, nil
-	}
-	m, err := agent.ParseModel(v)
-	if err != nil {
-		return agent.Model{}, fmt.Errorf("%s must be model:effort, such as sonnet:low: %w: %q", name, err, v)
-	}
-	return m, nil
-}
-
-func limit(name string, fallback int) (int, error) {
-	v := os.Getenv(name)
-	if v == "" {
-		return fallback, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 {
-		return 0, fmt.Errorf("%s must be a whole number of at least 1: %q", name, v)
-	}
-	return n, nil
 }

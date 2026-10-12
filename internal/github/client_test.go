@@ -64,6 +64,18 @@ func TestIdentity(t *testing.T) {
 	}
 }
 
+func TestReach(t *testing.T) {
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	if err := client.Reach(t.Context()); err != nil {
+		t.Errorf("Reach = %v", err)
+	}
+	s.Fail("GET /repos/{owner}/{repo}", http.StatusNotFound)
+	if err := client.Reach(t.Context()); err == nil {
+		t.Error("Reach of a repository the token cannot see = nil")
+	}
+}
+
 func TestWaitForRateLimit(t *testing.T) {
 	reset := time.Now().Add(time.Second).Truncate(time.Second).Add(time.Second)
 	var calls atomic.Int32

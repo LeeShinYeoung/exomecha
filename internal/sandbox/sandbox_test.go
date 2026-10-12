@@ -322,6 +322,115 @@ func TestGlobalGitHubSecret(t *testing.T) {
 	)
 }
 
+func TestClaudeSignedIn(t *testing.T) {
+	f := newFakeSBX(t)
+	f.answer("secret", `{"secrets": []}`)
+	if in, err := (CLI{}).ClaudeSignedIn(t.Context()); err != nil || in {
+		t.Errorf("ClaudeSignedIn with none = %v, %v", in, err)
+	}
+	// From sbx v0.46.0.
+	f.answer("secret", `{
+  "secrets": [
+    {
+      "scope": "global",
+      "type": "service",
+      "name": "anthropic",
+      "secret": "(oauth configured)"
+    }
+  ],
+  "custom_secrets": [],
+  "shadowed_services": [],
+  "env_only_count": 1
+}`)
+	if in, err := (CLI{}).ClaudeSignedIn(t.Context()); err != nil || !in {
+		t.Errorf("ClaudeSignedIn with a login = %v, %v", in, err)
+	}
+	f.wantCalls(
+		[]string{"secret", "ls", "--global", "--service", "anthropic", "--json"},
+		[]string{"secret", "ls", "--global", "--service", "anthropic", "--json"},
+	)
+}
+
+func TestSignIn(t *testing.T) {
+	f := newFakeSBX(t)
+	terminal, err := os.CreateTemp(t.TempDir(), "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer terminal.Close()
+	if err := (CLI{}).SignIn(t.Context(), terminal); err != nil {
+		t.Fatal(err)
+	}
+	f.wantCalls(
+		[]string{"rm", "--force", "exomecha-login"},
+		[]string{"create", "--name", "exomecha-login", "claude"},
+		[]string{"exec", "-it", "exomecha-login", "claude", "auth", "login"},
+		[]string{"rm", "--force", "exomecha-login"},
+	)
+}
+
+func TestSignInRemovesTheSandboxWhenLoginFails(t *testing.T) {
+	f := newFakeSBX(t)
+	f.fail("exec", "login cancelled")
+	terminal, err := os.CreateTemp(t.TempDir(), "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer terminal.Close()
+	if err := (CLI{}).SignIn(t.Context(), terminal); err == nil {
+		t.Error("SignIn with a failed login = nil")
+	}
+	if calls := f.calls(); len(calls) != 4 || !slices.Equal(calls[3], []string{"rm", "--force", "exomecha-login"}) {
+		t.Errorf("sbx calls = %q, want the sandbox removed last", calls)
+	}
+}
+
+func TestReadsJSONBeforeAnUpdateNotice(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.46.0 in a new home folder, shortened.
+	f.answer("secret", `{
+  "secrets": []
+}
+
+╭──────────────────────────────────╮
+│ Docker Sandboxes Update Available │
+╰──────────────────────────────────╯
+`)
+	if in, err := (CLI{}).ClaudeSignedIn(t.Context()); err != nil || in {
+		t.Errorf("ClaudeSignedIn = %v, %v", in, err)
+	}
+}
+
+func TestDiagnose(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.46.0 with its daemon stopped, shortened.
+	f.answer("diagnose", `{
+ "version": "1.0",
+ "checks": [
+  {"name": "CLI binary", "status": "pass", "message": "found", "detail": "/opt/homebrew/bin/sbx", "hint": ""},
+  {"name": "Binary version", "status": "warn", "message": "update available: v0.47.0 (running v0.46.0)", "detail": "", "hint": "Download the latest release from the link above"},
+  {"name": "Daemon", "status": "fail", "message": "not reachable", "detail": "dial unix sandboxd.sock: connect: no such file or directory", "hint": "Run: sbx daemon start"},
+  {"name": "Authentication", "status": "skip", "message": "Skipped: Daemon failed", "detail": "", "hint": ""}
+ ],
+ "summary": {"pass": 1, "warn": 1, "fail": 1, "skip": 1}
+}`)
+	f.fail("diagnose", "")
+	got, err := (CLI{}).Diagnose(t.Context())
+	want := []Finding{{Name: "Daemon", Message: "not reachable", Hint: "Run: sbx daemon start"}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("Diagnose = %+v, %v, want %+v", got, err, want)
+	}
+	f.wantCalls([]string{"diagnose", "--json"})
+}
+
+func TestDiagnoseFailure(t *testing.T) {
+	f := newFakeSBX(t)
+	f.fail("diagnose", "unknown command")
+	if _, err := (CLI{}).Diagnose(t.Context()); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("Diagnose = %v, want sbx's error", err)
+	}
+}
+
 func TestGitURL(t *testing.T) {
 	if got := (CLI{}).GitURL("box", "/home/agent/repo"); got != "ext::sbx exec -i box git %s /home/agent/repo" {
 		t.Errorf("GitURL = %q", got)

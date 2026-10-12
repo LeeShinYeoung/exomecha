@@ -55,6 +55,26 @@ func (Claude) Check(ctx context.Context, m Model) error {
 
 var errNotStarted = errors.New("claude did not start")
 
+// SignedIn reports whether claude on this machine has a login, which the usage and model checks use.
+func (Claude) SignedIn(ctx context.Context) (bool, error) {
+	out, err := exec.CommandContext(ctx, "claude", "auth", "status", "--json").Output()
+	in, parseErr := parseAuthStatus(out)
+	if parseErr != nil && err != nil {
+		return false, fmt.Errorf("claude auth status: %w", err)
+	}
+	return in, parseErr
+}
+
+func parseAuthStatus(out []byte) (bool, error) {
+	var status struct {
+		LoggedIn *bool `json:"loggedIn"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil || status.LoggedIn == nil {
+		return false, fmt.Errorf("claude auth status printed no loggedIn: %q", out)
+	}
+	return *status.LoggedIn, nil
+}
+
 func checkStream(r io.Reader, m Model) error {
 	s, err := ReadStream(r)
 	if err != nil {

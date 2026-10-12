@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -34,7 +35,7 @@ func (CLI) List(ctx context.Context) ([]Box, error) {
 	var list struct {
 		Sandboxes []Box `json:"sandboxes"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := decode(out, &list); err != nil {
 		return nil, fmt.Errorf("read sbx ls: %w", err)
 	}
 	return list.Sandboxes, nil
@@ -161,7 +162,7 @@ func (CLI) Templates(ctx context.Context) ([]Template, error) {
 	var list struct {
 		Images []Template `json:"images"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := decode(out, &list); err != nil {
 		return nil, fmt.Errorf("read sbx template ls: %w", err)
 	}
 	return list.Images, nil
@@ -217,14 +218,77 @@ func (CLI) GitURL(name, dir string) string {
 // GlobalGitHubSecret reports whether sbx has a GitHub secret for every sandbox. Its proxy would
 // hand it to the AI's requests, which could then push past exomecha's checks.
 func (CLI) GlobalGitHubSecret(ctx context.Context) (bool, error) {
-	out, err := run(ctx, "secret", "ls", "--global", "--service", "github", "--json")
+	return globalSecret(ctx, "github")
+}
+
+// ClaudeSignedIn reports whether sbx keeps a Claude login for every sandbox, from a sign-in or an
+// Anthropic API key.
+func (CLI) ClaudeSignedIn(ctx context.Context) (bool, error) {
+	return globalSecret(ctx, "anthropic")
+}
+
+// SignIn runs claude auth login in a sandbox of its own, on the caller's terminal. sbx keeps the
+// login for every sandbox and hands each only a placeholder.
+func (c CLI) SignIn(ctx context.Context, terminal *os.File) error {
+	const name = "exomecha-login"
+	// One an interrupted sign-in left behind would hold the name.
+	if err := c.Remove(ctx, name); err != nil {
+		return err
+	}
+	if err := c.CreateHelper(ctx, name); err != nil {
+		return err
+	}
+	defer c.Remove(context.WithoutCancel(ctx), name)
+	cmd := exec.CommandContext(ctx, "sbx", "exec", "-it", name, "claude", "auth", "login")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = terminal, terminal, terminal
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sbx exec: %w", err)
+	}
+	return nil
+}
+
+// Finding is a check sbx diagnose failed, with sbx's own words about it.
+type Finding struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+	Hint    string `json:"hint"`
+}
+
+// Diagnose returns the checks of sbx diagnose that failed, such as a daemon that does not answer
+// or a missing Docker sign-in.
+func (CLI) Diagnose(ctx context.Context) ([]Finding, error) {
+	out, err := run(ctx, "diagnose", "--json")
+	var report struct {
+		Checks []struct {
+			Finding
+			Status string `json:"status"`
+		} `json:"checks"`
+	}
+	// sbx does not say how it exits when a check fails, so a report that reads wins over the exit.
+	if jsonErr := decode(out, &report); jsonErr != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("read sbx diagnose: %w", jsonErr)
+	}
+	var failed []Finding
+	for _, c := range report.Checks {
+		if c.Status == "fail" {
+			failed = append(failed, c.Finding)
+		}
+	}
+	return failed, nil
+}
+
+func globalSecret(ctx context.Context, service string) (bool, error) {
+	out, err := run(ctx, "secret", "ls", "--global", "--service", service, "--json")
 	if err != nil {
 		return false, err
 	}
 	var list struct {
 		Secrets []json.RawMessage `json:"secrets"`
 	}
-	if err := json.Unmarshal(out, &list); err != nil {
+	if err := decode(out, &list); err != nil {
 		return false, fmt.Errorf("read sbx secret ls: %w", err)
 	}
 	return len(list.Secrets) > 0, nil
@@ -283,6 +347,12 @@ func Parse(prefix, name string) (issue int, role string, ok bool) {
 		return 0, "", false
 	}
 	return issue, m[2], true
+}
+
+// decode reads the first JSON value sbx printed. sbx prints a notice about a newer version after
+// it on stdout at times.
+func decode(out []byte, v any) error {
+	return json.NewDecoder(bytes.NewReader(out)).Decode(v)
 }
 
 func run(ctx context.Context, args ...string) ([]byte, error) {
