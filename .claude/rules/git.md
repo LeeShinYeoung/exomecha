@@ -8,3 +8,4 @@
 - No `Co-Authored-By` line or other AI attribution.
 - A PR title takes the same form as the first line of a commit.
 - A branch name is the topic in English, in lowercase, with words joined by hyphens.
+- Delete a branch locally and on the remote once its PR is merged.
