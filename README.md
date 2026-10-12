@@ -63,13 +63,17 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
      ```
    - `repos` lists the repositories PRDs may change, such as `acme/api` and `acme/web`. Their names after the owner must differ, since a sandbox gives each a folder named after it. Every repository uses `base_branch`.
    - `prd_repo` is the repository whose issues are the PRDs, such as `acme/plans`. It holds the labels and the files from `/exomecha:setup`, and it may also be one of `repos`. With one repository in `repos` it is optional and defaults to that repository. With several, exomecha does not start without it. Choose a repository whose writers may all change the code in `repos`, since exomecha acts on what they write, and keep it private when the code is.
-   - Optional: `secrets`, values that builder's and resolver's sandboxes need for requests to some hosts, such as a read-only token for a private package registry. Each key is the name of the environment variable that holds the placeholder in the sandbox, with `hosts`, the hosts that get the value, and `command`, a command on this machine that prints it:
+   - Optional: `secrets`, values that builder's and resolver's sandboxes need for requests to some hosts, such as a read-only token for a private package registry. Each key is the name of the environment variable that holds the placeholder in the sandbox, with `hosts`, the hosts that get the value, and either `value`, the value itself, or `command`, a command on this machine that prints it:
      ```yaml
      secrets:
        NPM_TOKEN:
          hosts: [npm.pkg.github.com]
-         command: /usr/local/bin/npm-read-token
+         value: npm_...
+       STRIPE_SECRET_KEY:
+         hosts: [api.stripe.com]
+         command: security find-generic-password -s stripe-test-key -w
      ```
+     `command` keeps the value out of the file, in the keychain or a password manager. sbx runs it on this machine when it checks or refreshes the value, from a temporary folder, so give any path in full.
      exomecha has sbx keep the value for each of those sandboxes only (`sbx secret set-custom`, an experimental sbx command). The sandbox holds a placeholder in `$NPM_TOKEN`, and the sbx proxy puts the value in place of the placeholder in the request headers sent to those hosts, so the AI never sees the value. setup.sh and the AI use the variable, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in `.npmrc`. exomecha refuses a secret whose hosts reach `github.com` or `api.github.com`, where the AI could use it to push.
    - Optional: `limits.five_hour` (default 90) and `limits.weekly` (default 80), in percent of the Claude plan's 5-hour and weekly limits. exomecha starts no new work at or above them.
    - Optional: `limits.sandboxes` (default 2), how many PRD sandboxes builder and resolver may have at once, together.

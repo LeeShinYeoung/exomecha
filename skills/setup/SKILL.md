@@ -74,15 +74,16 @@ The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and 
 
 ### Secrets
 
-exomecha takes each secret from `secrets.<NAME>` in the project's settings file, `~/.exomecha/<project>.yaml`: `hosts`, the hosts that get the value, and `command`, a command on the person's machine that prints it. sbx keeps the value for one sandbox. The sandbox holds only a placeholder in `$<NAME>`, and the sbx proxy puts the value in place of the placeholder in the headers of requests to those hosts.
+exomecha takes each secret from `secrets.<NAME>` in the project's settings file, `~/.exomecha/<project>.yaml`: `hosts`, the hosts that get the value, and either `value`, the value itself, or `command`, a command on the person's machine that prints it. sbx keeps the value for one sandbox. The sandbox holds only a placeholder in `$<NAME>`, and the sbx proxy puts the value in place of the placeholder in the headers of requests to those hosts.
 
 - Use `$<NAME>` where the project needs the value, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in an `.npmrc` the script writes. Tell the person which entries to add under `secrets`, and that the token needs only read access:
   ```yaml
   secrets:
     NPM_TOKEN:
       hosts: [npm.pkg.github.com]
-      command: <a command that prints the token>
+      value: <the token>
   ```
+  `command: <a command that prints the token>` in place of `value` keeps the token out of the file.
 - Requests from a Docker build or container inside the sandbox do not go through that substitution on their own. If a build there installs private packages, give the build an `.npmrc` of its own (as a build secret) that sends npm through the proxy and trusts its certificate: the lines above, `https-proxy=http://gateway.docker.internal:3128`, `proxy=http://gateway.docker.internal:3128`, and every certificate of `/etc/ssl/certs/ca-certificates.crt` (which holds the proxy's) as a `ca[]="<certificate with \n for each line break>"` line. Expect such an install to take several times longer.
 
 ### allowed-hosts
@@ -146,8 +147,9 @@ A download in the build can hang. If the build prints nothing for several minute
    ```
    For each secret, have sbx keep it for the proof sandbox, the way exomecha does, and pass `-e <NAME>=<placeholder>` to every `sbx exec` below:
    ```
-   sbx secret set-custom --sandbox exomecha-setup-proof --host <host> --env <NAME> --placeholder exomecha-secret-<name in lowercase> --command "<command>"
+   sbx secret set-custom --sandbox exomecha-setup-proof --host <host> --env <NAME> --placeholder exomecha-secret-<name in lowercase> --value <value>
    ```
+   With a command in place of the value, pass `--command "<command>"` in place of `--value <value>`.
 2. Send each repository's base branch, as it is on the remote, into its folder: `/home/agent/repo` with one repository, `/home/agent/repo/<name>` with several. With several, prove the layout with every repository exomecha may change. A plain clone of a bundle of a remote-tracking ref comes out empty, so fetch the ref by name. In each repository's clone:
    ```
    git fetch origin <base>

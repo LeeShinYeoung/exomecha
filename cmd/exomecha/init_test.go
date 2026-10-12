@@ -84,9 +84,9 @@ func TestSettingsFileReadsBack(t *testing.T) {
 	if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy || c.resolver != d.resolver {
 		t.Errorf("uncommented models = %v %v %v %v, want the defaults", c.light, c.normal, c.heavy, c.resolver)
 	}
-	want := []sandbox.Secret{{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com"}, Command: "/usr/local/bin/npm-read-token"}}
+	want := []sandbox.Secret{{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com"}, Value: "npm_..."}}
 	if !slices.EqualFunc(c.secrets, want, func(a, b sandbox.Secret) bool {
-		return a.Env == b.Env && a.Command == b.Command && slices.Equal(a.Hosts, b.Hosts)
+		return a.Env == b.Env && a.Value == b.Value && a.Command == b.Command && slices.Equal(a.Hosts, b.Hosts)
 	}) {
 		t.Errorf("uncommented secrets = %+v, want %+v", c.secrets, want)
 	}

@@ -119,6 +119,7 @@ func (c CLI) Start(ctx context.Context, name, dir string, env []string, args ...
 type Secret struct {
 	Env     string // the environment variable that holds the placeholder
 	Hosts   []string
+	Value   string // empty when Command gives it
 	Command string // prints the value, on this machine
 }
 
@@ -128,7 +129,12 @@ func (s Secret) Placeholder() string { return "exomecha-secret-" + strings.ToLow
 // SetSecret has sbx keep s for the sandbox only. It goes away with the sandbox. sbx does not set
 // the environment variable in a sandbox that already exists, so the caller passes Env itself.
 func (CLI) SetSecret(ctx context.Context, name string, s Secret) error {
-	args := []string{"secret", "set-custom", "--sandbox", name, "--env", s.Env, "--placeholder", s.Placeholder(), "--command", s.Command}
+	args := []string{"secret", "set-custom", "--sandbox", name, "--env", s.Env, "--placeholder", s.Placeholder()}
+	if s.Command != "" {
+		args = append(args, "--command", s.Command)
+	} else {
+		args = append(args, "--value", s.Value)
+	}
 	for _, h := range s.Hosts {
 		args = append(args, "--host", h)
 	}

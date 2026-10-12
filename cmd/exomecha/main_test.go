@@ -95,19 +95,20 @@ func TestParseConfig(t *testing.T) {
     command: /usr/local/bin/npm-token --org acme
   A:
     hosts: [a.example.com]
-    command: /bin/a
+    value: a-value
 `, check: func(t *testing.T, c config) {
 			want := []sandbox.Secret{
-				{Env: "A", Hosts: []string{"a.example.com"}, Command: "/bin/a"},
+				{Env: "A", Hosts: []string{"a.example.com"}, Value: "a-value"},
 				{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com", "*.npm.example.com"}, Command: "/usr/local/bin/npm-token --org acme"},
 			}
 			if !slices.EqualFunc(c.secrets, want, func(a, b sandbox.Secret) bool {
-				return a.Env == b.Env && a.Command == b.Command && slices.Equal(a.Hosts, b.Hosts)
+				return a.Env == b.Env && a.Value == b.Value && a.Command == b.Command && slices.Equal(a.Hosts, b.Hosts)
 			}) {
 				t.Errorf("secrets = %+v, want %+v", c.secrets, want)
 			}
 		}},
-		{name: "secret without a command", yaml: required + "secrets:\n  X:\n    hosts: [x.example.com]\n", wantErr: "secrets.X needs command"},
+		{name: "secret without a value or a command", yaml: required + "secrets:\n  X:\n    hosts: [x.example.com]\n", wantErr: "secrets.X needs value"},
+		{name: "secret with a value and a command", yaml: required + "secrets:\n  X:\n    hosts: [x.example.com]\n    value: v\n    command: /bin/x\n", wantErr: "secrets.X takes value or command, not both"},
 		{name: "secret without hosts", yaml: required + "secrets:\n  X:\n    command: /bin/x\n", wantErr: "secrets.X needs hosts"},
 		{name: "secret named like no variable", yaml: required + "secrets:\n  NPM-TOKEN:\n    hosts: [x.example.com]\n    command: /bin/x\n", wantErr: "not an environment variable name"},
 		{name: "secret for GitHub", yaml: required + "secrets:\n  X:\n    hosts: [api.github.com]\n    command: /bin/x\n", wantErr: "AI could use the secret on GitHub"},

@@ -169,6 +169,16 @@ func TestSetSecret(t *testing.T) {
 		"--command", "/usr/local/bin/npm-token --org acme", "--host", "npm.pkg.github.com", "--host", "*.npm.example.com"})
 }
 
+func TestSetSecretWithValue(t *testing.T) {
+	f := newFakeSBX(t)
+	s := Secret{Env: "STRIPE_SECRET_KEY", Hosts: []string{"api.stripe.com"}, Value: "sk_test_x"}
+	if err := (CLI{}).SetSecret(t.Context(), "box", s); err != nil {
+		t.Fatal(err)
+	}
+	f.wantCalls([]string{"secret", "set-custom", "--sandbox", "box", "--env", "STRIPE_SECRET_KEY", "--placeholder", "exomecha-secret-stripe_secret_key",
+		"--value", "sk_test_x", "--host", "api.stripe.com"})
+}
+
 func TestAllow(t *testing.T) {
 	f := newFakeSBX(t)
 	if err := (CLI{}).Allow(t.Context(), "box", nil); err != nil {

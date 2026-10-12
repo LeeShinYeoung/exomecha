@@ -41,6 +41,7 @@ type settings struct {
 
 type secret struct {
 	Hosts   []string `yaml:"hosts"`
+	Value   string   `yaml:"value"`
 	Command string   `yaml:"command"`
 }
 
@@ -186,16 +187,19 @@ func parseTarget(key, repo string) (target, error) {
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// parseSecret reads secrets.<name>: the hosts sbx hands the value to, and the command on this
-// machine that prints it. The sandbox holds a placeholder in the environment variable <name>.
+// parseSecret reads secrets.<name>: the hosts sbx hands the value to, and the value or a command
+// on this machine that prints it. The sandbox holds a placeholder in the environment variable <name>.
 func parseSecret(name string, v secret) (sandbox.Secret, error) {
 	key := "secrets." + name
-	s := sandbox.Secret{Env: name, Command: strings.TrimSpace(v.Command)}
+	s := sandbox.Secret{Env: name, Value: v.Value, Command: strings.TrimSpace(v.Command)}
 	if !envName.MatchString(name) {
 		return s, fmt.Errorf("%s: %q is not an environment variable name", key, name)
 	}
-	if s.Command == "" {
-		return s, fmt.Errorf("%s needs command, the command that prints the value", key)
+	switch {
+	case s.Value == "" && s.Command == "":
+		return s, fmt.Errorf("%s needs value, or command, a command that prints the value", key)
+	case s.Value != "" && s.Command != "":
+		return s, fmt.Errorf("%s takes value or command, not both", key)
 	}
 	if len(v.Hosts) == 0 {
 		return s, fmt.Errorf("%s needs hosts, the hosts sbx hands the value to", key)

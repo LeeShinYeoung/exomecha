@@ -154,12 +154,14 @@ const optionalSettings = `
 # Optional settings. To change one from the default shown, delete "# " at the start of its lines.
 
 # Values builder's and resolver's sandboxes send to some hosts, such as a read-only token for a
-# private package registry. sbx puts what the command prints on this machine into the requests to
-# the hosts. The sandbox holds only a placeholder, in the environment variable named by the key.
+# private package registry. Give each its value, or in place of value a command on this machine
+# that prints it, such as command: security find-generic-password -s npm-read-token -w
+# sbx puts the value into the requests to the hosts. The sandbox holds only a placeholder, in the
+# environment variable named by the key.
 # secrets:
 #   NPM_TOKEN:
 #     hosts: [npm.pkg.github.com]
-#     command: /usr/local/bin/npm-read-token
+#     value: npm_...
 
 # five_hour and weekly are percent of the Claude plan's 5-hour and weekly limits. exomecha starts
 # no new work at or above them. sandboxes is how many PRD sandboxes builder and resolver may have
