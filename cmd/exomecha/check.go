@@ -172,11 +172,11 @@ func modelItems(c config) []item {
 			users = "the model of " + joinAnd(u.keys)
 		}
 		name := u.model.Name
-		items = append(items, item{group: groupClaude, doing: "Running " + name, run: func(ctx context.Context) (string, []error) {
+		items = append(items, item{group: groupClaude, doing: "Checking " + name, run: func(ctx context.Context) (string, []error) {
 			if err := (agent.Claude{}).Check(ctx, u.model); err != nil {
-				return name + " does not run, " + users, []error{fmt.Errorf("models.%s: %w", u.keys[0], err)}
+				return name + " is not available, " + users, []error{fmt.Errorf("models.%s: %w", u.keys[0], err)}
 			}
-			return name + " runs, " + users, nil
+			return name + " is available, " + users, nil
 		}})
 	}
 	return items
