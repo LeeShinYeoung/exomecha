@@ -110,8 +110,8 @@ func (c *Client) Issue(ctx context.Context, number int) (Issue, error) {
 
 func (c *Client) Close(ctx context.Context, number int) error {
 	_, _, err := c.api.Issues.Update(ctx, c.owner, c.repo, number, gh.UpdateIssueRequest{
-		State:       gh.Ptr("closed"),
-		StateReason: gh.Ptr("completed"),
+		State:       new("closed"),
+		StateReason: new("completed"),
 	})
 	if err == nil {
 		return nil

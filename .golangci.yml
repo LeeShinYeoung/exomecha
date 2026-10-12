@@ -1,0 +1,19 @@
+version: "2"
+
+linters:
+  enable:
+    - bidichk
+    - misspell
+    - nakedret
+    - nolintlint
+    - unconvert
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - whitespace
+  disable:
+    - errcheck
+
+formatters:
+  enable:
+    - gofmt
