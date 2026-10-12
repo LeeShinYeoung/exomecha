@@ -448,7 +448,7 @@ func TestRoundDoesNotStrikeALockedItem(t *testing.T) {
 	t.Parallel()
 	w := &fakeWorker{picks: []int{1}}
 	r := newRounds(w, newClock())
-	r.locks.lock(1)
+	r.locks.tryLock(1)
 	r.run(t.Context())
 	wantInts(t, "tries while locked", w.took(), nil)
 	r.locks.unlock(1)
@@ -624,6 +624,9 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		{"builder", "collect's SetStatus", built, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Review)
 			e.wantRemoved(name)
+			if got := e.gh.Pulls()[0].Comments; len(got) != 1 {
+				e.t.Errorf("PR comments = %+v, want the summary once", got)
+			}
 		}},
 		{"builder", "restart's SetStatus", func(e *env) (int, string) {
 			prd := e.addPRD("PRD", "", label.PRD, string(label.Working))
@@ -656,6 +659,16 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 				e.t.Errorf("branch head has %d parents, want the merge", got)
 			}
 		}},
+		{"resolver", "collect's remove", func(e *env) (int, string) {
+			prd, name, _ := e.conflicted()
+			e.play(name, resolveWith(e.t, "main\nfeature\n"), resolverDone)
+			return prd, name
+		}, sbxFault("remove"), resolverHandle, func(e *env, n int, name string) {
+			e.wantRemoved(name)
+			if got := e.gh.Pulls()[0].Comments; len(got) != 1 {
+				e.t.Errorf("PR comments = %+v, want how resolver resolved once", got)
+			}
+		}},
 		{"reviewer", "look's PR read", inReview, githubFault(pullRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantState(name, running)
 		}},
@@ -679,6 +692,16 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 			return prd, e.reviewerBox(prd)
 		}, githubFault(listReviewsRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Ready)
+		}},
+		{"reviewer", "failing's SetStatus", func(e *env) (int, string) {
+			prd, _, sha := e.reviewPRD()
+			e.gh.SetRuns(sha, githubtest.Run{Name: "test", Status: "completed", Conclusion: "failure"})
+			return prd, e.reviewerBox(prd)
+		}, githubFault(labelsRoute), reviewerHandle, func(e *env, n int, name string) {
+			e.wantStatus(n, label.Ready)
+			if got := e.gh.Pulls()[0].Reviews; len(got) != 1 {
+				e.t.Errorf("reviews = %+v, want the CI review once", got)
+			}
 		}},
 		{"reviewer", "start's create", inReview, sbxFault("create"), reviewerHandle, func(e *env, n int, name string) {
 			e.wantState(name, running)
@@ -704,6 +727,9 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		}, githubFault(labelsRoute), reviewerHandle, func(e *env, n int, name string) {
 			e.wantApproved(n, e.gh.Pulls()[0].Number)
 			e.wantRemoved(name)
+			if got := e.gh.Pulls()[0].Reviews; len(got) != 1 {
+				e.t.Errorf("reviews = %+v, want the approval once", got)
+			}
 		}},
 		{"reviewer", "an approved PRD's close", func(e *env) (int, string) {
 			prd, pr := e.approvedPRD()

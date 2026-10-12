@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,7 +52,7 @@ func TestRunStates(t *testing.T) {
 	e.wantState(name, preparing)
 	e.sbx.add(name)
 	e.wantState(name, preparing)
-	if err := e.runs.record(name, inputs{Repos: []repoRun{{Head: "abc"}}}); err != nil {
+	if err := e.runs.writeStart(name, inputs{Repos: []repoRun{{Head: "abc"}}}); err != nil {
 		t.Fatal(err)
 	}
 	e.wantState(name, running)
@@ -81,7 +83,7 @@ func TestStallStartsOverForNewRuns(t *testing.T) {
 	name := e.runs.name(builderRole, 7)
 	e.sbx.add(name)
 	e.writeCtl(name, "stream.jsonl", "{}\n")
-	if err := e.runs.record(name, inputs{}); err != nil {
+	if err := e.runs.writeStart(name, inputs{}); err != nil {
 		t.Fatal(err)
 	}
 	e.wantState(name, running)
@@ -110,7 +112,7 @@ func TestOutcome(t *testing.T) {
 		{"no result", "143", init, "with an error or without a result", false},
 		{"no structured output", "0", init + `{"type":"result","subtype":"success","is_error":false,"result":"text"}` + "\n", "with an error or without a result", false},
 		{"bad exit with a result", "1", streamOf(`{"result":"done"}`), "claude ended with an error", false},
-		{"bad exit file", "", streamOf(`{"result":"done"}`), "could not read how claude ended", false},
+		{"bad exit file", "", streamOf(`{"result":"done"}`), "holds no exit status", false},
 		{"usage limit", "1", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}` + "\n" +
 			`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit"}` + "\n", "", true},
 	} {
@@ -258,6 +260,23 @@ func TestReserveHoldsTheSlotUntilRelease(t *testing.T) {
 	e.wantReserve(builderRole, 4, true)
 }
 
+// Every start waits on the slot lock while sbx ls runs, so a hung one must give up.
+func TestReserveGivesUpOnAHungList(t *testing.T) {
+	old := listTimeout
+	listTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { listTimeout = old })
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.sbx.listHangs = true
+
+	err := returns(t, "reserve", func() error {
+		_, err := e.runs.reserve(t.Context(), builderRole, e.builderBox(1))
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("reserve = %v, want it to give up on sbx ls", err)
+	}
+}
+
 // A reader's result is all in its directory, so a finished reader run needs no sandbox. A project
 // run's commits are only in its sandbox.
 func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
@@ -267,7 +286,7 @@ func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
 	for _, name := range []string{reader, project} {
 		e.sbx.add(name)
 		e.writeCtl(name, "stream.jsonl", "{}\n")
-		if err := e.runs.record(name, inputs{}); err != nil {
+		if err := e.runs.writeStart(name, inputs{}); err != nil {
 			t.Fatal(err)
 		}
 		e.sbx.drop(name)
@@ -286,7 +305,7 @@ func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
 	for _, name := range []string{reader, project} {
 		e.sbx.add(name)
 		e.writeCtl(name, "stream.jsonl", "{}\n")
-		if err := e.runs.record(name, inputs{}); err != nil {
+		if err := e.runs.writeStart(name, inputs{}); err != nil {
 			t.Fatal(err)
 		}
 		e.writeCtl(name, "exit", "0\n")

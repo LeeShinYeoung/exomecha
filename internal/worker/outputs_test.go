@@ -16,7 +16,7 @@ func TestKeepTakesTheEndOfEachOutput(t *testing.T) {
 	e.writeCtl(name, "stream.jsonl", strings.Repeat("x", keptFileLimit)+"the end.")
 	e.writeCtl(name, "input.md", "the PRD")
 
-	dir := e.runs.keep(t.Context(), builderRole, 3, map[string]string{"merge.log": "conflict"})
+	dir := e.runs.keepOutputs(t.Context(), builderRole, 3, map[string]string{"merge.log": "conflict"})
 
 	if got := e.wantKept(name, "stream.jsonl"); len(got) != keptFileLimit || !strings.HasSuffix(got, "xthe end.") {
 		t.Errorf("kept stream.jsonl holds %d bytes, want the last %d", len(got), keptFileLimit)
@@ -41,7 +41,7 @@ func TestKeepTakesTheEndOfEachOutput(t *testing.T) {
 func TestKeepWithNothingPrinted(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	if dir := e.runs.keep(t.Context(), reviewerRole, 3, nil); dir != "" {
+	if dir := e.runs.keepOutputs(t.Context(), reviewerRole, 3, nil); dir != "" {
 		t.Errorf("keep = %q, want nothing kept", dir)
 	}
 	if entries, _ := os.ReadDir(e.deps.OutputDir); len(entries) != 0 {

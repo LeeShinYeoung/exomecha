@@ -55,16 +55,16 @@ func (*builder) Name() string { return builderRole.name }
 // Pick returns the ready PRDs with no open blocker, every working PRD, and every PRD that has a
 // builder sandbox, whatever its label.
 func (b *builder) Pick(ctx context.Context) ([]int, error) {
-	ready, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Ready))
+	readyPRDs, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Ready))
 	if err != nil {
 		return nil, err
 	}
-	working, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Working))
+	workingPRDs, err := b.GitHub.ListOpen(ctx, label.PRD, string(label.Working))
 	if err != nil {
 		return nil, err
 	}
 	var picked []int
-	for _, t := range ready {
+	for _, t := range readyPRDs {
 		unblocked, err := b.unblocked(ctx, t.Number)
 		if err != nil {
 			return nil, err
@@ -73,7 +73,7 @@ func (b *builder) Pick(ctx context.Context) ([]int, error) {
 			picked = append(picked, t.Number)
 		}
 	}
-	for _, t := range working {
+	for _, t := range workingPRDs {
 		picked = append(picked, t.Number)
 	}
 	return b.runs.pick(ctx, builderRole, picked)
@@ -104,7 +104,7 @@ func (b *builder) Handle(ctx context.Context, n int) error {
 	}
 	return b.runs.step(ctx, builderRole, n, builderTable[p],
 		func(ctx context.Context) error { return b.start(ctx, prd, repos) },
-		func(ctx context.Context, run run) error { return b.collect(ctx, prd, run.in) })
+		func(ctx context.Context, got run) error { return b.collect(ctx, prd, got.in) })
 }
 
 func (b *builder) place(prd github.Issue) place {
@@ -119,16 +119,16 @@ func (b *builder) place(prd github.Issue) place {
 
 func (b *builder) start(ctx context.Context, prd github.Issue, repos []*Repo) error {
 	n := prd.Number
-	if ready, err := b.unblocked(ctx, n); err != nil || !ready {
+	if unblocked, err := b.unblocked(ctx, n); err != nil || !unblocked {
 		return err
 	}
 	return b.runs.start(ctx, builderRole, n, func(ctx context.Context) (spec, error) {
 		branch := branchName(n)
 		s := spec{tier: label.TierOf(prd.Labels)}
-		var shown []runRepo
+		var shown []repoWithPR
 		var logs string
 		for _, repo := range repos {
-			base, err := baseCommit(ctx, repo.Git)
+			base, err := fetchBase(ctx, repo.Git)
 			if err != nil {
 				return spec{}, err
 			}
@@ -149,9 +149,9 @@ func (b *builder) start(ctx context.Context, prd github.Issue, repos []*Repo) er
 				logs += b.ciLogs(ctx, repo, len(repos), remote)
 			}
 			s.repos = append(s.repos, rs)
-			shown = append(shown, runRepo{repo: repo, pr: pr})
+			shown = append(shown, repoWithPR{repo: repo, pr: pr})
 		}
-		input, err := record(ctx, b.Deps, prd, shown)
+		input, err := sharedInput(ctx, b.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
@@ -181,14 +181,14 @@ func (b *builder) ciLogs(ctx context.Context, repo *Repo, count int, sha string)
 		prefix = repo.Name + ": "
 	}
 	var out strings.Builder
-	for _, run := range failed {
-		logs, err := repo.GitHub.FailedJobLogs(ctx, run.ID)
+	for _, ciRun := range failed {
+		logs, err := repo.GitHub.FailedJobLogs(ctx, ciRun.ID)
 		if err != nil {
-			slog.WarnContext(ctx, "side task failed", logging.Task, "read the logs of CI run "+run.Name, logging.Err, err)
+			slog.WarnContext(ctx, "side task failed", logging.Task, "read the logs of CI run "+ciRun.Name, logging.Err, err)
 			continue
 		}
 		for _, l := range logs {
-			fmt.Fprintf(&out, "### %s%s: %s\n\n```\n%s\n```\n\n", prefix, run.Name, l.Job, l.Tail)
+			fmt.Fprintf(&out, "### %s%s: %s\n\n```\n%s\n```\n\n", prefix, ciRun.Name, l.Job, l.Tail)
 		}
 	}
 	return out.String()
@@ -241,14 +241,14 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	if len(in.Repos) > 1 {
 		keyword = "Part of"
 	}
-	var prs []runRepo
+	var prs []repoWithPR
 	for i, rr := range in.Repos {
 		repo, _ := b.runs.repo(rr.Repo)
 		if slices.Contains(changed, i) {
 			// A run that did not start from the branch began from the base branch, so it replaces any
 			// old branch of the same name.
 			if err := repo.Git.PushCommit(ctx, heads[i], branch, rr.Head != rr.Remote); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", repo.Name, err)
 			}
 		}
 		pr, hasPR, err := repo.GitHub.OpenPR(ctx, branch)
@@ -264,17 +264,25 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 			hasPR = true
 		}
 		if hasPR {
-			prs = append(prs, runRepo{repo: repo, pr: pr})
+			prs = append(prs, repoWithPR{repo: repo, pr: pr})
 		}
 	}
 	// Every run's summary goes on the PRs, where the record shows the next worker what this run did.
+	note := github.Note{Worker: builderRole.name, Kind: github.KindSummary}
 	for _, p := range prs {
-		if err := p.repo.GitHub.AddComment(ctx, p.pr, github.Note{Worker: builderRole.name, Kind: github.KindSummary}, out.Summary); err != nil {
+		already, err := posted(ctx, p.repo.GitHub, p.pr, note, out.Summary)
+		if err != nil {
+			return err
+		}
+		if already {
+			continue
+		}
+		if err := p.repo.GitHub.AddComment(ctx, p.pr, note, out.Summary); err != nil {
 			return err
 		}
 	}
 	if err := b.GitHub.SetStatus(ctx, n, label.Working, label.Review); err != nil {
 		return err
 	}
-	return b.runs.done(ctx, builderRole, n)
+	return b.runs.drop(ctx, builderRole, n)
 }

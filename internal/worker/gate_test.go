@@ -139,13 +139,32 @@ func TestGateReadsAgainWhenStale(t *testing.T) {
 	f := newFakeUsage(newClock())
 	f.wantOpen(t, true)
 	f.usage.FiveHour.Used = 0.95
-	f.gate.stale()
+	f.gate.markStale()
 	f.wantOpen(t, false)
 	f.wantChecks(t, 2)
 
 	f.clock.advance(time.Hour)
 	f.wantOpen(t, false)
 	f.wantChecks(t, 2)
+}
+
+// Every start waits on the gate while it reads usage, so a reading that hangs must give up.
+func TestGateGivesUpOnAHungCheck(t *testing.T) {
+	old := usageTimeout
+	usageTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { usageTimeout = old })
+	g := &Gate{Check: func(ctx context.Context) (agent.Usage, error) {
+		<-ctx.Done()
+		return agent.Usage{}, ctx.Err()
+	}}
+
+	err := returns(t, "Open", func() error {
+		_, err := g.Open(t.Context())
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Open = %v, want it to give up on the usage check", err)
+	}
 }
 
 // Only a start reads usage, so a step that starts nothing spends none of it.

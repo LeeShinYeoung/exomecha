@@ -502,6 +502,31 @@ func TestReviewerApprovalRetriesTheStatusWithoutANewReview(t *testing.T) {
 	}
 	e.wantApproved(prd, pr)
 	e.wantRemoved(name)
+	if n := len(e.gh.Pull(pr).Reviews); n != 1 {
+		t.Errorf("%d reviews, want the approval once", n)
+	}
+}
+
+// The changes review is on the PR and the status change failed. The next try counts that review
+// as this send-back, as the first try did, so it does not reach the limit early.
+func TestReviewerRetryCountsItsOwnReviewOnce(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.deps.ReviewLimit = 1
+	prd, pr, _, name := e.reviewing()
+	e.play(name, nil, `{"verdict": "changes", "body": "rename it"}`)
+	e.gh.Fail(labelsRoute, http.StatusBadGateway)
+
+	if err := e.reviewer().Handle(t.Context(), prd); err == nil {
+		t.Fatal("Handle returned nil with the status change failing")
+	}
+
+	e.gh.Fail(labelsRoute, 0)
+	e.review(prd)
+	e.wantStatus(prd, label.Ready)
+	if n := len(e.gh.Pull(pr).Reviews); n != 1 {
+		t.Errorf("%d reviews, want the changes review once", n)
+	}
 }
 
 // A finished review gives its slot back at once, and a new exomecha still collects it from the

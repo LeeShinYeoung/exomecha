@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -86,7 +87,7 @@ func (r *resolver) Handle(ctx context.Context, n int) error {
 	}
 	return r.runs.step(ctx, resolverRole, n, resolverTable[p],
 		func(ctx context.Context) error { return r.start(ctx, prd, prs) },
-		func(ctx context.Context, run run) error { return r.collect(ctx, n, run.in) })
+		func(ctx context.Context, got run) error { return r.collect(ctx, n, got.in) })
 }
 
 // place is away for a PRD whose Repositories section is wrong, which reviewer sends to stuck.
@@ -121,9 +122,9 @@ func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 	n := prd.Number
 	branch := branchName(n)
 	var s spec
-	var shown []runRepo
+	var shown []repoWithPR
 	for _, p := range prs {
-		base, err := baseCommit(ctx, p.repo.Git)
+		base, err := fetchBase(ctx, p.repo.Git)
 		if err != nil {
 			return err
 		}
@@ -144,14 +145,14 @@ func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 			}
 		}
 		s.repos = append(s.repos, rs)
-		shown = append(shown, runRepo{repo: p.repo, pr: p.open.Number})
+		shown = append(shown, repoWithPR{repo: p.repo, pr: p.open.Number})
 	}
 	// Leave before setup runs for nothing.
 	if !slices.ContainsFunc(s.repos, func(rs repoSpec) bool { return rs.merge }) {
 		return nil
 	}
 	return r.runs.start(ctx, resolverRole, n, func(ctx context.Context) (spec, error) {
-		input, err := record(ctx, r.Deps, prd, shown)
+		input, err := sharedInput(ctx, r.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
@@ -189,21 +190,22 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		return err
 	}
 	for i, rr := range merges {
-		problem, err := r.unfinished(ctx, n, rr, heads[i])
+		wrong, err := r.unfinished(ctx, n, rr, heads[i])
 		if err != nil {
 			return err
 		}
-		if problem != "" {
-			return r.runs.stuck(ctx, resolverRole, n, problem+"\n\n"+out.Reason)
+		if wrong != "" {
+			return r.runs.stuck(ctx, resolverRole, n, wrong+"\n\n"+out.Reason)
 		}
 	}
 	for i, rr := range merges {
 		repo, _ := r.runs.repo(rr.Repo)
 		if err := repo.Git.PushCommit(ctx, heads[i], branchName(n), false); err != nil {
-			return err
+			return fmt.Errorf("%s: %w", repo.Name, err)
 		}
 	}
 	// The record shows reviewer and the next workers how the merge was settled.
+	note := github.Note{Worker: resolverRole.name, Kind: github.KindResolved}
 	for _, rr := range in.Repos {
 		repo, ok := r.runs.repo(rr.Repo)
 		if !ok {
@@ -213,14 +215,22 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		if err != nil {
 			return err
 		}
-		if open {
-			if err := repo.GitHub.AddComment(ctx, pr, github.Note{Worker: resolverRole.name, Kind: github.KindResolved}, out.Reason); err != nil {
-				return err
-			}
+		if !open {
+			continue
+		}
+		already, err := posted(ctx, repo.GitHub, pr, note, out.Reason)
+		if err != nil {
+			return err
+		}
+		if already {
+			continue
+		}
+		if err := repo.GitHub.AddComment(ctx, pr, note, out.Reason); err != nil {
+			return err
 		}
 	}
 	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
-	return r.runs.done(ctx, resolverRole, n)
+	return r.runs.drop(ctx, resolverRole, n)
 }
 
 // unfinished returns what is still wrong in one repository after the AI reported the merge

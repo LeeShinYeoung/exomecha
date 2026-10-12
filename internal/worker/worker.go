@@ -106,11 +106,11 @@ const (
 
 func Run(ctx context.Context, d Deps, gate *Gate) {
 	l := &locks{held: map[int]bool{}}
-	runs := newRuns(d, gate)
+	shared := newRuns(d, gate)
 	workers := []Worker{
-		&builder{d, runs},
-		&reviewer{d, runs},
-		&resolver{d, runs},
+		&builder{d, shared},
+		&reviewer{d, shared},
+		&resolver{d, shared},
 	}
 	every := cmp.Or(d.Interval, interval)
 	var wg sync.WaitGroup
@@ -144,16 +144,17 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 	numbers, err := w.Pick(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.ErrorContext(ctx, "listing PRDs failed", logging.Attempt, d.missPick(), logging.Err, err)
+			attempt := d.missPick()
+			slog.ErrorContext(ctx, "listing PRDs failed", logging.Attempt, attempt, logging.Err, err)
 		}
 		return
 	}
-	if attempt := d.pickWorks(); attempt > 1 {
+	if attempt := d.resetPicks(); attempt > 1 {
 		slog.InfoContext(ctx, "listing PRDs works again", logging.Attempt, attempt)
 	}
-	d.keep(numbers)
+	d.forgetUnpicked(numbers)
 	for _, n := range numbers {
-		if !d.due(n, now) || !l.lock(n) {
+		if !d.due(n, now) || !l.tryLock(n) {
 			continue
 		}
 		wg.Go(func() {
@@ -171,7 +172,8 @@ func round(ctx context.Context, w Worker, l *locks, d *delays, wg *sync.WaitGrou
 				slog.InfoContext(ctx, "shutdown cut off a step", logging.Err, err)
 				return
 			}
-			slog.ErrorContext(ctx, "handling the PRD failed", logging.Attempt, d.strike(n, now), logging.Err, err)
+			attempt := d.strike(n, now)
+			slog.ErrorContext(ctx, "handling the PRD failed", logging.Attempt, attempt, logging.Err, err)
 		})
 	}
 }
@@ -220,21 +222,23 @@ func (d *delays) forget(n int) int {
 	return attempt
 }
 
-// missPick returns the attempt that failed. Only the loop calls it and pickWorks, so they need no lock.
+// missPick returns the attempt that failed. Only the loop calls it and resetPicks, so they need no
+// lock.
 func (d *delays) missPick() int {
 	d.picks++
 	return d.picks
 }
 
-// pickWorks returns the attempt that worked.
-func (d *delays) pickWorks() int {
+// resetPicks returns the attempt that worked.
+func (d *delays) resetPicks() int {
 	attempt := d.picks + 1
 	d.picks = 0
 	return attempt
 }
 
-// keep forgets the issues Pick no longer returns, so one that comes back later starts with no wait.
-func (d *delays) keep(picked []int) {
+// forgetUnpicked forgets the issues Pick no longer returns, so one that comes back later starts
+// with no wait.
+func (d *delays) forgetUnpicked(picked []int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for n := range d.items {
@@ -250,7 +254,7 @@ type locks struct {
 	held map[int]bool
 }
 
-func (l *locks) lock(n int) bool {
+func (l *locks) tryLock(n int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.held[n] {
@@ -284,17 +288,17 @@ func prompt(name string) string {
 	return b.String()
 }
 
-// runRepo is one repository of a run, as the run's input shows it.
-type runRepo struct {
+// repoWithPR is one repository of a run and the PRD's open PR there.
+type repoWithPR struct {
 	repo *Repo
 	pr   int // the PRD's open PR there, 0 for none
 }
 
-// record is the start of every run's input: the PRD, where its work is, and everything written on
-// the PRD and on its open PRs, oldest first. Every worker gets the same record, so each sees what
-// people asked and what the other workers did. Only what people who can write to the repository
-// wrote goes in, so outsiders cannot steer the AI.
-func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (string, error) {
+// sharedInput is the start of every run's input: the PRD, where its work is, and everything
+// written on the PRD and on its open PRs, oldest first. Every worker's run starts with it, so each
+// sees what people asked and what the other workers did. Only what people who can write to the
+// repository wrote goes in, so outsiders cannot steer the AI.
+func sharedInput(ctx context.Context, d Deps, prd github.Issue, repos []repoWithPR) (string, error) {
 	type entry struct {
 		github.Comment
 		where string
@@ -305,7 +309,9 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 		return "", err
 	}
 	for _, c := range comments {
-		entries = append(entries, entry{c, "PRD"})
+		if c.Trusted {
+			entries = append(entries, entry{c, "PRD"})
+		}
 	}
 	seen := map[string]bool{}
 	for _, rr := range repos {
@@ -317,6 +323,10 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 			return "", err
 		}
 		for _, c := range comments {
+			// Before the dedupe, or an outsider's copy of an entry would hide it.
+			if !c.Trusted {
+				continue
+			}
 			// exomecha posts the same entry on each of a PRD's PRs.
 			key := c.Note.Worker + "\x00" + c.Note.Kind + "\x00" + strings.TrimSpace(c.Body)
 			if c.Exomecha && seen[key] {
@@ -330,13 +340,9 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# PRD #%d: %s\n\n%s\n\n## Run\n\n", prd.Number, prd.Title, strings.TrimSpace(prd.Body))
-	b.WriteString(d.run(prd.Number, repos))
+	b.WriteString(d.runSection(prd.Number, repos))
 	b.WriteString("## Record\n\nOldest first. Each entry says who wrote it and where.\n\n")
-	written := false
 	for _, e := range entries {
-		if !e.Trusted {
-			continue
-		}
 		where := e.where
 		if e.Path != "" {
 			where += ", on " + e.Path
@@ -345,23 +351,22 @@ func record(ctx context.Context, d Deps, prd github.Issue, repos []runRepo) (str
 			where += fmt.Sprintf(" line %d", e.Line)
 		}
 		fmt.Fprintf(&b, "### %s (%s, %s)\n\n%s\n\n", e.CreatedAt.Local().Format(time.DateTime), writer(e.Comment), where, strings.TrimSpace(e.Body))
-		written = true
 	}
-	if !written {
+	if len(entries) == 0 {
 		b.WriteString("Nothing yet.\n\n")
 	}
 	return b.String(), nil
 }
 
-// run is the record's Run section: where each repository is, its PR, and its base branch.
-func (d Deps) run(n int, repos []runRepo) string {
+// runSection is the input's Run section: where each repository is, its PR, and its base branch.
+func (d Deps) runSection(n int, repos []repoWithPR) string {
 	var b strings.Builder
-	write := func(rr runRepo, git string) {
+	write := func(rr repoWithPR, gitCmd string) {
 		if rr.pr != 0 {
 			fmt.Fprintf(&b, "- PR %s, on branch `%s`.\n", d.issueRef(d.PRDRepo, rr.repo.Name, rr.pr), branchName(n))
 		}
 		base := rr.repo.Git.BaseRef()
-		fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `%s diff %s...HEAD`.\n", base, git, base)
+		fmt.Fprintf(&b, "- Base branch `%s`. See the changes on this branch with `%s diff %s...HEAD`.\n", base, gitCmd, base)
 		fmt.Fprintf(&b, "- Commit messages here end with `PRD: %s`.\n\n", d.ref(rr.repo.Name, n))
 	}
 	if len(repos) == 1 {
@@ -395,7 +400,7 @@ func branchName(n int) string {
 	return fmt.Sprintf("exomecha/prd-%d", n)
 }
 
-func baseCommit(ctx context.Context, g *git.Git) (string, error) {
+func fetchBase(ctx context.Context, g *git.Git) (string, error) {
 	if err := g.Sync(ctx); err != nil {
 		return "", err
 	}
@@ -435,6 +440,28 @@ func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from,
 		return err
 	}
 	return gh.SetStatus(ctx, n, from, label.Stuck)
+}
+
+// posted reports whether the newest note of n on PR pr already says text. When a later step
+// fails, the next try collects the same run, or requeues for the same CI runs, and writes the same
+// text, so a match is an earlier try's.
+func posted(ctx context.Context, gh *github.Client, pr int, n github.Note, text string) (bool, error) {
+	comments, err := gh.PRComments(ctx, pr)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range slices.Backward(comments) {
+		if !c.Exomecha || !c.Trusted || c.Note != n {
+			continue
+		}
+		said := c.Body
+		if n.Kind == github.KindApproved {
+			// AddApproval puts a sentence of its own, with no blank line in it, before text.
+			_, said, _ = strings.Cut(said, "\n\n")
+		}
+		return said == strings.TrimSpace(text), nil
+	}
+	return false, nil
 }
 
 // tilde shortens a path in the home directory, whose name gives away this machine's user.

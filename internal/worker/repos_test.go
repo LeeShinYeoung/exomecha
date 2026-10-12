@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,8 +282,8 @@ func TestReviewerApprovesThePRsTogetherAndClosesThePRDAfterBothMerge(t *testing.
 	}
 
 	api.gh.MergePull(apiPR)
-	if picked, err := e.reviewer().Pick(t.Context()); err != nil || len(picked) != 1 {
-		t.Errorf("Pick after one merge = %v, %v, want the PRD", picked, err)
+	if picked, err := e.reviewer().Pick(t.Context()); err != nil || len(picked) != 0 {
+		t.Errorf("Pick after one merge = %v, %v, want none while the other PR is open", picked, err)
 	}
 	e.review(prd)
 	if !e.gh.Issue(prd).Open {
@@ -296,6 +297,27 @@ func TestReviewerApprovesThePRsTogetherAndClosesThePRDAfterBothMerge(t *testing.
 		t.Error("the PRD is still open after both PRs merged")
 	}
 	e.wantStatus(prd, label.None)
+}
+
+// reviewer acts on an approved PRD once a PR is closed without a merge, or none is open. Picking it
+// sooner would leave it idle every round.
+func TestReviewerPicksAnApprovedPRDOnlyWhenItActs(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	api := e.addRepo("api", map[string]string{"api.txt": "v1\n"})
+	oneMerged, _, mergedPR := e.reviewPRDs(api)
+	oneClosed, _, closedPR := e.reviewPRDs(api)
+	for _, prd := range []int{oneMerged, oneClosed} {
+		e.gh.Relabel(prd, string(label.Review), string(label.Approved))
+	}
+	api.gh.MergePull(mergedPR)
+	api.gh.ClosePull(closedPR)
+
+	picked, err := e.reviewer().Pick(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInts(t, "Pick", picked, []int{oneClosed})
 }
 
 func TestReviewerStuckWhenOneOfThePRsIsClosed(t *testing.T) {
@@ -340,7 +362,7 @@ func TestRecordShowsAnEntryOnEveryPROnce(t *testing.T) {
 		}
 	}
 	api.gh.AddPullComment(apiPR, "a person's comment on the API")
-	got, err := record(t.Context(), e.deps, e.issue(prd), []runRepo{{e.repo, pr}, {api.Repo, apiPR}})
+	got, err := sharedInput(t.Context(), e.deps, e.issue(prd), []repoWithPR{{e.repo, pr}, {api.Repo, apiPR}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,6 +370,23 @@ func TestRecordShowsAnEntryOnEveryPROnce(t *testing.T) {
 		t.Errorf("builder's summary is in the record %d times, want once:\n%s", n, got)
 	}
 	wantContains(t, "record", got, "(builder summary, PR #2)", "(person, PR owner/api#1)\n\na person's comment on the API")
+}
+
+// An outsider can copy one of exomecha's entries, marker and all. The copy must not hide the entry.
+func TestRecordKeepsAnEntryAnOutsiderCopied(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr, _ := e.reviewPRD()
+	note := github.Note{Worker: "reviewer", Kind: github.KindChanges}
+	e.gh.AddOutsiderReview(pr, github.Noted(note, "rename it"))
+	if err := e.deps.GitHub.AddReview(t.Context(), pr, note, "rename it"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sharedInput(t.Context(), e.deps, e.issue(prd), []repoWithPR{{e.repo, pr}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantContains(t, "record", got, fmt.Sprintf("(reviewer changes, PR #%d)\n\nrename it", pr))
 }
 
 func TestResolverMergesOnlyTheRepositoryThatConflicts(t *testing.T) {

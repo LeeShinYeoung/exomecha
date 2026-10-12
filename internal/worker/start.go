@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
@@ -29,6 +30,10 @@ echo $? > "$ctl/exit.tmp"
 # A reader must never see a half-written exit file.
 mv "$ctl/exit.tmp" "$ctl/exit"
 `
+
+// sbx ls answers in seconds. Every start waits on the slot lock while it runs, so one that hangs
+// must give up.
+var listTimeout = time.Minute
 
 // errNoSlot means the slots filled up between reserve and the create, which only a sandbox made
 // outside this exomecha can do.
@@ -65,7 +70,9 @@ var roles = []role{builderRole, resolverRole, reviewerRole}
 // stays right across restarts, and every start of that kind that holds a slot. self is the start
 // asking. The caller holds slots.
 func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error) {
-	boxes, err := r.Sandboxes.List(ctx)
+	listCtx, cancel := context.WithTimeout(ctx, listTimeout)
+	boxes, err := r.Sandboxes.List(listCtx)
+	cancel()
 	if err != nil {
 		return false, err
 	}
@@ -124,7 +131,7 @@ type problem struct {
 // sends the issue to stuck, and an error leaves builder's PRD ready and returns the error.
 func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Context) (spec, error)) error {
 	name := r.name(ro, n)
-	if ready, err := r.reserve(ctx, ro, name); err != nil || !ready {
+	if reserved, err := r.reserve(ctx, ro, name); err != nil || !reserved {
 		return err
 	}
 	defer r.release(name)
@@ -144,11 +151,11 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	// Undo the start even when shutdown cancelled ctx.
 	cleanup := context.WithoutCancel(ctx)
 	if p != nil {
-		kept := r.keep(cleanup, ro, n, p.outputs)
-		if err := r.remove(cleanup, name); err != nil {
+		kept := r.keepOutputs(cleanup, ro, n, p.outputs)
+		if err := toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept); err != nil {
 			return err
 		}
-		return toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept)
+		return r.remove(cleanup, name)
 	}
 	if rerr := r.restart(cleanup, ro, n); rerr != nil {
 		return errors.Join(err, rerr)
@@ -189,7 +196,7 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 		}
 	}
 	// Before setup, so the project's script can change what the defaults set.
-	if err := r.defaults(ctx, ro, n); err != nil {
+	if err := r.installDefaults(ctx, ro, n); err != nil {
 		return nil, err
 	}
 	input := s.input
@@ -225,7 +232,7 @@ func (r *runs) prepBase(ctx context.Context, s spec) (string, error) {
 			return rs.base, nil
 		}
 	}
-	return baseCommit(ctx, r.Prep)
+	return fetchBase(ctx, r.Prep)
 }
 
 // create makes the run's sandbox, from the project's template and with its allowed hosts for a
@@ -322,10 +329,10 @@ func (r *runs) launch(ctx context.Context, ro role, n int, model agent.Model, in
 	if err := r.Sandboxes.Start(ctx, name, repoDir, r.secretEnv(ro), args...); err != nil {
 		return err
 	}
-	return r.record(name, in)
+	return r.writeStart(name, in)
 }
 
-func (r *runs) record(name string, in inputs) error {
+func (r *runs) writeStart(name string, in inputs) error {
 	b, err := json.Marshal(in)
 	if err != nil {
 		return err

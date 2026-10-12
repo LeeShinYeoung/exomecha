@@ -52,8 +52,8 @@ type reviewer struct {
 
 func (*reviewer) Name() string { return reviewerRole.name }
 
-// Pick returns the PRDs in review whose PRs do not conflict, the approved PRDs with a repository
-// whose PR is no longer open, and every PRD that has a reviewer run. A PRD whose Repositories
+// Pick returns the PRDs in review whose PRs do not conflict, the approved PRDs with no PR left open
+// or a PR closed without a merge, and every PRD that has a reviewer run. A PRD whose Repositories
 // section is wrong is picked too, so Handle sends it to stuck.
 func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 	prds, err := r.GitHub.ListOpen(ctx, label.PRD, string(label.Review))
@@ -71,17 +71,13 @@ func (r *reviewer) Pick(ctx context.Context) ([]int, error) {
 			picked = append(picked, t.Number)
 			continue
 		}
-		// An approved PRD whose PR conflicts is resolver's. reviewer has nothing to do while every
-		// PR is still open anyway.
-		for _, repo := range repos {
-			_, open, err := repo.GitHub.OpenPR(ctx, branchName(t.Number))
-			if err != nil {
-				return nil, err
-			}
-			if !open {
-				picked = append(picked, t.Number)
-				break
-			}
+		// The same rule Handle follows, so a PRD that waits for a person is not picked every round.
+		p, _, _, err := r.look(ctx, t, repos)
+		if err != nil {
+			return nil, err
+		}
+		if p != away {
+			picked = append(picked, t.Number)
 		}
 	}
 	for _, t := range prds {
@@ -118,7 +114,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	}
 	err = r.runs.step(ctx, reviewerRole, n, reviewerTable[p],
 		func(ctx context.Context) error { return r.start(ctx, prd, prs) },
-		func(ctx context.Context, run run) error { return r.collect(ctx, n, prs, run.in) })
+		func(ctx context.Context, got run) error { return r.collect(ctx, n, prs, got.in) })
 	if err != nil {
 		return err
 	}
@@ -196,7 +192,7 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue, repos []*Repo) (p
 		if p.open.Mergeable == nil {
 			return waiting, prs, nil, nil
 		}
-		ci, runs, err := p.repo.GitHub.CheckCI(ctx, p.open.HeadSHA)
+		ci, ciRuns, err := p.repo.GitHub.CheckCI(ctx, p.open.HeadSHA)
 		if err != nil {
 			return away, prs, nil, err
 		}
@@ -204,11 +200,11 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue, repos []*Repo) (p
 		case github.CIRunning:
 			wait = true
 		case github.CIFailed:
-			for _, run := range runs {
+			for _, ciRun := range ciRuns {
 				if len(open) > 1 {
-					run.Name = p.repo.Name + ": " + run.Name
+					ciRun.Name = p.repo.Name + ": " + ciRun.Name
 				}
-				failed = append(failed, run)
+				failed = append(failed, ciRun)
 			}
 		case github.CINone:
 			at, err := p.repo.GitHub.CommitTime(ctx, p.open.HeadSHA)
@@ -232,9 +228,9 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 	n := prd.Number
 	return r.runs.start(ctx, reviewerRole, n, func(ctx context.Context) (spec, error) {
 		var s spec
-		var shown []runRepo
+		var shown []repoWithPR
 		for _, p := range prs {
-			base, err := baseCommit(ctx, p.repo.Git)
+			base, err := fetchBase(ctx, p.repo.Git)
 			if err != nil {
 				return spec{}, err
 			}
@@ -243,9 +239,9 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 				rs.branch, rs.head, rs.remote = branchName(n), p.open.HeadSHA, p.open.HeadSHA
 			}
 			s.repos = append(s.repos, rs)
-			shown = append(shown, runRepo{repo: p.repo, pr: p.open.Number})
+			shown = append(shown, repoWithPR{repo: p.repo, pr: p.open.Number})
 		}
-		input, err := record(ctx, r.Deps, prd, shown)
+		input, err := sharedInput(ctx, r.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
@@ -280,7 +276,15 @@ func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) 
 			return err
 		}
 	case "approve":
+		note := github.Note{Worker: reviewerRole.name, Kind: github.KindApproved}
 		for _, p := range open {
+			already, err := posted(ctx, p.repo.GitHub, p.open.Number, note, out.Body)
+			if err != nil {
+				return err
+			}
+			if already {
+				continue
+			}
 			if err := p.repo.GitHub.AddApproval(ctx, p.open.Number, out.Body); err != nil {
 				return err
 			}
@@ -291,7 +295,7 @@ func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) 
 	default:
 		return r.runs.failed(ctx, reviewerRole, n, badResult)
 	}
-	return r.runs.done(ctx, reviewerRole, n)
+	return r.runs.drop(ctx, reviewerRole, n)
 }
 
 // finish closes the PRD as completed and then clears its status. A PRD left open comes back to
@@ -310,23 +314,35 @@ func (r *reviewer) requeue(ctx context.Context, n int, open []repoPR, kind, revi
 	if err != nil {
 		return err
 	}
+	note := github.Note{Worker: reviewerRole.name, Kind: kind}
 	// A PR opened later counts fewer send-backs, so the PRD's count is the largest.
 	sent := 0
+	var unreviewed []repoPR
 	for _, p := range open {
 		count, err := p.repo.GitHub.SendBacks(ctx, p.open.Number, comments)
 		if err != nil {
 			return err
 		}
+		already, err := posted(ctx, p.repo.GitHub, p.open.Number, note, review)
+		if err != nil {
+			return err
+		}
+		if already {
+			// An earlier try left this review, so the count holds it. Leave it out, as that try did.
+			count--
+		} else {
+			unreviewed = append(unreviewed, p)
+		}
 		sent = max(sent, count)
 	}
-	for _, p := range open {
-		if err := p.repo.GitHub.AddReview(ctx, p.open.Number, github.Note{Worker: reviewerRole.name, Kind: kind}, review); err != nil {
+	for _, p := range unreviewed {
+		if err := p.repo.GitHub.AddReview(ctx, p.open.Number, note, review); err != nil {
 			return err
 		}
 	}
 	if sent >= r.ReviewLimit {
 		// A review sent for a failed CI has no run, and keeps nothing.
-		kept := r.runs.keep(ctx, reviewerRole, n, nil)
+		kept := r.runs.keepOutputs(ctx, reviewerRole, n, nil)
 		return toStuck(ctx, r.GitHub, n, reviewerRole.name, label.Review, label.Ready, fmt.Sprintf(
 			"reviewer sent %s back to builder %d times, the limit, and its latest review on the PR still asks for changes.", r.prRefs(open), sent), kept)
 	}

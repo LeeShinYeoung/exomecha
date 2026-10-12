@@ -21,11 +21,11 @@ var (
 // The run's files worth keeping: what the setup script and claude printed.
 var keptFiles = []string{"setup.log", "stream.jsonl", "stderr.log"}
 
-// keep copies what the run of ro for issue n printed, and outputs, file names to what else it
-// printed, into a new directory of the issue's in OutputDir, for the person the issue goes to.
+// keepOutputs copies what the run of ro for issue n printed, and outputs, file names to what else
+// it printed, into a new directory of the issue's in OutputDir, for the person the issue goes to.
 // It returns the directory, or "" when there was nothing to keep or keeping failed. Neither stops
 // the issue going to stuck.
-func (r *runs) keep(ctx context.Context, ro role, n int, outputs map[string]string) string {
+func (r *runs) keepOutputs(ctx context.Context, ro role, n int, outputs map[string]string) string {
 	files := map[string][]byte{}
 	for _, file := range keptFiles {
 		// A file the run never wrote, or one the AI swapped for something else, is left out.
@@ -69,7 +69,8 @@ func writeKept(dir string, files map[string][]byte) error {
 }
 
 // trimKept removes the oldest runs' outputs in root, all but newest, until the rest fit in limit.
-// A run's directory name starts with when it was kept, so the names sort oldest first across issues.
+// A run's directory name starts with when the run started, or when it was kept for a start that
+// stopped before claude, so the names sort oldest first across issues.
 func trimKept(root, newest string, limit int64) error {
 	type kept struct {
 		dir  string
@@ -82,12 +83,12 @@ func trimKept(root, newest string, limit int64) error {
 		return err
 	}
 	for _, issue := range issues {
-		runs, err := os.ReadDir(filepath.Join(root, issue.Name()))
+		runDirs, err := os.ReadDir(filepath.Join(root, issue.Name()))
 		if err != nil {
 			return err
 		}
-		for _, run := range runs {
-			dir := filepath.Join(root, issue.Name(), run.Name())
+		for _, runDir := range runDirs {
+			dir := filepath.Join(root, issue.Name(), runDir.Name())
 			files, err := os.ReadDir(dir)
 			if err != nil {
 				return err

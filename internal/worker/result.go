@@ -16,13 +16,13 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
-// take brings the commits the run left checked out in the repositories of runs into their shared
-// clones, for the worker to push, and returns them in the same order. ok is false when the run went
-// to stuck or starts over instead, and err is set only when a step failed. said is what the AI said
-// about its work, for a stuck comment.
-func (r *runs) take(ctx context.Context, ro role, n int, runs []repoRun, said string) (heads []string, ok bool, err error) {
+// take brings the commits the run left checked out in repos into their shared clones, for the
+// worker to push, and returns them in the same order. ok is false when the run went to stuck or
+// starts over instead, and err is set only when a step failed. said is what the AI said about its
+// work, for a stuck comment.
+func (r *runs) take(ctx context.Context, ro role, n int, repos []repoRun, said string) (heads []string, ok bool, err error) {
 	name := r.name(ro, n)
-	for _, rr := range runs {
+	for _, rr := range repos {
 		repo, found := r.repo(rr.Repo)
 		if !found {
 			return nil, false, r.stuck(ctx, ro, n, fmt.Sprintf("The run changed %s, which is no longer one of the repositories exomecha may change, so nothing was pushed.\n\n%s", rr.Repo, said))
@@ -73,12 +73,14 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 	if limited {
 		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
 		if r.gate != nil {
-			r.gate.stale()
+			r.gate.markStale()
 		}
 		return false, r.restart(ctx, ro, n)
 	}
 	if err != nil {
 		slog.ErrorContext(ctx, "exomecha could not read the run", logging.Sandbox, name, logging.Err, err)
+		// The AI can write the run's files, so reading them again is not sure to work.
+		return false, r.stuck(ctx, ro, n, fmt.Sprintf("exomecha could not read the run's result: %s. The error is in exomecha's log.", failure))
 	}
 	if failure != "" {
 		return false, r.failed(ctx, ro, n, failure)
@@ -90,25 +92,26 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 }
 
 // outcome reads a finished run. failure says why the run failed, in words fit for a comment. err
-// is set when exomecha could not read the run, which is exomecha's failure, not the AI's. limited
-// is set when the run ended at the Claude usage limit.
+// is set when exomecha could not read the run, and failure then says why. The AI can write the
+// run's files, so that can be the AI's doing as much as exomecha's. limited is set when the run
+// ended at the Claude usage limit.
 func (r *runs) outcome(name string) (res json.RawMessage, failure string, limited bool, err error) {
 	b, err := readCtl(r.ctl(name), "exit", 64)
 	if err != nil {
-		return res, "exomecha could not read how claude ended", false, err
+		return res, "the file that records how claude ended could not be read", false, err
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil {
-		return res, "exomecha could not read how claude ended", false, fmt.Errorf("exit file holds %q", b)
+		return res, "the file that records how claude ended holds no exit status", false, fmt.Errorf("exit file holds %q", b)
 	}
 	f, err := openCtl(r.ctl(name), "stream.jsonl")
 	if err != nil {
-		return res, "exomecha could not read claude's output", false, err
+		return res, "claude's output file could not be read", false, err
 	}
 	defer f.Close()
 	s, err := agent.ReadStream(io.LimitReader(f, streamLimit))
 	if err != nil {
-		return res, "exomecha could not read claude's output", false, err
+		return res, "claude's output file could not be read", false, err
 	}
 	res, err = s.Result()
 	if (err != nil || code != 0) && s.Rejected {

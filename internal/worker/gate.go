@@ -14,6 +14,10 @@ import (
 // usageFresh is how long one usage reading is shared by every worker. Each reading is a small claude call.
 const usageFresh = 3 * time.Minute
 
+// A reading answers in seconds. Every start waits on the gate while it runs, so one that hangs
+// must give up.
+var usageTimeout = 2 * time.Minute
+
 // Gate stops workers from starting new work while the Claude plan is close to its limits.
 // Work already running is left to finish, so usage can end up a little over the limits.
 type Gate struct {
@@ -36,7 +40,9 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 		now = g.now
 	}
 	if !g.fresh(now()) {
-		u, err := g.Check(ctx)
+		checkCtx, cancel := context.WithTimeout(ctx, usageTimeout)
+		u, err := g.Check(checkCtx)
+		cancel()
 		if err != nil {
 			return false, fmt.Errorf("check Claude usage: %w", err)
 		}
@@ -44,11 +50,11 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 	}
 
 	u := g.usage
-	closed := u.Known && (u.Rejected || u.FiveHour.Used >= g.FiveHour || u.Weekly.Used >= g.Weekly)
+	over := u.Known && (u.Rejected || u.FiveHour.Used >= g.FiveHour || u.Weekly.Used >= g.Weekly)
 	// Not ctx: the usage is every worker's, not the PRD's whose start read it.
-	if closed != g.closed {
-		g.closed = closed
-		if closed {
+	if over != g.closed {
+		g.closed = over
+		if over {
 			slog.Warn("Claude usage over the limit, pausing new work",
 				logging.FiveHour, percent(u.FiveHour.Used), logging.Weekly, percent(u.Weekly.Used), logging.Until, g.reopens())
 		} else {
@@ -56,11 +62,12 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 				logging.FiveHour, percent(u.FiveHour.Used), logging.Weekly, percent(u.Weekly.Used))
 		}
 	}
-	return !closed, nil
+	return !over, nil
 }
 
-// stale makes the next Open read usage again, after a run hit a limit the last reading did not show.
-func (g *Gate) stale() {
+// markStale makes the next Open read usage again, after a run hit a limit the last reading did
+// not show.
+func (g *Gate) markStale() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.at = time.Time{}
