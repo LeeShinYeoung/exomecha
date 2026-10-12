@@ -1,4 +1,4 @@
-name: ci
+name: lint
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  golangci-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,12 +19,3 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - run: go test -race ./...
