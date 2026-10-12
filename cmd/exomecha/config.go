@@ -205,7 +205,12 @@ func parseRepos(entries []string) ([]target, error) {
 	return repos, nil
 }
 
+// parseTarget takes owner/name or a github.com clone URL.
 func parseTarget(key, repo string) (target, error) {
+	for _, prefix := range []string{"https://github.com/", "git@github.com:", "ssh://git@github.com/"} {
+		repo = strings.TrimPrefix(repo, prefix)
+	}
+	repo = strings.TrimSuffix(strings.TrimSuffix(repo, "/"), ".git")
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
 		return target{}, fmt.Errorf("%s must hold owner/name: %q", key, repo)

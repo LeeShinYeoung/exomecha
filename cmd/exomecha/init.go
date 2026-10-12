@@ -167,7 +167,7 @@ func ask(ctx context.Context, in *bufio.Reader, out io.Writer, current settings,
 	}
 
 	repos := strings.Join(current.Repos, ", ")
-	_, err := answer("Repositories PRDs may change, as owner/name separated by commas", repos, repos, readLine, func(s string) error {
+	_, err := answer("Repositories PRDs may change, as owner/name or clone URLs separated by commas", repos, repos, readLine, func(s string) error {
 		var err error
 		// A file can give one repository a PRD repository of its own, which is asked for below.
 		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil && len(a.repos) == 1 && current.PRDRepo == "" {
@@ -180,16 +180,18 @@ func ask(ctx context.Context, in *bufio.Reader, out io.Writer, current settings,
 	}
 
 	if len(a.repos) > 1 || current.PRDRepo != "" {
-		a.prd, err = answer("PRD repository, whose issues are the PRDs, as owner/name", current.PRDRepo, current.PRDRepo, readLine, func(s string) error {
-			t, err := parseTarget("prd_repo", s)
-			if err != nil {
+		var prd target
+		_, err = answer("PRD repository, whose issues are the PRDs, as owner/name or a clone URL", current.PRDRepo, current.PRDRepo, readLine, func(s string) error {
+			var err error
+			if prd, err = parseTarget("prd_repo", s); err != nil {
 				return err
 			}
-			return checkPRD(t)
+			return checkPRD(prd)
 		})
 		if err != nil {
 			return a, err
 		}
+		a.prd = prd.full()
 	}
 
 	base := cmp.Or(current.BaseBranch, "main")

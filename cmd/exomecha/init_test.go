@@ -15,7 +15,7 @@ import (
 )
 
 func TestAsk(t *testing.T) {
-	in := bufio.NewReader(strings.NewReader("acme/api,acme/api\nacme/api, acme/web\nplans\nacme/plans\n\n"))
+	in := bufio.NewReader(strings.NewReader("acme/api,acme/api\nacme/api, https://github.com/acme/web.git\nplans\ngit@github.com:acme/plans.git\n\n"))
 	var out strings.Builder
 	tokens := []string{"", " github_pat_x "}
 	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) {
@@ -33,6 +33,19 @@ func TestAsk(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output %q does not say %q", out.String(), want)
 		}
+	}
+}
+
+func TestParseTargetTakesCloneURLs(t *testing.T) {
+	for _, repo := range []string{"acme/app", "https://github.com/acme/app", "https://github.com/acme/app.git", "https://github.com/acme/app/",
+		"git@github.com:acme/app.git", "ssh://git@github.com/acme/app.git"} {
+		if got, err := parseTarget("repos", repo); err != nil || got.full() != "acme/app" {
+			t.Errorf("parseTarget(%q) = %q, %v, want acme/app", repo, got.full(), err)
+		}
+	}
+	// exomecha talks to github.com only.
+	if got, err := parseTarget("repos", "https://gitlab.com/acme/app.git"); err == nil {
+		t.Errorf("parseTarget of a gitlab.com URL = %q, want an error", got.full())
 	}
 }
 
