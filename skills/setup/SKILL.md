@@ -74,9 +74,15 @@ The sandbox runs Ubuntu as the user `agent`, who can use sudo. Node 22, git and 
 
 ### Secrets
 
-exomecha takes each `EXOMECHA_SECRET_<NAME>` from its `.env` file: the hosts, then a space and a command on the person's machine that prints the value. sbx keeps the value for one sandbox. The sandbox holds only a placeholder in `$<NAME>`, and the sbx proxy puts the value in place of the placeholder in the headers of requests to those hosts.
+exomecha takes each secret from `secrets.<NAME>` in the project's settings file, `~/.exomecha/<project>.yaml`: `hosts`, the hosts that get the value, and `command`, a command on the person's machine that prints it. sbx keeps the value for one sandbox. The sandbox holds only a placeholder in `$<NAME>`, and the sbx proxy puts the value in place of the placeholder in the headers of requests to those hosts.
 
-- Use `$<NAME>` where the project needs the value, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in an `.npmrc` the script writes. Tell the person which `EXOMECHA_SECRET_` lines to add, and that the token needs only read access.
+- Use `$<NAME>` where the project needs the value, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in an `.npmrc` the script writes. Tell the person which entries to add under `secrets`, and that the token needs only read access:
+  ```yaml
+  secrets:
+    NPM_TOKEN:
+      hosts: [npm.pkg.github.com]
+      command: <a command that prints the token>
+  ```
 - Requests from a Docker build or container inside the sandbox do not go through that substitution on their own. If a build there installs private packages, give the build an `.npmrc` of its own (as a build secret) that sends npm through the proxy and trusts its certificate: the lines above, `https-proxy=http://gateway.docker.internal:3128`, `proxy=http://gateway.docker.internal:3128`, and every certificate of `/etc/ssl/certs/ca-certificates.crt` (which holds the proxy's) as a `ca[]="<certificate with \n for each line break>"` line. Expect such an install to take several times longer.
 
 ### allowed-hosts
@@ -94,7 +100,7 @@ exomecha takes each `EXOMECHA_SECRET_<NAME>` from its `.env` file: the hosts, th
 
 ## Steps
 
-1. Find the base branch, the branch exomecha's PRs target, and the repositories exomecha may change (`EXOMECHA_REPOS`). If you don't know them, ask the person. This folder is the PRD repository, where the files go.
+1. Find the base branch, the branch exomecha's PRs target, and the repositories exomecha may change (`repos` in the project's settings file). If you don't know them, ask the person. This folder is the PRD repository, where the files go.
 2. For each repository, read how it is installed and checked where this session has its code: CLAUDE.md, the README and setup docs, package manifests and lockfiles, CI workflows, compose files, example config files, and `.gitignore`. A CI workflow is usually the most exact record of a setup from scratch.
 3. Work out:
    - what to install once per template, for every repository together: system packages, runtimes, the pinned package managers, browsers (Dockerfile)
@@ -181,7 +187,7 @@ When a step fails, find out why. If a host was blocked during the step, allow ju
 - each host you added and the step that needs it
 - each host that was blocked but left out, and why
 - what you could not check, such as tests that need a real secret, and what `.exomecha/sandbox.md` tells the AI instead
-- the `EXOMECHA_SECRET_` lines the person needs to add, with the hosts, without any value
+- the entries the person needs to add under `secrets` in `~/.exomecha/<project>.yaml`, with the hosts, without any value
 
 Then tell the person what is left for them:
 
