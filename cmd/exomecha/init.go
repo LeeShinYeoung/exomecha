@@ -338,7 +338,7 @@ const optionalSettings = `
 
 func settingsFile(a answers) []byte {
 	var b strings.Builder
-	b.WriteString("# exomecha's settings for this project, written by exomecha init. See Setup in README.md.\n")
+	b.WriteString("# exomecha's settings for this project, written by exomecha init. See README.md.\n")
 	b.WriteString("# The file holds the GitHub token, so keep it readable by you alone.\n\n")
 	b.WriteString("repos:\n")
 	for _, t := range a.repos {
