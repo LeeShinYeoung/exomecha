@@ -2,7 +2,7 @@
 
 exomecha has AI turn a PRD, which a person writes as a GitHub issue, into code and PRs. It has two parts: a plugin that people use, and an orchestrator that runs the AI. The README describes how it works.
 
-This file is for agents that build exomecha. The instructions the orchestrator gives the AI in a sandbox are in `internal/worker/prompts`.
+This file is for agents that build exomecha. The instructions the orchestrator gives the AI in a sandbox are in `internal/worker/prompts`. When you change something this file describes, update this file in the same change.
 
 ## Plugin
 
