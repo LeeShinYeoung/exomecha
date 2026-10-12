@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -20,41 +22,62 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
-// initProject writes the project's file from the operator's answers, unless it is there already,
-// and signs sbx in to Claude when sbx has no login.
+// initProject asks for the project's settings, with the ones in its file as the defaults, and writes
+// the answers when they change the file. Without a terminal it asks nothing and keeps the file. Then
+// it signs sbx in to Claude when sbx has no login, and checks this machine.
 func initProject(ctx context.Context, home, project string) error {
 	path, err := settingsPath(home, project)
 	if err != nil {
 		return err
 	}
-	switch _, err := os.Stat(path); {
-	case errors.Is(err, fs.ErrNotExist):
-		fd := int(os.Stdin.Fd())
-		if !term.IsTerminal(fd) {
-			return errors.New("exomecha init asks for the settings, so run it in a terminal")
+	data, err := os.ReadFile(path)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	var current settings
+	if err := yaml.Unmarshal(data, &current); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	fd := int(os.Stdin.Fd())
+	switch {
+	case term.IsTerminal(fd):
+		state, err := term.GetState(fd)
+		if err != nil {
+			return err
 		}
-		a, err := ask(bufio.NewReader(os.Stdin), os.Stdout, func() (string, error) {
+		a, err := ask(ctx, bufio.NewReader(os.Stdin), os.Stdout, current, func() (string, error) {
 			b, err := term.ReadPassword(fd)
 			fmt.Println()
 			return string(b), err
 		}, func(prd target) error { return checkPRDRepo(home, path, prd) })
 		if err != nil {
+			// Ctrl-C leaves the token's read behind, with the typing still hidden.
+			term.Restore(fd, state)
+			fmt.Println()
 			return err
 		}
-		if err := writeSettings(path, a); err != nil {
-			return err
+		if !a.same(current) {
+			next, err := updateSettings(data, a)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			if err := writeSettings(path, next); err != nil {
+				return err
+			}
+			fmt.Printf("Wrote %s\n", path)
 		}
-		fmt.Printf("Wrote %s\n", path)
-	case err != nil:
-		return err
-	default:
-		fmt.Printf("%s is there already. To change a setting, edit the file.\n", path)
+	case !exists:
+		return errors.New("exomecha init asks for the settings, so run it in a terminal")
 	}
 	c, err := loadConfig(path)
 	if err != nil {
 		return err
 	}
 	c.project = project
+	if err := checkPRDRepo(home, path, c.prd); err != nil {
+		return err
+	}
 
 	if _, err := exec.LookPath("sbx"); err == nil {
 		sbx := sandbox.CLI{}
@@ -85,24 +108,40 @@ type answers struct {
 	token string
 }
 
-// ask asks for the settings without defaults. An answer that does not parse, or a PRD repository
-// checkPRD refuses, asks again.
-func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error), checkPRD func(target) error) (answers, error) {
+func (a answers) same(s settings) bool {
+	return slices.Equal(fullNames(a.repos), s.Repos) && a.prd == s.PRDRepo && a.base == s.BaseBranch && a.token == s.GitHubToken
+}
+
+func fullNames(ts []target) []string {
+	var names []string
+	for _, t := range ts {
+		names = append(names, t.full())
+	}
+	return names
+}
+
+// ask asks for the settings, with the ones in current as the defaults that an empty answer keeps.
+// An answer that does not parse, or a PRD repository checkPRD refuses, asks again.
+func ask(ctx context.Context, in *bufio.Reader, out io.Writer, current settings, readToken func() (string, error), checkPRD func(target) error) (answers, error) {
 	var a answers
-	line := func(question string) (string, error) {
-		fmt.Fprint(out, question)
-		s, err := in.ReadString('\n')
+	line := func(question, value string) (string, error) {
+		fmt.Fprint(out, prompt(question, value))
+		s, err := read(ctx, func() (string, error) { return in.ReadString('\n') })
 		if errors.Is(err, io.EOF) {
 			return "", errors.New("the answers ended before the settings were complete")
 		}
-		return strings.TrimSpace(s), err
+		if err != nil {
+			return "", err
+		}
+		return cmp.Or(strings.TrimSpace(s), value), nil
 	}
 	for {
-		s, err := line("Repositories PRDs may change, as owner/name separated by commas: ")
+		s, err := line("Repositories PRDs may change, as owner/name separated by commas", strings.Join(current.Repos, ", "))
 		if err != nil {
 			return a, err
 		}
-		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil && len(a.repos) == 1 {
+		// A file can give one repository a PRD repository of its own, which is asked for below.
+		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil && len(a.repos) == 1 && current.PRDRepo == "" {
 			err = checkPRD(a.repos[0])
 		}
 		if err == nil {
@@ -110,8 +149,8 @@ func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error), chec
 		}
 		fmt.Fprintln(out, err)
 	}
-	for len(a.repos) > 1 {
-		s, err := line("PRD repository, whose issues are the PRDs, as owner/name: ")
+	for len(a.repos) > 1 || current.PRDRepo != "" {
+		s, err := line("PRD repository, whose issues are the PRDs, as owner/name", current.PRDRepo)
 		if err != nil {
 			return a, err
 		}
@@ -126,35 +165,134 @@ func ask(in *bufio.Reader, out io.Writer, readToken func() (string, error), chec
 		a.prd = s
 		break
 	}
-	s, err := line("Base branch of every repository [main]: ")
+	s, err := line("Base branch of every repository", cmp.Or(current.BaseBranch, "main"))
 	if err != nil {
 		return a, err
 	}
-	a.base = cmp.Or(s, "main")
+	a.base = s
 	for a.token == "" {
-		fmt.Fprint(out, "GitHub token (not shown as you type): ")
-		token, err := readToken()
+		fmt.Fprint(out, prompt("GitHub token (not shown as you type)", masked(current.GitHubToken)))
+		token, err := read(ctx, readToken)
 		if err != nil {
 			return a, err
 		}
-		a.token = strings.TrimSpace(token)
+		a.token = cmp.Or(strings.TrimSpace(token), current.GitHubToken)
 	}
 	return a, nil
 }
 
-func writeSettings(path string, a answers) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+func prompt(question, value string) string {
+	if value == "" {
+		return question + ": "
+	}
+	return question + " [" + value + "]: "
+}
+
+// masked shows the token's last 4 characters, enough to tell which one the file holds.
+func masked(token string) string {
+	if token == "" {
+		return ""
+	}
+	return "..." + token[max(0, len(token)-4):]
+}
+
+// read stops waiting for f when ctx ends, since a read from the terminal cannot be cut off.
+func read(ctx context.Context, f func() (string, error)) (string, error) {
+	type result struct {
+		s   string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		s, err := f()
+		done <- result{s, err}
+	}()
+	select {
+	case r := <-done:
+		return r.s, r.err
+	case <-ctx.Done():
+		return "", fmt.Errorf("stopped before writing the settings: %w", context.Cause(ctx))
+	}
+}
+
+// updateSettings puts the answers in data and leaves the rest as it was, such as the optional
+// settings the operator turned on and the comments. With no settings in data, it is a new file.
+func updateSettings(data []byte, a answers) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return settingsFile(a), nil
+	}
+	m := doc.Content[0]
+	if m.Kind != yaml.MappingNode {
+		return nil, errors.New("the file holds no settings")
+	}
+	at := 0 // where a key the file lacks goes: after the last of these keys it has
+	for _, kv := range []struct {
+		key   string
+		value any
+	}{{"repos", fullNames(a.repos)}, {"prd_repo", a.prd}, {"base_branch", a.base}, {"github_token", a.token}} {
+		i := -1
+		for j := 0; j < len(m.Content); j += 2 {
+			if m.Content[j].Value == kv.key {
+				i = j
+				break
+			}
+		}
+		if i < 0 {
+			if kv.value == "" {
+				continue
+			}
+			m.Content = slices.Insert(m.Content, at, &yaml.Node{Kind: yaml.ScalarNode, Value: kv.key}, &yaml.Node{})
+			i = at
+		}
+		var v yaml.Node
+		if err := v.Encode(kv.value); err != nil {
+			return nil, err
+		}
+		old := m.Content[i+1]
+		v.HeadComment, v.LineComment, v.FootComment = old.HeadComment, old.LineComment, old.FootComment
+		*old = v
+		at = i + 2
+	}
+	var b bytes.Buffer
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// writeSettings replaces the file in one step, so an init cut off while it writes leaves the old file
+// whole. The temporary name does not end in .yaml, which checkPRDRepo would read as a project.
+func writeSettings(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(settingsFile(a)); err != nil {
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
 		f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // The defaults are commented out, so a file left alone follows exomecha's defaults as they change.

@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,7 +18,7 @@ func TestAsk(t *testing.T) {
 	in := bufio.NewReader(strings.NewReader("acme/api,acme/api\nacme/api, acme/web\nplans\nacme/plans\n\n"))
 	var out strings.Builder
 	tokens := []string{"", " github_pat_x "}
-	a, err := ask(in, &out, func() (string, error) {
+	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) {
 		token := tokens[0]
 		tokens = tokens[1:]
 		return token, nil
@@ -37,7 +39,7 @@ func TestAsk(t *testing.T) {
 func TestAskOneRepositoryDoesNotAskForThePRDRepository(t *testing.T) {
 	in := bufio.NewReader(strings.NewReader("acme/app\ndevelop\n"))
 	var out strings.Builder
-	a, err := ask(in, &out, func() (string, error) { return "secret", nil }, anyPRD)
+	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) { return "secret", nil }, anyPRD)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +53,7 @@ func anyPRD(target) error { return nil }
 func TestAskAsksAgainForAPRDRepositoryOfAnotherProject(t *testing.T) {
 	in := bufio.NewReader(strings.NewReader("acme/plans\nacme/api, acme/web\nacme/plans\nacme/web\n\n"))
 	var out strings.Builder
-	a, err := ask(in, &out, func() (string, error) { return "secret", nil }, func(prd target) error {
+	a, err := ask(t.Context(), in, &out, settings{}, func() (string, error) { return "secret", nil }, func(prd target) error {
 		if prd.full() == "acme/plans" {
 			return errors.New("project plans already has acme/plans")
 		}
@@ -69,8 +71,85 @@ func TestAskAsksAgainForAPRDRepositoryOfAnotherProject(t *testing.T) {
 }
 
 func TestAskStopsWhenTheAnswersEnd(t *testing.T) {
-	if _, err := ask(bufio.NewReader(strings.NewReader("acme/app\n")), &strings.Builder{}, nil, anyPRD); err == nil {
+	if _, err := ask(t.Context(), bufio.NewReader(strings.NewReader("acme/app\n")), &strings.Builder{}, settings{}, nil, anyPRD); err == nil {
 		t.Error("ask with no base branch answer = nil")
+	}
+}
+
+func TestAskKeepsTheFilesValuesOnEmptyAnswers(t *testing.T) {
+	current := settings{Repos: []string{"acme/api", "acme/web"}, PRDRepo: "acme/plans", BaseBranch: "develop", GitHubToken: "github_pat_abcdefgh1234"}
+	var out strings.Builder
+	a, err := ask(t.Context(), bufio.NewReader(strings.NewReader("\n\n\n")), &out, current, func() (string, error) { return "", nil }, anyPRD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.same(current) {
+		t.Errorf("answers = %+v, want the file's %+v", a, current)
+	}
+	for _, want := range []string{"[acme/api, acme/web]", "[acme/plans]", "[develop]", "[...1234]"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output %q does not show %q", out.String(), want)
+		}
+	}
+	if strings.Contains(out.String(), current.GitHubToken) {
+		t.Errorf("output %q shows the whole token", out.String())
+	}
+}
+
+func TestAskKeepsThePRDRepositoryOfOneRepository(t *testing.T) {
+	current := settings{Repos: []string{"acme/app"}, PRDRepo: "acme/plans", BaseBranch: "main", GitHubToken: "secret"}
+	var checked []string
+	a, err := ask(t.Context(), bufio.NewReader(strings.NewReader("\n\n\n")), &strings.Builder{}, current, func() (string, error) { return "", nil }, func(prd target) error {
+		checked = append(checked, prd.full())
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.prd != "acme/plans" || !slices.Equal(checked, []string{"acme/plans"}) {
+		t.Errorf("PRD repository %q, checked %v, want acme/plans alone", a.prd, checked)
+	}
+}
+
+func TestAskStopsWhenCtxEnds(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := ask(ctx, bufio.NewReader(r), &strings.Builder{}, settings{}, nil, anyPRD); !errors.Is(err, context.Canceled) {
+		t.Errorf("ask after ctx ended = %v, want context.Canceled", err)
+	}
+}
+
+func TestUpdateSettingsKeepsTheRest(t *testing.T) {
+	a := answers{repos: []target{{owner: "acme", name: "app"}}, base: "main", token: "old"}
+	data := strings.Replace(string(settingsFile(a)), "# limits:\n#   five_hour: 90", "limits:\n  five_hour: 50", 1)
+	a.repos = append(a.repos, target{owner: "acme", name: "web"})
+	a.prd, a.base, a.token = "acme/plans", "1.0", "new"
+	got, err := updateSettings([]byte(data), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := parseConfig(got)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, got)
+	}
+	if !slices.Equal(fullNames(c.repos), []string{"acme/app", "acme/web"}) || c.prd.full() != "acme/plans" || c.base != "1.0" || c.token != "new" {
+		t.Errorf("repositories %v, PRD repository %s, base %s, token %q", fullNames(c.repos), c.prd.full(), c.base, c.token)
+	}
+	if c.fiveHour != 0.5 || !strings.Contains(string(got), "# Optional settings.") {
+		t.Errorf("the rest of the file did not stay:\n%s", got)
+	}
+	if i, j := strings.Index(string(got), "\nprd_repo:"), strings.Index(string(got), "\nbase_branch:"); i < 0 || i > j {
+		t.Errorf("prd_repo is not before base_branch:\n%s", got)
+	}
+}
+
+func TestUpdateSettingsOfAnEmptyFileWritesANewOne(t *testing.T) {
+	a := answers{repos: []target{{owner: "acme", name: "app"}}, base: "main", token: "secret"}
+	got, err := updateSettings(nil, a)
+	if err != nil || string(got) != string(settingsFile(a)) {
+		t.Errorf("updateSettings(nil) = %v, %s", err, got)
 	}
 }
 
@@ -124,15 +203,20 @@ func TestSettingsFileWithOneRepositoryHasNoPRDRepository(t *testing.T) {
 
 func TestWriteSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".exomecha", "acme.yaml")
-	a := answers{repos: []target{{owner: "acme", name: "app"}}, base: "main", token: "secret"}
-	if err := writeSettings(path, a); err != nil {
-		t.Fatal(err)
+	for _, data := range []string{"first", "second"} {
+		if err := writeSettings(path, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "second" {
+		t.Errorf("file = %q, %v, want the second write", got, err)
 	}
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("file mode = %v, %v, want 600", info.Mode(), err)
 	}
-	if err := writeSettings(path, a); err == nil {
-		t.Error("a second write replaced the file")
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("the folder holds %d files, want the settings alone", len(entries))
 	}
 }
