@@ -150,3 +150,34 @@ func TestParseAuthStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestHasUserPlugin(t *testing.T) {
+	cases := []struct {
+		out  string
+		want bool
+	}{
+		{`[{"id":"exomecha@exomecha","scope":"user","enabled":true}]`, true},
+		{`[{"id":"exomecha@exomecha","scope":"local","enabled":true,"projectPath":"/x"}]`, false},
+		{`[{"id":"exomecha@exomecha","scope":"user","enabled":false}]`, false},
+		{`[{"id":"codex@openai-codex","scope":"user","enabled":true}]`, false},
+		{`[]`, false},
+	}
+	for _, c := range cases {
+		if got, err := hasUserPlugin([]byte(c.out)); err != nil || got != c.want {
+			t.Errorf("hasUserPlugin(%s) = %v, %v, want %v", c.out, got, err, c.want)
+		}
+	}
+	if _, err := hasUserPlugin([]byte("Installed plugins:")); err == nil {
+		t.Error("hasUserPlugin of text = nil error")
+	}
+}
+
+func TestHasMarketplace(t *testing.T) {
+	out := `[{"name":"claude-community","source":"github"},{"name":"exomecha","source":"github","repo":"LeeShinYeoung/exomecha"}]`
+	if got, err := hasMarketplace([]byte(out)); err != nil || !got {
+		t.Errorf("hasMarketplace = %v, %v, want true", got, err)
+	}
+	if got, err := hasMarketplace([]byte(`[{"name":"claude-community"}]`)); err != nil || got {
+		t.Errorf("hasMarketplace without exomecha = %v, %v, want false", got, err)
+	}
+}

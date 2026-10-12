@@ -40,9 +40,8 @@ type Deps struct {
 	PRDRepo string
 	// Repos are the repositories PRDs may change.
 	Repos []*Repo
-	// Prep is the PRD repository's clone, whose base branch holds the files that prepare a project
-	// run's sandbox. It is one of the Repos' when the PRD repository is one of them.
-	Prep *git.Git
+	// SetupDir holds the files that prepare a project run's sandbox, which /exomecha:setup writes.
+	SetupDir string
 	// Secrets go into every project run's sandbox. sbx hands the AI only their placeholders.
 	Secrets []sandbox.Secret
 
@@ -88,7 +87,7 @@ type Sandboxes interface {
 	GitURL(name, dir string) string
 }
 
-// Environment is the sandbox setup the target project asks for on its base branch.
+// Environment is the sandbox template and network policy the project's setup files ask for.
 // An error whose chain holds a value with a Why() string method is one only a person can fix,
 // and Why() is what to tell them. An Output() string method on it gives what the build printed.
 type Environment interface {

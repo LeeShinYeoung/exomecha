@@ -106,7 +106,7 @@ func TestE2EBlockedHost(t *testing.T) {
 	if c := w.lastComment(prd); !strings.Contains(c, "example.com") {
 		t.Errorf("stuck comment = %q, want it to name example.com", c)
 	}
-	w.push("main", "", "chore: allow example.com", map[string]string{".exomecha/allowed-hosts": "example.com\n"})
+	w.writeSetup("allowed-hosts", "example.com\n")
 	w.relabel(prd, label.Stuck, label.Ready)
 	w.waitFor("the PR", aStart+aRun, func() bool { _, ok := w.openPR(prd); return ok })
 	if got := w.file(branchOf(prd), "page.sha256"); !regexp.MustCompile(`^[0-9a-f]{64}\n?$`).MatchString(got) {

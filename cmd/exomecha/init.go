@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -16,15 +15,19 @@ import (
 	"slices"
 	"strings"
 
+	"charm.land/huh/v2"
+	"charm.land/huh/v2/spinner"
+	"charm.land/lipgloss/v2"
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/term"
 
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
-// initProject asks for the project's settings, with the ones in its file as the defaults, and writes
-// the answers when they change the file. Without a terminal it asks nothing and keeps the file. Then
-// it signs sbx in to Claude when sbx has no login, and checks this machine.
+// initProject asks for the project's settings, with the ones in its file filled in, and writes the
+// answers when they change the file. Without a terminal it asks nothing and keeps the file. Then it
+// signs sbx in to Claude when sbx has no login, checks this machine item by item, and installs the
+// exomecha plugin, which /exomecha:setup needs.
 func initProject(ctx context.Context, home, project string) error {
 	path, err := settingsPath(home, project)
 	if err != nil {
@@ -39,25 +42,18 @@ func initProject(ctx context.Context, home, project string) error {
 	if err := yaml.Unmarshal(data, &current); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	fd := int(os.Stdin.Fd())
+	shown := "~" + strings.TrimPrefix(path, home)
+	settingsLine := "Settings unchanged in " + shown
 	switch {
-	case term.IsTerminal(fd):
-		state, err := term.GetState(fd)
-		if err != nil {
+	case term.IsTerminal(int(os.Stdin.Fd())):
+		q := newQuestions(current, func(prd target) error { return checkPRDRepo(home, path, prd) })
+		if err := q.ask(ctx, os.Stdout); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				return errors.New("stopped before writing the settings")
+			}
 			return err
 		}
-		a, err := ask(ctx, bufio.NewReader(os.Stdin), os.Stdout, current, func() (string, error) {
-			b, err := term.ReadPassword(fd)
-			fmt.Println()
-			return string(b), err
-		}, func(prd target) error { return checkPRDRepo(home, path, prd) })
-		if err != nil {
-			// Ctrl-C leaves the token's read behind, with the typing still hidden.
-			term.Restore(fd, state)
-			fmt.Println()
-			return err
-		}
-		if !a.same(current) {
+		if a := q.answers(); !a.same(current) {
 			next, err := updateSettings(data, a)
 			if err != nil {
 				return fmt.Errorf("%s: %w", path, err)
@@ -65,7 +61,7 @@ func initProject(ctx context.Context, home, project string) error {
 			if err := writeSettings(path, next); err != nil {
 				return err
 			}
-			fmt.Printf("Wrote %s\n", path)
+			settingsLine = "Saved to " + shown
 		}
 	case !exists:
 		return errors.New("exomecha init asks for the settings, so run it in a terminal")
@@ -78,6 +74,9 @@ func initProject(ctx context.Context, home, project string) error {
 	if err := checkPRDRepo(home, path, c.prd); err != nil {
 		return err
 	}
+	out := os.Stdout
+	printHeading(out, "Settings")
+	printLine(out, settingsLine, nil)
 
 	if _, err := exec.LookPath("sbx"); err == nil {
 		sbx := sandbox.CLI{}
@@ -86,19 +85,110 @@ func initProject(ctx context.Context, home, project string) error {
 			return fmt.Errorf("read sbx's Claude login: %w", err)
 		}
 		if !in {
-			fmt.Println("sbx has no Claude login. Sign in from the sandbox that starts now.")
+			fmt.Fprintln(out, "\nsbx has no Claude login. Sign in from the sandbox that starts now.")
 			if err := sbx.SignIn(ctx, os.Stdin); err != nil {
 				return fmt.Errorf("sign sbx in to Claude: %w", err)
 			}
 		}
 	}
 
-	fmt.Println("Checking this machine, which takes a minute.")
-	if err := check(ctx, c); err != nil {
-		return fmt.Errorf("fix these, then run exomecha init %s again:\n%w", project, err)
+	ok, err := report(ctx, out, term.IsTerminal(int(out.Fd())), checks(c))
+	if err != nil {
+		return err
 	}
-	fmt.Printf("Ready. Start the project with: exomecha run %s\n", project)
+	if !ok {
+		fmt.Fprintln(out)
+		return fmt.Errorf("fix the problems above, then run exomecha init %s again", project)
+	}
+	printHeading(out, "Next")
+	step := 1
+	if _, err := os.Stat(filepath.Join(setupDir(projectRoot(home, project)), "setup.sh")); errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintln(out, "1. Set up the sandbox: start Claude Code and enter the command below.")
+		printCommand(out, "$", "claude")
+		printCommand(out, ">", "/exomecha:setup "+project)
+		step++
+	}
+	fmt.Fprintf(out, "%d. Start the project.\n", step)
+	printCommand(out, "$", "exomecha run "+project)
 	return nil
+}
+
+// printCommand shows a command to type, after the prompt of where it goes: $ for the shell, > for
+// Claude Code.
+func printCommand(out io.Writer, prompt, command string) {
+	lipgloss.Fprintln(out, "   "+detailStyle.Render(prompt)+" "+commandStyle.Render(command))
+}
+
+var (
+	headingStyle = lipgloss.NewStyle().Bold(true)
+	passStyle    = lipgloss.NewStyle().Foreground(lipgloss.Green)
+	failStyle    = lipgloss.NewStyle().Foreground(lipgloss.Red)
+	detailStyle  = lipgloss.NewStyle().Faint(true)
+	answerStyle  = lipgloss.NewStyle().Bold(true)
+	commandStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
+
+	// The terminal's own colors, in place of huh's pink.
+	formTheme    = huh.ThemeFunc(huh.ThemeBase16)
+	spinnerTheme = spinner.ThemeFunc(func(bool) *spinner.Styles {
+		return &spinner.Styles{Spinner: lipgloss.NewStyle().Foreground(lipgloss.Cyan), Title: lipgloss.NewStyle()}
+	})
+)
+
+func printHeading(out io.Writer, group string) {
+	lipgloss.Fprintln(out, "\n"+headingStyle.Render(group))
+}
+
+// printLine shows line as passed without problems, and as failed with each problem below it.
+func printLine(out io.Writer, line string, problems []error) {
+	if len(problems) == 0 {
+		lipgloss.Fprintln(out, passStyle.Render("✓")+" "+line)
+		return
+	}
+	lipgloss.Fprintln(out, failStyle.Render("✗")+" "+line)
+	for _, p := range problems {
+		for l := range strings.Lines(p.Error()) {
+			lipgloss.Fprintln(out, "  "+detailStyle.Render(strings.TrimSuffix(l, "\n")))
+		}
+	}
+}
+
+// report runs the items in order and shows each one's line under its group, with a spinner while
+// it runs when spin is set. ok is false when an item found a problem.
+func report(ctx context.Context, out io.Writer, spin bool, items []item) (ok bool, err error) {
+	ok = true
+	group, skip := "", ""
+	for _, it := range items {
+		if it.group == skip {
+			continue
+		}
+		if it.group != group {
+			group = it.group
+			printHeading(out, group)
+		}
+		var line string
+		var problems []error
+		if spin {
+			err = spinner.New().Title(it.doing).WithTheme(spinnerTheme).Context(ctx).WithOutput(out).ActionWithErr(func(ctx context.Context) error {
+				line, problems = it.run(ctx)
+				return nil
+			}).Run()
+			if err != nil {
+				return false, err
+			}
+			// The spinner leaves its last frame with the cursor at its start: write over it.
+			fmt.Fprint(out, "\r\x1b[2K")
+		} else {
+			line, problems = it.run(ctx)
+		}
+		printLine(out, line, problems)
+		if len(problems) > 0 {
+			ok = false
+			if it.gate {
+				skip = it.group
+			}
+		}
+	}
+	return ok, nil
 }
 
 type answers struct {
@@ -120,106 +210,121 @@ func fullNames(ts []target) []string {
 	return names
 }
 
-// ask asks for the settings, with the ones in current as the defaults that an empty answer keeps.
-// An answer that does not parse, a PRD repository checkPRD refuses, or no token asks again.
-func ask(ctx context.Context, in *bufio.Reader, out io.Writer, current settings, readToken func() (string, error), checkPRD func(target) error) (answers, error) {
-	var a answers
-	readLine := func() (string, error) { return in.ReadString('\n') }
-	// shown is value as the question shows it, which for the token is only its end.
-	answer := func(question, value, shown string, readAnswer func() (string, error), validate func(string) error) (string, error) {
-		for {
-			fmt.Fprint(out, prompt(question, shown))
-			s, err := read(ctx, readAnswer)
-			if errors.Is(err, io.EOF) {
-				return "", errors.New("the answers ended before the settings were complete")
-			}
-			if err != nil {
-				return "", err
-			}
-			s = cmp.Or(strings.TrimSpace(s), value)
-			if err = validate(s); err == nil {
-				return s, nil
-			}
-			fmt.Fprintln(out, err)
-		}
-	}
+// questions are the answers to init's form as the person edits them, starting from the file's.
+type questions struct {
+	current  settings
+	checkPRD func(target) error // refuses a PRD repository another project has
 
-	repos := strings.Join(current.Repos, ", ")
-	_, err := answer("Repositories PRDs may change, as owner/name separated by commas", repos, repos, readLine, func(s string) error {
-		var err error
-		// A file can give one repository a PRD repository of its own, which is asked for below.
-		if a.repos, err = parseRepos(strings.Split(s, ",")); err == nil && len(a.repos) == 1 && current.PRDRepo == "" {
-			err = checkPRD(a.repos[0])
-		}
+	repos, prd, base, token string
+}
+
+func newQuestions(current settings, checkPRD func(target) error) *questions {
+	return &questions{
+		current:  current,
+		checkPRD: checkPRD,
+		repos:    strings.Join(current.Repos, ", "),
+		prd:      current.PRDRepo,
+		base:     cmp.Or(current.BaseBranch, "main"),
+		token:    current.GitHubToken,
+	}
+}
+
+// ask asks one question at a time, and leaves a line with each answer in place of its question.
+func (q *questions) ask(ctx context.Context, out io.Writer) error {
+	const reposTitle, prdTitle, baseTitle, tokenTitle = "Repositories exomecha works on", "Repository where you file PRDs",
+		"Base branch", "GitHub token"
+	repos := huh.NewInput().Title(reposTitle).Description("owner/name or clone URLs, separated by commas").Value(&q.repos).Validate(q.checkRepos)
+	if err := askOne(ctx, repos); err != nil {
 		return err
-	})
-	if err != nil {
-		return a, err
 	}
-
-	if len(a.repos) > 1 || current.PRDRepo != "" {
-		a.prd, err = answer("PRD repository, whose issues are the PRDs, as owner/name", current.PRDRepo, current.PRDRepo, readLine, func(s string) error {
-			t, err := parseTarget("prd_repo", s)
-			if err != nil {
-				return err
-			}
-			return checkPRD(t)
-		})
-		if err != nil {
-			return a, err
+	printAnswer(out, reposTitle, strings.Join(fullNames(q.answers().repos), ", "))
+	if q.asksPRD() {
+		prd := huh.NewInput().Title(prdTitle).Description("owner/name or a clone URL").Value(&q.prd).Validate(q.checkPRDRepo)
+		if err := askOne(ctx, prd); err != nil {
+			return err
 		}
+		printAnswer(out, prdTitle, q.answers().prd)
 	}
-
-	base := cmp.Or(current.BaseBranch, "main")
-	a.base, err = answer("Base branch of every repository", base, base, readLine, func(string) error { return nil })
-	if err != nil {
-		return a, err
+	base := huh.NewInput().Title(baseTitle).Value(&q.base).Validate(required("the base branch"))
+	if err := askOne(ctx, base); err != nil {
+		return err
 	}
+	printAnswer(out, baseTitle, q.answers().base)
 
-	a.token, err = answer("GitHub token (not shown as you type)", current.GitHubToken, masked(current.GitHubToken), readToken, func(s string) error {
-		if s == "" {
+	// The saved token is not filled in, since the field would show its length.
+	var typed string
+	token := huh.NewInput().Title(tokenTitle).EchoMode(huh.EchoModeNone).Value(&typed).Validate(func(s string) error {
+		if strings.TrimSpace(s) == "" && q.token == "" {
 			return errors.New("the GitHub token must be set")
 		}
 		return nil
 	})
-	if err != nil {
-		return a, err
+	if q.token != "" {
+		token.Placeholder("Press Enter to keep the current token (" + masked(q.token) + ")")
 	}
-	return a, nil
+	if err := askOne(ctx, token); err != nil {
+		return err
+	}
+	q.token = cmp.Or(strings.TrimSpace(typed), q.token)
+	printAnswer(out, tokenTitle, masked(q.token))
+	return nil
 }
 
-func prompt(question, value string) string {
-	if value == "" {
-		return question + ": "
-	}
-	return question + " [" + value + "]: "
+// askOne runs one question as a form of its own, which clears it once answered.
+func askOne(ctx context.Context, input *huh.Input) error {
+	return huh.NewForm(huh.NewGroup(input)).WithTheme(formTheme).RunWithContext(ctx)
+}
+
+func printAnswer(out io.Writer, title, answer string) {
+	lipgloss.Fprintln(out, passStyle.Render("✓")+" "+title+"  "+answerStyle.Render(answer))
 }
 
 // masked shows the token's last 4 characters, enough to tell which one the file holds.
 func masked(token string) string {
-	if token == "" {
-		return ""
-	}
 	return "..." + token[max(0, len(token)-4):]
 }
 
-// read stops waiting for f when ctx ends, since a read from the terminal cannot be cut off.
-func read(ctx context.Context, f func() (string, error)) (string, error) {
-	type result struct {
-		s   string
-		err error
+// With one repository, that repository holds the PRDs, unless the file gives it a PRD repository
+// of its own.
+func (q *questions) asksPRD() bool {
+	repos, _ := parseRepos(strings.Split(q.repos, ","))
+	return len(repos) > 1 || q.current.PRDRepo != ""
+}
+
+func (q *questions) checkRepos(s string) error {
+	repos, err := parseRepos(strings.Split(s, ","))
+	if err == nil && len(repos) == 1 && q.current.PRDRepo == "" {
+		err = q.checkPRD(repos[0])
 	}
-	done := make(chan result, 1)
-	go func() {
-		s, err := f()
-		done <- result{s, err}
-	}()
-	select {
-	case r := <-done:
-		return r.s, r.err
-	case <-ctx.Done():
-		return "", fmt.Errorf("stopped before writing the settings: %w", context.Cause(ctx))
+	return err
+}
+
+func (q *questions) checkPRDRepo(s string) error {
+	t, err := parseTarget("prd_repo", strings.TrimSpace(s))
+	if err != nil {
+		return err
 	}
+	return q.checkPRD(t)
+}
+
+func required(what string) func(string) error {
+	return func(s string) error {
+		if strings.TrimSpace(s) == "" {
+			return fmt.Errorf("%s must be set", what)
+		}
+		return nil
+	}
+}
+
+// answers reads the form once it has checked every answer.
+func (q *questions) answers() answers {
+	a := answers{base: strings.TrimSpace(q.base), token: strings.TrimSpace(q.token)}
+	a.repos, _ = parseRepos(strings.Split(q.repos, ","))
+	if q.asksPRD() {
+		prd, _ := parseTarget("prd_repo", strings.TrimSpace(q.prd))
+		a.prd = prd.full()
+	}
+	return a
 }
 
 // updateSettings puts the answers in data and leaves the rest as it was, such as the optional

@@ -243,7 +243,8 @@ func TestResolverCommitsCleanMergeThroughClaude(t *testing.T) {
 // A project setting can make git refuse the merge with no conflict, the same way on every try.
 func TestResolverStuckWhenTheMergeFailsWithoutAConflict(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n", setupScript: "git config merge.verifySignatures true\n"})
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.writeSetup(setupScript, "git config merge.verifySignatures true\n")
 	prd, _, head := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
 	e.resolve(prd)
@@ -283,7 +284,7 @@ func TestResolverRetriesWhenSbxFailsTheMerge(t *testing.T) {
 func TestResolverNothingToMerge(t *testing.T) {
 	t.Parallel()
 	// The script fails if setup runs, which it must not with nothing to merge.
-	e := newEnv(t, setupRepo("exit 1\n"))
+	e := newSetupEnv(t, "exit 1\n")
 	prd := e.addPRD("PRD", "PRD body", label.PRD, string(label.Review))
 	head := gittest.Commit(t, e.origin, branchName(prd), "main", map[string]string{"app.txt": "feature\n"})
 	pr := e.gh.AddPull(branchName(prd), "main")

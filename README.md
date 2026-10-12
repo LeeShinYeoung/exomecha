@@ -43,27 +43,29 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
    sudo install exomecha /usr/local/bin/
    ```
 
-2. Install the plugin in Claude Code.
-
-   ```
-   /plugin marketplace add LeeShinYeoung/exomecha
-   /plugin install exomecha@exomecha
-   ```
-
-3. Sign sbx in to Docker and start from the balanced network policy. claude on this machine and sbx must use the same Claude account.
+2. Sign sbx in to Docker and start from the balanced network policy. claude on this machine and sbx must use the same Claude account.
 
    ```
    sbx login
    sbx policy init balanced
    ```
 
-4. In each repository's CLAUDE.md, write how to install the dependencies and run the tests. builder reads it to run the tests in its sandbox. Then run `/exomecha:setup` in the PRD repository and commit the files it makes to the base branch.
+3. In each repository's CLAUDE.md, write how to install the dependencies and run the tests. builder reads it to run the tests in its sandbox.
 
-5. Create the project. It asks for the repositories, the PRD repository, the base branch and the token, and writes them to a settings file. The optional settings are in that file as comments.
+4. Create the project. It asks for the repositories, the PRD repository, the base branch and the token, and writes them to a settings file. The optional settings are in that file as comments. Then it checks this machine, and installs the exomecha plugin in Claude Code for your user.
 
    ```
    exomecha init <project>
    ```
+
+5. In Claude Code, run `/exomecha:setup <project>`. It writes the files that prepare each PRD's sandbox to the project folder and proves them in a real sandbox. Answer its questions.
+
+On a machine that only writes PRDs, without running exomecha, install the plugin in Claude Code yourself:
+
+```
+/plugin marketplace add LeeShinYeoung/exomecha
+/plugin install exomecha@exomecha
+```
 
 ## Usage
 

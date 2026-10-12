@@ -194,10 +194,10 @@ func TestBuilderOpensAPROnlyWhereItCommitted(t *testing.T) {
 	}
 }
 
-// The PRD repository can hold only the PRDs and the files that prepare the sandbox.
-func TestPRDRepositoryOnlyPreparesTheSandbox(t *testing.T) {
+// The PRD repository can hold only the PRDs, and the setup script still runs.
+func TestPRDRepositoryOnlyHoldsThePRDs(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("printf '%s\\n' \"$EXOMECHA_REPOS\" > ../repos.txt\necho ran > "+setupMarker+"\n"))
+	e := newSetupEnv(t, "printf '%s\\n' \"$EXOMECHA_REPOS\" > ../repos.txt\necho ran > "+setupMarker+"\n")
 	api := e.addRepo("api", map[string]string{"api.txt": "v1\n", ".gitignore": setupMarker + "\n"})
 	e.deps.Repos = []*Repo{api.Repo}
 	e.newRuns()
@@ -211,7 +211,7 @@ func TestPRDRepositoryOnlyPreparesTheSandbox(t *testing.T) {
 		t.Errorf("api.txt in the sandbox: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(e.sbx.repo(name), setupMarker)); err != nil {
-		t.Errorf("the PRD repository's setup script did not run: %v", err)
+		t.Errorf("the setup script did not run: %v", err)
 	}
 	if b, err := os.ReadFile(filepath.Join(e.sbx.disk(name), "repos.txt")); err != nil || string(b) != "owner/api "+repoDir+"\n" {
 		t.Errorf("EXOMECHA_REPOS = %q, %v", b, err)
@@ -227,7 +227,7 @@ func TestPRDRepositoryOnlyPreparesTheSandbox(t *testing.T) {
 
 func TestSetupGetsEveryRepository(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("printf '%s\\n' \"$EXOMECHA_REPOS\" > repos.txt\n"))
+	e := newSetupEnv(t, "printf '%s\\n' \"$EXOMECHA_REPOS\" > repos.txt\n")
 	api := e.addRepo("api", map[string]string{"api.txt": "v1\n"})
 	prd := e.gh.AddIssue("PRD", reposSection(e.repo, api.Repo), label.PRD, string(label.Ready))
 	e.step(prd)
@@ -435,7 +435,7 @@ func TestResolverMergesOnlyTheRepositoryThatConflicts(t *testing.T) {
 
 func TestProjectRunsGetTheSecretsAsPlaceholders(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("printf '%s' \"$NPM_TOKEN\" > "+setupMarker+"\n"))
+	e := newSetupEnv(t, "printf '%s' \"$NPM_TOKEN\" > "+setupMarker+"\n")
 	secret := sandbox.Secret{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com"}, Command: "/bin/echo token"}
 	e.deps.Secrets = []sandbox.Secret{secret}
 	e.newRuns()
@@ -464,9 +464,8 @@ func TestProjectRunsGetTheSecretsAsPlaceholders(t *testing.T) {
 
 func TestProjectRunsGetTheSandboxRules(t *testing.T) {
 	t.Parallel()
-	files := setupRepo("echo ran > " + setupMarker + "\n")
-	files[sandboxRules] = "Run only the unit tests. Start no containers.\n"
-	e := newEnv(t, files)
+	e := newSetupEnv(t, "echo ran > "+setupMarker+"\n")
+	e.writeSetup(sandboxRules, "Run only the unit tests. Start no containers.\n")
 	prd, name := e.startedPRD()
 	wantInOrder(t, "builder's input", e.readCtl(name, "input.md"), "## Record", "## Sandbox rules",
 		"Follow them where they differ from CLAUDE.md.\n\nRun only the unit tests. Start no containers.\n", "## Setup")

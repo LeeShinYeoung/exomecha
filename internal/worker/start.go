@@ -177,14 +177,6 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 	if model == (agent.Model{}) {
 		return nil, fmt.Errorf("no model for %s", cmp.Or(string(tier), ro.name))
 	}
-	// The sandbox files are read at one commit of the PRD repository for the whole start.
-	var prep string
-	if ro.project {
-		var err error
-		if prep, err = r.prepBase(ctx, s); err != nil {
-			return nil, err
-		}
-	}
 	if p, err := r.create(ctx, ro, n); p != nil || err != nil {
 		return p, err
 	}
@@ -201,11 +193,11 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 	}
 	input := s.input
 	if ro.project {
-		rules, err := r.rules(ctx, prep)
+		rules, err := r.rules()
 		if err != nil {
 			return nil, err
 		}
-		note, p, err := r.setup(ctx, ro, n, in.Repos, prep)
+		note, p, err := r.setup(ctx, ro, n, in.Repos)
 		if p != nil || err != nil {
 			return p, err
 		}
@@ -223,16 +215,6 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 		input += note
 	}
 	return nil, r.launch(ctx, ro, n, model, input, in)
-}
-
-// prepBase is the PRD repository's base branch commit. A repository of the run already synced it.
-func (r *runs) prepBase(ctx context.Context, s spec) (string, error) {
-	for _, rs := range s.repos {
-		if rs.repo.Git == r.Prep {
-			return rs.base, nil
-		}
-	}
-	return fetchBase(ctx, r.Prep)
 }
 
 // create makes the run's sandbox, from the project's template and with its allowed hosts for a

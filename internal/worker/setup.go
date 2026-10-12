@@ -2,7 +2,9 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,29 +13,26 @@ import (
 	"time"
 )
 
-const setupScript = ".exomecha/setup.sh"
+const setupScript = "setup.sh"
 
 // sandboxRules is what the person chose for the sandbox when /exomecha:setup asked, such as
 // which checks not to run there.
-const sandboxRules = ".exomecha/sandbox.md"
+const sandboxRules = "sandbox.md"
 
-const setupFix = " Fix the script on the base branch, then relabel this issue as below. You don't need to answer."
-
-const setupNote = "## Setup\n\nexomecha ran the project's setup script in this directory (`" + setupScript + "`, the base branch's copy)."
+const setupFix = " Fix the script, or make it again with /exomecha:setup, then relabel this issue as below. You don't need to answer."
 
 // A script still running after this long is stopped and the PRD goes to stuck. Without a limit,
 // a script that never ends would hold the PRD with nothing to show for it.
 const setupTimeout = 10 * time.Minute
 
-// setup runs the setup script of the PRD repository's base branch at commit prep in the run's
-// sandbox, where claude starts, always the base branch's copy, even on a PR branch, so a fix to the
-// script reaches every open PRD. note tells claude it ran, and is "" when the base branch has no
-// script. The problem is set when the script breaks one of its rules, which only a person can fix:
-// it exits 0 in time, and it leaves every repository's working copy as git had it. Its output is
-// in setup.log, which a stuck issue keeps. What it leaves running stays, since the AI's tests may
-// need it, and goes away with the sandbox.
-func (r *runs) setup(ctx context.Context, ro role, n int, repos []repoRun, prep string) (note string, p *problem, err error) {
-	content, ok, err := r.Prep.Show(ctx, prep, setupScript)
+// setup runs the project's setup script in the run's sandbox, where claude starts. note tells
+// claude it ran, and is "" when the project has no script. The problem is set when the script
+// breaks one of its rules, which only a person can fix: it exits 0 in time, and it leaves every
+// repository's working copy as git had it. Its output is in setup.log, which a stuck issue keeps.
+// What it leaves running stays, since the AI's tests may need it, and goes away with the sandbox.
+func (r *runs) setup(ctx context.Context, ro role, n int, repos []repoRun) (note string, p *problem, err error) {
+	path := filepath.Join(r.SetupDir, setupScript)
+	content, ok, err := readSetupFile(path)
 	if err != nil || !ok {
 		return "", nil, err
 	}
@@ -51,11 +50,11 @@ func (r *runs) setup(ctx context.Context, ro role, n int, repos []repoRun, prep 
 	env := append([]string{"EXOMECHA_PRD=" + strconv.Itoa(n), "EXOMECHA_REPOS=" + reposEnv(repos)}, r.secretEnv(ro)...)
 	out, err := r.Sandboxes.Exec(runCtx, name, repoDir, env, "sh", "-c", script, "sh", r.ctl(name))
 	if err != nil {
-		return "", nil, fmt.Errorf("run %s: %w", setupScript, err)
+		return "", nil, fmt.Errorf("run %s: %w", path, err)
 	}
 	_, code, err := splitStatus(string(out))
 	if err != nil {
-		return "", nil, fmt.Errorf("%s: %w", setupScript, err)
+		return "", nil, fmt.Errorf("%s: %w", path, err)
 	}
 
 	var changed []string // git status of each repository the script changed
@@ -89,43 +88,36 @@ func (r *runs) setup(ctx context.Context, ro role, n int, repos []repoRun, prep 
 		// Anything git can see, the AI can commit into the PR.
 		what = "changed the working copy. Everything it creates must be ignored by git, and it must not edit tracked files or commit."
 	default:
+		note := "## Setup\n\nexomecha ran the project's setup script (`" + filepath.Join(r.ctl(name), setupScript) + "`) in this directory."
 		if slices.ContainsFunc(repos, func(rr repoRun) bool { return rr.Merge }) {
-			return setupNote + " It ran before the merge started.\n\n", nil, nil
+			return note + " It ran before the merge started.\n\n", nil, nil
 		}
-		return setupNote + " It ran before you started.\n\n", nil, nil
+		return note + " It ran before you started.\n\n", nil, nil
 	}
 
 	var outputs map[string]string
 	if status := strings.TrimSpace(strings.Join(changed, "\n")); status != "" {
 		outputs = map[string]string{"git-status.log": status}
 	}
-	fix := setupFix
-	// Fixing the base branch cannot help a branch that lacks what the script relies on, such as a
-	// newer .gitignore. Only the PRD repository's own branch can be older than its script.
-	for _, rr := range repos {
-		if !strings.EqualFold(rr.Repo, r.PRDRepo) {
-			continue
-		}
-		upToDate, err := r.Prep.IsAncestor(ctx, rr.Base, rr.Head)
-		if err != nil {
-			return "", nil, err
-		}
-		if !upToDate {
-			fix = fmt.Sprintf(" The script is the base branch's copy, and this PRD's branch is behind the base branch, so the branch may just be older than the script. If it is, merge the base branch into `%s`. If not, fix the script on the base branch. Then relabel this issue as below. You don't need to answer.", branchName(n))
-		}
-	}
-	return "", &problem{why: fmt.Sprintf("`%s` %s", setupScript, what) + fix, outputs: outputs}, nil
+	return "", &problem{why: fmt.Sprintf("`%s` %s", path, what) + setupFix, outputs: outputs}, nil
 }
 
-// rules is the input section with the PRD repository's sandbox rules at commit prep, or "" when
-// there are none.
-func (r *runs) rules(ctx context.Context, prep string) (string, error) {
-	content, ok, err := r.Prep.Show(ctx, prep, sandboxRules)
+// rules is the input section with the project's sandbox rules, or "" when there are none.
+func (r *runs) rules() (string, error) {
+	content, ok, err := readSetupFile(filepath.Join(r.SetupDir, sandboxRules))
 	if err != nil || !ok || strings.TrimSpace(content) == "" {
 		return "", err
 	}
-	return "## Sandbox rules\n\nThe project's `" + sandboxRules + "` (the base branch's copy) sets these rules for this sandbox. " +
+	return "## Sandbox rules\n\nThe project sets these rules for this sandbox. " +
 		"Follow them where they differ from CLAUDE.md.\n\n" + strings.TrimSpace(content) + "\n\n", nil
+}
+
+func readSetupFile(path string) (content string, ok bool, err error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	return string(b), err == nil, err
 }
 
 // reposEnv lists the run's repositories for the setup script, one line each: owner/name, then

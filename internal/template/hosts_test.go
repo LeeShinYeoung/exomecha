@@ -1,18 +1,31 @@
 package template
 
 import (
-	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
 
+// fakeFiles are setup files by name.
 type fakeFiles map[string]string
 
-func (f fakeFiles) BaseFile(_ context.Context, path string) (string, bool, error) {
-	content, ok := f[path]
-	return content, ok, nil
+func setupDir(t *testing.T, files fakeFiles) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		writeFile(t, dir, name, content)
+	}
+	return dir
+}
+
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestParseHosts(t *testing.T) {
@@ -32,7 +45,7 @@ func TestParseHosts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseHosts(tt.content)
+			got, err := parseHosts(hostsName, tt.content)
 			if err != nil || !slices.Equal(got, tt.want) {
 				t.Errorf("parseHosts(%q) = %q, %v, want %q", tt.content, got, err, tt.want)
 			}
@@ -56,12 +69,12 @@ func TestParseHostsRejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseHosts(tt.content)
+			got, err := parseHosts(hostsName, tt.content)
 			var p *Problem
 			if !errors.As(err, &p) {
 				t.Fatalf("parseHosts(%q) = %q, %v, want a Problem", tt.content, got, err)
 			}
-			if !strings.Contains(p.Why(), hostsPath) || !strings.Contains(p.Why(), tt.line) {
+			if !strings.Contains(p.Why(), hostsName) || !strings.Contains(p.Why(), tt.line) {
 				t.Errorf("Why() = %q, want the file and %q", p.Why(), tt.line)
 			}
 		})
@@ -69,12 +82,12 @@ func TestParseHostsRejects(t *testing.T) {
 }
 
 func TestAllowedHosts(t *testing.T) {
-	e := New(fakeFiles{hostsPath: "api.expo.dev # mobile lint\n"}, nil, "owner", "repo")
+	e := New(setupDir(t, fakeFiles{hostsName: "api.expo.dev # mobile lint\n"}), nil, "owner", "repo")
 	if got, err := e.AllowedHosts(t.Context()); err != nil || !slices.Equal(got, []string{"api.expo.dev"}) {
 		t.Errorf("AllowedHosts = %q, %v", got, err)
 	}
 
-	e = New(fakeFiles{}, nil, "owner", "repo")
+	e = New(t.TempDir(), nil, "owner", "repo")
 	if got, err := e.AllowedHosts(t.Context()); err != nil || got != nil {
 		t.Errorf("AllowedHosts without the file = %q, %v, want nil", got, err)
 	}

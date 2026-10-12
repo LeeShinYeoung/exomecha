@@ -513,28 +513,29 @@ func TestBuilderEnvironmentNeedsAPerson(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
-	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.", detail: "step 3/5: a secret in the build output"})
+	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile does not build.", detail: "step 3/5: a secret in the build output"})
 
 	e.step(prd)
 
 	e.wantStatus(prd, label.Stuck)
 	comment := e.lastComment(prd)
-	wantStuckComment(t, comment, "The Dockerfile on the base branch does not build.", label.Ready)
+	wantStuckComment(t, comment, "The Dockerfile does not build.", label.Ready)
 	wantNotContains(t, "stuck comment", comment, "a secret in the build output", "step 3/5")
 }
 
 // The environment main.go wires in. A bad allowed-hosts line fails before any sbx call.
 func TestBuilderTemplateProblemGoesToStuck(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n", ".exomecha/allowed-hosts": "api.example.com\n**\n"})
-	e.deps.Environment = template.New(e.git, nil, "owner", "repo")
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	e.writeSetup("allowed-hosts", "api.example.com\n**\n")
+	e.deps.Environment = template.New(e.deps.SetupDir, nil, "owner", "repo")
 	e.newRuns()
 	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 
 	e.step(prd)
 
 	e.wantStatus(prd, label.Stuck)
-	reason := "`.exomecha/allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it on the base branch."
+	reason := "allowed-hosts` line 2 (`**`) allows every host. List only the hosts the project needs. Fix it, or make it again with /exomecha:setup."
 	wantStuckComment(t, e.lastComment(prd), reason, label.Ready)
 	e.wantRemoved(e.builderBox(prd))
 }

@@ -7,19 +7,19 @@ import (
 	"unicode"
 )
 
-const hostsPath = ".exomecha/allowed-hosts"
+const hostsName = "allowed-hosts"
 
 func (e *Env) AllowedHosts(ctx context.Context) ([]string, error) {
-	content, ok, err := e.files.BaseFile(ctx, hostsPath)
+	content, ok, err := e.read(hostsName)
 	if err != nil || !ok {
 		return nil, err
 	}
-	return parseHosts(content)
+	return parseHosts(e.path(hostsName), content)
 }
 
 // One pattern per line in sbx policy syntax. A pattern sbx would reject should stop here: sbx
 // refusing it for every new sandbox looks like a temporary sbx failure, which is retried forever.
-func parseHosts(content string) ([]string, error) {
+func parseHosts(path, content string) ([]string, error) {
 	var hosts []string
 	for i, line := range strings.Split(content, "\n") {
 		line, _, _ = strings.Cut(line, "#")
@@ -28,7 +28,7 @@ func parseHosts(content string) ([]string, error) {
 			continue
 		}
 		if why := badHost(host); why != "" {
-			return nil, &Problem{Reason: fmt.Sprintf("`%s` line %d (`%s`) %s Fix it on the base branch.", hostsPath, i+1, host, why)}
+			return nil, &Problem{Reason: fmt.Sprintf("`%s` line %d (`%s`) %s", path, i+1, host, why) + fix}
 		}
 		hosts = append(hosts, host)
 	}

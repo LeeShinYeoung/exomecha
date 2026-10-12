@@ -165,6 +165,8 @@ func projectRoot(home, project string) string {
 	return filepath.Join(home, ".exomecha", project)
 }
 
+func setupDir(root string) string { return filepath.Join(root, "setup") }
+
 // lock keeps a second exomecha off the project: both would take the same PRDs and sandboxes and
 // write the same log. The OS lets go of the lock when the process ends, however it ends.
 func lock(root string) (*os.File, error) {
@@ -210,7 +212,6 @@ func serve(ctx context.Context, c config) error {
 		}
 	}
 	var repos []*worker.Repo
-	var prep *git.Git
 	for _, t := range c.repos {
 		repoGH := gh
 		if t != c.prd {
@@ -218,23 +219,16 @@ func serve(ctx context.Context, c config) error {
 				return err
 			}
 		}
-		g := newGit(c, t)
-		if t == c.prd {
-			prep = g
-		}
-		repos = append(repos, &worker.Repo{Name: t.full(), GitHub: repoGH, Git: g})
-	}
-	if prep == nil {
-		prep = newGit(c, c.prd)
+		repos = append(repos, &worker.Repo{Name: t.full(), GitHub: repoGH, Git: newGit(c, t)})
 	}
 	deps := worker.Deps{
 		GitHub:        gh,
 		PRDRepo:       c.prd.full(),
 		Repos:         repos,
-		Prep:          prep,
+		SetupDir:      setupDir(c.root),
 		Secrets:       c.secrets,
 		Sandboxes:     sbx,
-		Environment:   template.New(prep, sbx, c.prd.owner, c.prd.name),
+		Environment:   template.New(setupDir(c.root), sbx, c.prd.owner, c.prd.name),
 		SandboxDir:    filepath.Join(c.root, "sandboxes"),
 		OutputDir:     filepath.Join(c.root, "outputs"),
 		SandboxPrefix: sandbox.RunPrefix(c.prd.owner, c.prd.name),
