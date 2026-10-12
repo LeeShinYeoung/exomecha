@@ -115,6 +115,12 @@ var (
 	failStyle    = lipgloss.NewStyle().Foreground(lipgloss.Red)
 	detailStyle  = lipgloss.NewStyle().Faint(true)
 	answerStyle  = lipgloss.NewStyle().Bold(true)
+
+	// The terminal's own colors, in place of huh's pink.
+	formTheme    = huh.ThemeFunc(huh.ThemeBase16)
+	spinnerTheme = spinner.ThemeFunc(func(bool) *spinner.Styles {
+		return &spinner.Styles{Spinner: lipgloss.NewStyle().Foreground(lipgloss.Cyan), Title: lipgloss.NewStyle()}
+	})
 )
 
 func printHeading(out io.Writer, group string) {
@@ -124,13 +130,13 @@ func printHeading(out io.Writer, group string) {
 // printLine shows line as passed without problems, and as failed with each problem below it.
 func printLine(out io.Writer, line string, problems []error) {
 	if len(problems) == 0 {
-		lipgloss.Fprintln(out, "  "+passStyle.Render("✓")+" "+line)
+		lipgloss.Fprintln(out, passStyle.Render("✓")+" "+line)
 		return
 	}
-	lipgloss.Fprintln(out, "  "+failStyle.Render("✗")+" "+line)
+	lipgloss.Fprintln(out, failStyle.Render("✗")+" "+line)
 	for _, p := range problems {
 		for l := range strings.Lines(p.Error()) {
-			lipgloss.Fprintln(out, "    "+detailStyle.Render(strings.TrimSuffix(l, "\n")))
+			lipgloss.Fprintln(out, "  "+detailStyle.Render(strings.TrimSuffix(l, "\n")))
 		}
 	}
 }
@@ -151,7 +157,7 @@ func report(ctx context.Context, out io.Writer, spin bool, items []item) (ok boo
 		var line string
 		var problems []error
 		if spin {
-			err = spinner.New().Title(it.doing).Context(ctx).WithOutput(out).ActionWithErr(func(ctx context.Context) error {
+			err = spinner.New().Title(it.doing).WithTheme(spinnerTheme).Context(ctx).WithOutput(out).ActionWithErr(func(ctx context.Context) error {
 				line, problems = it.run(ctx)
 				return nil
 			}).Run()
@@ -255,7 +261,7 @@ func (q *questions) ask(ctx context.Context, out io.Writer) error {
 
 // askOne runs one question as a form of its own, which clears it once answered.
 func askOne(ctx context.Context, input *huh.Input) error {
-	return huh.NewForm(huh.NewGroup(input)).RunWithContext(ctx)
+	return huh.NewForm(huh.NewGroup(input)).WithTheme(formTheme).RunWithContext(ctx)
 }
 
 func printAnswer(out io.Writer, title, answer string) {

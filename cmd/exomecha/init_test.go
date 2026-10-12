@@ -118,7 +118,7 @@ func TestReport(t *testing.T) {
 	if !slices.Equal(ran, []string{"a1", "a2", "b1", "c1"}) {
 		t.Errorf("ran %v, want b2 skipped after its group's gate failed", ran)
 	}
-	want := "\nA\n  ✓ a1 passed\n  ✗ a2 failed\n    fix a2\n    with two lines\n\nB\n  ✗ b1 failed\n    fix b1\n    with two lines\n\nC\n  ✓ c1 passed\n"
+	want := "\nA\n✓ a1 passed\n✗ a2 failed\n  fix a2\n  with two lines\n\nB\n✗ b1 failed\n  fix b1\n  with two lines\n\nC\n✓ c1 passed\n"
 	if got := out.String(); got != want {
 		t.Errorf("report printed\n%s\nwant\n%s", got, want)
 	}
