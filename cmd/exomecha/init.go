@@ -24,8 +24,7 @@ import (
 
 // initProject asks for the project's settings, with the ones in its file as the defaults, and writes
 // the answers when they change the file. Without a terminal it asks nothing and keeps the file. Then
-// it signs sbx in to Claude when sbx has no login, and checks this machine. Last, when the project
-// has no setup script and there is a terminal, it starts claude with /exomecha:setup.
+// it signs sbx in to Claude when sbx has no login, and checks this machine.
 func initProject(ctx context.Context, home, project string) error {
 	path, err := settingsPath(home, project)
 	if err != nil {
@@ -98,28 +97,12 @@ func initProject(ctx context.Context, home, project string) error {
 	if err := check(ctx, c); err != nil {
 		return fmt.Errorf("fix these, then run exomecha init %s again:\n%w", project, err)
 	}
-	dir := setupDir(projectRoot(home, project))
-	if _, err := os.Stat(filepath.Join(dir, "setup.sh")); errors.Is(err, fs.ErrNotExist) && term.IsTerminal(fd) {
-		if err := setUp(ctx, dir, project); err != nil {
-			return err
-		}
+	if _, err := os.Stat(filepath.Join(setupDir(projectRoot(home, project)), "setup.sh")); errors.Is(err, fs.ErrNotExist) {
+		fmt.Printf("Ready. Next, run /exomecha:setup %s in Claude Code to write the sandbox's setup files.\n", project)
+		fmt.Printf("Then start the project with: exomecha run %s\n", project)
+		return nil
 	}
 	fmt.Printf("Ready. Start the project with: exomecha run %s\n", project)
-	return nil
-}
-
-// setUp has claude write the setup files with the person there to answer its questions.
-func setUp(ctx context.Context, dir, project string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	fmt.Println("Starting claude to write the sandbox's setup files with /exomecha:setup, which needs the exomecha plugin.")
-	cmd := exec.CommandContext(ctx, "claude", "/exomecha:setup "+project)
-	cmd.Dir = dir
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("claude: %w", err)
-	}
 	return nil
 }
 

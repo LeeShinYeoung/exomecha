@@ -11,7 +11,7 @@ A Claude Code plugin that people use. Its code is in `skills` and `.claude-plugi
 - `/exomecha:draft-prd`: records a problem as a draft. The issue gets the `prd` and `status:draft` labels, and no worker takes it.
 - `/exomecha:summary-all-drafts`: summarizes the open drafts, to help pick what to settle next.
 - `/exomecha:complete-prd`: writes a PRD with every decision in it, from the conversation or from drafts. When one PR would be too big, it splits the work into several PRDs, and a PRD that needs an earlier one is blocked by it. Last, it adds `status:ready` and a tier label. The tier picks builder's model.
-- `/exomecha:setup`: writes the files that prepare a PRD's sandbox to the project folder, and proves them in a real sandbox. `init` starts it when the project has no setup script.
+- `/exomecha:setup`: writes the files that prepare a PRD's sandbox to the project folder, and proves them in a real sandbox. `init` says to run it when the project has no setup script.
 
 ## Orchestrator
 
@@ -19,7 +19,7 @@ A Go daemon, the `exomecha` command. Its code is in `cmd/exomecha` and `internal
 
 ### Parts
 
-- **Commands**: `init` (settings, checks and the setup files), `run` (runs a project), `list` (projects).
+- **Commands**: `init` (settings and checks), `run` (runs a project), `list` (projects).
 - **Workers**: builder, reviewer and resolver. Each checks the PRDs every minute and takes one step.
 - **Sandboxes**: one sbx sandbox per PRD, with claude running in it.
 - **Project environment**: the setup files in the project folder. They prepare builder's and resolver's sandboxes.

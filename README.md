@@ -59,11 +59,13 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
 
 4. In each repository's CLAUDE.md, write how to install the dependencies and run the tests. builder reads it to run the tests in its sandbox.
 
-5. Create the project. It asks for the repositories, the PRD repository, the base branch and the token, and writes them to a settings file. The optional settings are in that file as comments. Then it checks this machine. When the project has no setup files yet, it starts claude with `/exomecha:setup`, which writes the files that prepare each PRD's sandbox and proves them in a real sandbox. Answer its questions there.
+5. Create the project. It asks for the repositories, the PRD repository, the base branch and the token, and writes them to a settings file. The optional settings are in that file as comments. Then it checks this machine.
 
    ```
    exomecha init <project>
    ```
+
+6. In Claude Code, run `/exomecha:setup <project>`. It writes the files that prepare each PRD's sandbox to the project folder and proves them in a real sandbox. Answer its questions.
 
 ## Usage
 

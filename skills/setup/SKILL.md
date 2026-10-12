@@ -1,13 +1,13 @@
 ---
 name: setup
-description: Write the files exomecha uses to prepare a PRD's sandbox (Dockerfile, setup.sh, allowed-hosts, sandbox.md) in the project's setup folder on this machine and prove them in a real sbx sandbox, the way exomecha runs them, for one repository or several. Changes no repository. Use when a person invokes /exomecha:setup, or when exomecha init starts it.
+description: Write the files exomecha uses to prepare a PRD's sandbox (Dockerfile, setup.sh, allowed-hosts, sandbox.md) in the project's setup folder on this machine and prove them in a real sbx sandbox, the way exomecha runs them, for one repository or several. Changes no repository. Use when a person invokes /exomecha:setup.
 ---
 
 # Set up the project's sandboxes
 
 exomecha runs builder and resolver inside Docker Sandboxes (sbx). Every PRD gets a fresh sandbox that holds only what git tracks on the base branch of each repository the PRD lists: no installed dependencies, no ignored config files, no running services. Files in the project's setup folder on this machine prepare it, one set for every repository exomecha may change (`EXOMECHA_REPOS`). Write them there and prove they work in a real sandbox.
 
-The project is the name given with the command, such as `/exomecha:setup acme`. Without one, list the settings files in `~/.exomecha` (one `<project>.yaml` per project) and ask which project. The setup folder, `<setup>` below, is `~/.exomecha/<project>/setup`. `exomecha init` starts this skill in that folder when the project has no setup script.
+The project is the name given with the command, such as `/exomecha:setup acme`. Without one, list the settings files in `~/.exomecha` (one `<project>.yaml` per project) and ask which project. The setup folder, `<setup>` below, is `~/.exomecha/<project>/setup`. Create it if it is not there.
 
 ## Where the code is in a sandbox
 

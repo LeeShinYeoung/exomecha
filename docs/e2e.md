@@ -62,18 +62,18 @@ What the fake cannot show needs real GitHub. Check it after changes to the skill
 
 1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule, since the token owner cannot approve its own PRs.
 2. A fine-grained token for that repository only: Issues read and write, Pull requests read and write, Contents read and write, Actions read.
-3. Install the plugin from your exomecha checkout. init starts claude in the project's setup folder, so install it for your user, not only for the practice repository:
-   ```
-   claude plugin marketplace add <path to exomecha> --scope user
-   claude plugin install exomecha@exomecha --scope user
-   ```
-   After editing the skills, run `claude plugin update exomecha@exomecha` and restart Claude Code.
-4. Install exomecha and run `exomecha init <name>` (see the README). Run exomecha in its own terminal and keep the log in view:
+3. Install exomecha and run `exomecha init <name>` (see the README). Run exomecha in its own terminal and keep the log in view:
    ```
    go install ./cmd/exomecha
    ~/go/bin/exomecha init <name>
    ~/go/bin/exomecha run <name>
    ```
+4. In the practice repository, install the plugin from your exomecha checkout:
+   ```
+   claude plugin marketplace add <path to exomecha> --scope local
+   claude plugin install exomecha@exomecha --scope local
+   ```
+   After editing the skills, run `claude plugin update exomecha@exomecha` and restart Claude Code.
 5. For the commands below, `R=<owner>/<practice repository>`.
 
 ### Labels and the token
@@ -91,7 +91,7 @@ In the practice repository, in Claude Code:
 - `/exomecha:complete-prd <first draft>`. It reports what the latest `main` shows, and asks what to do with the second draft because it overlaps. Check the plan file before approving: the PRD sits under a `# PRD 1: <title>` heading, every ledger row is closed, the Filing row names the draft's number, a tier and the decision for the second draft, and the draft has every section of the body format. After approval the first draft's issue has the text under the heading as its body, `status:ready` in place of `status:draft`, and the tier's label. A second draft that was merged is closed with a comment that links the PRD.
 - `/exomecha:complete-prd` with no number, after settling a small change in the conversation. A new issue appears with `prd`, `status:ready` and the tier's label. It has a comment with only an artifact URL, added before `status:ready` in the timeline, and the artifact shows the change in pictures before and after.
 - `/exomecha:complete-prd` with a change too big for one PR. The plan proposes several PRDs, each under its own heading. After approval a later PRD that needs an earlier one is Blocked by it. Each issue's timeline shows `status:ready` and the tier label added after the Blocked by.
-- `exomecha init <name>` for a project with no setup files starts claude with `/exomecha:setup <name>`. `Dockerfile` and `setup.sh` appear in `~/.exomecha/<name>/setup/`, and `allowed-hosts` too if a check needed a host. No repository changes. The report has the files, how long the script took, the checks it ran, each added host with the step that needs it, and the blocked hosts it left out. Afterwards `sbx ls` and `sbx template ls` show nothing named `exomecha-setup-`.
+- `exomecha init <name>` for a project with no setup files says to run `/exomecha:setup <name>`. Run it. `Dockerfile` and `setup.sh` appear in `~/.exomecha/<name>/setup/`, and `allowed-hosts` too if a check needed a host. No repository changes. The report has the files, how long the script took, the checks it ran, each added host with the step that needs it, and the blocked hosts it left out. Afterwards `sbx ls` and `sbx template ls` show nothing named `exomecha-setup-`.
 
 ### Merging on GitHub
 
