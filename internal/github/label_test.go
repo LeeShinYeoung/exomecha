@@ -3,6 +3,7 @@ package github
 import (
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/LeeShinYeoung/exomecha/internal/github/githubtest"
@@ -61,11 +62,19 @@ func TestSetStatus(t *testing.T) {
 	}
 	want(label.PRD, "priority", string(label.Working))
 
-	s.Relabel(n, "", string(label.Review))
-	if err := client.SetStatus(t.Context(), n, label.Working, label.Ready); err != nil {
-		t.Fatal(err)
+	// A person moves the PRD after the worker read it as working.
+	s.Relabel(n, string(label.Working), string(label.Review))
+	err := client.SetStatus(t.Context(), n, label.Working, label.Ready)
+	if err == nil || !strings.Contains(err.Error(), string(label.Review)) {
+		t.Errorf("SetStatus after a person moved the PRD = %v, want an error that names %s", err, label.Review)
 	}
-	want(label.PRD, "priority", string(label.Ready))
+	want(label.PRD, "priority", string(label.Review))
+
+	s.Relabel(n, "", string(label.Stuck))
+	if err := client.SetStatus(t.Context(), n, label.Review, label.Ready); err == nil {
+		t.Error("SetStatus returned nil with a second status a person added")
+	}
+	want(label.PRD, "priority", string(label.Review), string(label.Stuck))
 
 	if err := client.ClearStatus(t.Context(), n); err != nil {
 		t.Fatal(err)

@@ -2,31 +2,42 @@ package github
 
 import (
 	"bytes"
+	"container/list"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 )
 
+// etagLimit bounds the answers etagTransport keeps, since CheckCI asks a new URL for every commit.
+// The URLs asked every minute are about ten for each PRD a worker holds, so 1000 keeps all of them
+// for a hundred PRDs at once. What goes first is mostly the URLs of commits that are no longer a
+// PR's head.
+const etagLimit = 1000
+
 // etagTransport asks again with If-None-Match for every GET it has an answer to. GitHub does not
 // count a 304 against the rate limit, and most of exomecha's checks get the same answer every
 // minute. It never reuses an answer without asking: a standard HTTP cache would honor GitHub's
 // max-age=60 and could hide a label exomecha changed a moment ago.
 type etagTransport struct {
-	base http.RoundTripper
+	base  http.RoundTripper
+	limit int
 
-	mu   sync.Mutex
-	seen map[string]answer
+	mu sync.Mutex
+	// The answer used last is at the front of order, and the one at the back goes first.
+	order *list.List
+	seen  map[string]*list.Element
 }
 
 type answer struct {
+	key    string
 	etag   string
 	header http.Header
 	body   []byte
 }
 
 func newETagTransport(base http.RoundTripper) *etagTransport {
-	return &etagTransport{base: base, seen: map[string]answer{}}
+	return &etagTransport{base: base, limit: etagLimit, order: list.New(), seen: map[string]*list.Element{}}
 }
 
 func (t *etagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -34,9 +45,7 @@ func (t *etagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return t.base.RoundTrip(req)
 	}
 	key := req.URL.String()
-	t.mu.Lock()
-	prev, ok := t.seen[key]
-	t.mu.Unlock()
+	prev, ok := t.load(key)
 	if ok {
 		req = req.Clone(req.Context())
 		req.Header.Set("If-None-Match", prev.etag)
@@ -48,11 +57,11 @@ func (t *etagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	if ok && res.StatusCode == http.StatusNotModified {
 		res.Body.Close()
-		header := prev.header.Clone()
+		h := prev.header.Clone()
 		// The client reads the remaining rate limit from these, so they must be current.
 		for k, v := range res.Header {
 			if strings.HasPrefix(k, "X-Ratelimit-") {
-				header[k] = v
+				h[k] = v
 			}
 		}
 		return &http.Response{
@@ -61,7 +70,7 @@ func (t *etagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			Proto:         res.Proto,
 			ProtoMajor:    res.ProtoMajor,
 			ProtoMinor:    res.ProtoMinor,
-			Header:        header,
+			Header:        h,
 			Body:          io.NopCloser(bytes.NewReader(prev.body)),
 			ContentLength: int64(len(prev.body)),
 			Request:       req,
@@ -77,9 +86,33 @@ func (t *etagTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.mu.Lock()
-	t.seen[key] = answer{etag: etag, header: res.Header.Clone(), body: body}
-	t.mu.Unlock()
+	t.store(answer{key: key, etag: etag, header: res.Header.Clone(), body: body})
 	res.Body = io.NopCloser(bytes.NewReader(body))
 	return res, nil
+}
+
+func (t *etagTransport) load(key string) (answer, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, ok := t.seen[key]
+	if !ok {
+		return answer{}, false
+	}
+	t.order.MoveToFront(e)
+	return e.Value.(answer), true
+}
+
+func (t *etagTransport) store(a answer) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if e, ok := t.seen[a.key]; ok {
+		e.Value = a
+		t.order.MoveToFront(e)
+		return
+	}
+	t.seen[a.key] = t.order.PushFront(a)
+	if t.order.Len() > t.limit {
+		oldest := t.order.Remove(t.order.Back()).(answer)
+		delete(t.seen, oldest.key)
+	}
 }

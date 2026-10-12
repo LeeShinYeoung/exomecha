@@ -643,7 +643,6 @@ func (s *Server) listJobs(r *http.Request) (int, any) {
 	return notFound()
 }
 
-// job finds the job whose ID is in the request's path.
 func (s *Server) job(r *http.Request) (Job, bool) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	for _, runs := range s.runs {
@@ -797,7 +796,6 @@ func (s *Server) ClosePull(n int) {
 	s.pulls[n].Open = false
 }
 
-// MergePull merges PR n, as a person does on GitHub.
 func (s *Server) MergePull(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

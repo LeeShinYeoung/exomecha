@@ -33,8 +33,6 @@ func (c *Client) OpenPR(ctx context.Context, branch string) (number int, ok bool
 	return prs[0].GetNumber(), true, nil
 }
 
-// LastClosedPR returns the newest closed PR from branch and whether it was merged, with ok false
-// when branch has no closed PR.
 func (c *Client) LastClosedPR(ctx context.Context, branch string) (number int, merged, ok bool, err error) {
 	// GitHub lists the newest first.
 	prs, _, err := c.api.PullRequests.List(ctx, c.owner, c.repo, &gh.PullRequestListOptions{
@@ -94,23 +92,24 @@ func isApproval(cm Comment) bool {
 	return cm.Note.Kind == KindApproved || cm.Note.Kind == "" && strings.HasPrefix(cm.Body, approval)
 }
 
-// SendBacks counts exomecha's reviews on PR pr that sent its PRD back to builder since a person last
-// stepped in: since exomecha's latest approval on the PR or its latest comment in prd, the PRD's
-// comments, which asked a person to answer. The PRD can be in another repository.
+// SendBacks counts the reviews in which exomecha sent PR pr's PRD back to builder after a person
+// last stepped in. A person steps in after exomecha approves the PR, and after exomecha comments on
+// the PRD to ask a person to answer. prd is the PRD's comments, and the PRD can be in another
+// repository.
 func (c *Client) SendBacks(ctx context.Context, pr int, prd []Comment) (int, error) {
 	var since time.Time
 	for _, cm := range prd {
-		if cm.Exomecha && cm.Trusted {
+		if cm.Exomecha && cm.Trusted && cm.CreatedAt.After(since) {
 			since = cm.CreatedAt
 		}
 	}
+	reviews, err := c.reviews(ctx, pr)
+	if err != nil {
+		return 0, err
+	}
 	var sent []time.Time
-	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, pr, &gh.ListOptions{PerPage: 100}) {
-		if err != nil {
-			return 0, err
-		}
-		cm := commentFrom(r.GetBody(), r.GetAuthorAssociation(), r.GetSubmittedAt().Time)
-		if r.GetState() == "PENDING" || !cm.Exomecha || !cm.Trusted {
+	for _, cm := range reviews {
+		if !cm.Exomecha || !cm.Trusted {
 			continue
 		}
 		switch {
@@ -139,29 +138,39 @@ func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) 
 	if err != nil {
 		return nil, err
 	}
+	reviews, err := c.reviews(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, reviews...)
+	opts := &gh.PullRequestListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for lc, err := range c.api.PullRequests.ListCommentsIter(ctx, c.owner, c.repo, number, opts) {
+		if err != nil {
+			return nil, err
+		}
+		cm := commentFrom(lc.GetBody(), lc.GetAuthorAssociation(), lc.GetCreatedAt().Time)
+		cm.Path = lc.GetPath()
+		// line is empty once a later push takes the line out of the diff.
+		cm.Line = cmp.Or(lc.GetLine(), lc.GetOriginalLine())
+		out = append(out, cm)
+	}
+	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, nil
+}
+
+func (c *Client) reviews(ctx context.Context, number int) ([]Comment, error) {
+	var out []Comment
 	for r, err := range c.api.PullRequests.ListReviewsIter(ctx, c.owner, c.repo, number, &gh.ListOptions{PerPage: 100}) {
 		if err != nil {
 			return nil, err
 		}
 		// The token owner's review that is not submitted yet is listed too. A review made only of
-		// comments on lines has no body, and those comments come below.
+		// comments on lines has no body, and PRComments reads those comments on their own.
 		if r.GetState() == "PENDING" || strings.TrimSpace(r.GetBody()) == "" {
 			continue
 		}
 		out = append(out, commentFrom(r.GetBody(), r.GetAuthorAssociation(), r.GetSubmittedAt().Time))
 	}
-	opts := &gh.PullRequestListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	for cm, err := range c.api.PullRequests.ListCommentsIter(ctx, c.owner, c.repo, number, opts) {
-		if err != nil {
-			return nil, err
-		}
-		c := commentFrom(cm.GetBody(), cm.GetAuthorAssociation(), cm.GetCreatedAt().Time)
-		c.Path = cm.GetPath()
-		// line is empty once a later push takes the line out of the diff.
-		c.Line = cmp.Or(cm.GetLine(), cm.GetOriginalLine())
-		out = append(out, c)
-	}
-	slices.SortStableFunc(out, func(a, b Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return out, nil
 }
 
@@ -200,9 +209,7 @@ func (c *Client) CheckCI(ctx context.Context, sha string) (CI, []Run, error) {
 	}
 	var failed []Run
 	for _, r := range runs {
-		switch r.GetConclusion() {
-		case "success", "skipped", "neutral":
-		default:
+		if !passing(r.GetConclusion()) {
 			failed = append(failed, Run{ID: r.GetID(), Name: r.GetName(), Conclusion: r.GetConclusion(), URL: r.GetHTMLURL()})
 		}
 	}
@@ -212,19 +219,26 @@ func (c *Client) CheckCI(ctx context.Context, sha string) (CI, []Run, error) {
 	return CIPassed, nil, nil
 }
 
+func passing(conclusion string) bool {
+	switch conclusion {
+	case "success", "skipped", "neutral":
+		return true
+	}
+	return false
+}
+
 type JobLog struct {
 	Job  string
 	Tail string // the last lines of its log
 }
 
-// logLines is how much of a failed job's log FailedJobLogs keeps. A job's failure is near its end.
+// A job's failure is near the end of its log.
 const logLines = 80
 
 // The download goes to wherever GitHub redirects, which is not GitHub's API: it gets no token, and
-// it stays out of the API client's ETag store, which keeps every answer it saw.
+// a log read once stays out of the API client's ETag store.
 var logClient = &http.Client{Timeout: time.Minute}
 
-// FailedJobLogs returns the end of the log of every job that failed in CI run runID.
 func (c *Client) FailedJobLogs(ctx context.Context, runID int64) ([]JobLog, error) {
 	var out []JobLog
 	opts := &gh.ListWorkflowJobsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
@@ -232,8 +246,8 @@ func (c *Client) FailedJobLogs(ctx context.Context, runID int64) ([]JobLog, erro
 		if err != nil {
 			return nil, err
 		}
-		switch j.GetConclusion() {
-		case "", "success", "skipped", "neutral":
+		// A job not finished yet has no conclusion.
+		if j.GetConclusion() == "" || passing(j.GetConclusion()) {
 			continue
 		}
 		at, _, err := c.api.Actions.GetWorkflowJobLogs(ctx, c.owner, c.repo, j.GetID(), 1)

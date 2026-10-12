@@ -49,7 +49,6 @@ func (c *Client) Identity(ctx context.Context) (name, email string, err error) {
 	return cmp.Or(u.GetName(), u.GetLogin()), fmt.Sprintf("%d+%s@users.noreply.github.com", u.GetID(), u.GetLogin()), nil
 }
 
-// Reach checks that the token can see the repository.
 func (c *Client) Reach(ctx context.Context) error {
 	_, _, err := c.api.Repositories.Get(ctx, c.owner, c.repo)
 	return err
