@@ -12,7 +12,8 @@ import (
 )
 
 // fakeSBX puts an sbx on PATH that records its arguments and stdin, and answers from files the
-// test writes: out.<verb> on stdout, err.<verb> on stderr and exit 1.
+// test writes: out.<verb> on stdout, err.<verb> on stderr and exit 1. A call that fails exits
+// without reading its stdin, as a command that gives up early does.
 type fakeSBX struct {
 	t   *testing.T
 	dir string
@@ -26,9 +27,9 @@ dir=$(dirname "$0")
 # One write per call, since LoadTemplate runs two at once.
 line=$(printf '%s\037' "$@")
 printf '%s\n' "$line" >> "$dir/calls"
-cat > "$dir/in.$1"
 [ -f "$dir/out.$1" ] && cat "$dir/out.$1"
 if [ -f "$dir/err.$1" ]; then cat "$dir/err.$1" >&2; exit 1; fi
+cat > "$dir/in.$1"
 exit 0
 `
 	if err := os.WriteFile(filepath.Join(dir, "sbx"), []byte(script), 0o755); err != nil {
@@ -296,6 +297,17 @@ func TestLoadTemplateSaveFailure(t *testing.T) {
 	}
 }
 
+func TestLoadTemplateLoadFailure(t *testing.T) {
+	f := newFakeSBX(t)
+	// More than a pipe holds, so the save is still writing when the load gives up.
+	f.answer("exec", strings.Repeat("x", 1<<20))
+	f.fail("template", "Error: invalid tar header\n")
+	err := (CLI{}).LoadTemplate(t.Context(), "box", "repo:tag")
+	if err == nil || !strings.Contains(err.Error(), "invalid tar header") {
+		t.Errorf("LoadTemplate = %v, want template load's message", err)
+	}
+}
+
 func TestRemove(t *testing.T) {
 	f := newFakeSBX(t)
 	if err := (CLI{}).Remove(t.Context(), "box"); err != nil {
@@ -313,6 +325,13 @@ func TestRemoveGoneSandbox(t *testing.T) {
 	f.fail("rm", "Error: daemon not running")
 	if err := (CLI{}).Remove(t.Context(), "box"); err == nil {
 		t.Error("Remove hid a real failure")
+	}
+}
+
+func TestRemoveWithoutSBX(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if err := (CLI{}).Remove(t.Context(), "box"); err == nil {
+		t.Error("Remove with no sbx on PATH = nil, want an error")
 	}
 }
 
