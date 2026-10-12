@@ -228,9 +228,9 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 	n := prd.Number
 	return r.runs.start(ctx, reviewerRole, n, func(ctx context.Context) (spec, error) {
 		var s spec
-		var shown []runRepo
+		var shown []repoWithPR
 		for _, p := range prs {
-			base, err := baseCommit(ctx, p.repo.Git)
+			base, err := fetchBase(ctx, p.repo.Git)
 			if err != nil {
 				return spec{}, err
 			}
@@ -239,9 +239,9 @@ func (r *reviewer) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 				rs.branch, rs.head, rs.remote = branchName(n), p.open.HeadSHA, p.open.HeadSHA
 			}
 			s.repos = append(s.repos, rs)
-			shown = append(shown, runRepo{repo: p.repo, pr: p.open.Number})
+			shown = append(shown, repoWithPR{repo: p.repo, pr: p.open.Number})
 		}
-		input, err := record(ctx, r.Deps, prd, shown)
+		input, err := sharedInput(ctx, r.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
@@ -295,7 +295,7 @@ func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) 
 	default:
 		return r.runs.failed(ctx, reviewerRole, n, badResult)
 	}
-	return r.runs.done(ctx, reviewerRole, n)
+	return r.runs.drop(ctx, reviewerRole, n)
 }
 
 // finish closes the PRD as completed and then clears its status. A PRD left open comes back to
@@ -342,7 +342,7 @@ func (r *reviewer) requeue(ctx context.Context, n int, open []repoPR, kind, revi
 	}
 	if sent >= r.ReviewLimit {
 		// A review sent for a failed CI has no run, and keeps nothing.
-		kept := r.runs.keep(ctx, reviewerRole, n, nil)
+		kept := r.runs.keepOutputs(ctx, reviewerRole, n, nil)
 		return toStuck(ctx, r.GitHub, n, reviewerRole.name, label.Review, label.Ready, fmt.Sprintf(
 			"reviewer sent %s back to builder %d times, the limit, and its latest review on the PR still asks for changes.", r.prRefs(open), sent), kept)
 	}

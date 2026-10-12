@@ -139,7 +139,7 @@ func TestGateReadsAgainWhenStale(t *testing.T) {
 	f := newFakeUsage(newClock())
 	f.wantOpen(t, true)
 	f.usage.FiveHour.Used = 0.95
-	f.gate.stale()
+	f.gate.markStale()
 	f.wantOpen(t, false)
 	f.wantChecks(t, 2)
 

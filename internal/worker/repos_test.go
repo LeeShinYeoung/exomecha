@@ -362,7 +362,7 @@ func TestRecordShowsAnEntryOnEveryPROnce(t *testing.T) {
 		}
 	}
 	api.gh.AddPullComment(apiPR, "a person's comment on the API")
-	got, err := record(t.Context(), e.deps, e.issue(prd), []runRepo{{e.repo, pr}, {api.Repo, apiPR}})
+	got, err := sharedInput(t.Context(), e.deps, e.issue(prd), []repoWithPR{{e.repo, pr}, {api.Repo, apiPR}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestRecordKeepsAnEntryAnOutsiderCopied(t *testing.T) {
 	if err := e.deps.GitHub.AddReview(t.Context(), pr, note, "rename it"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := record(t.Context(), e.deps, e.issue(prd), []runRepo{{e.repo, pr}})
+	got, err := sharedInput(t.Context(), e.deps, e.issue(prd), []repoWithPR{{e.repo, pr}})
 	if err != nil {
 		t.Fatal(err)
 	}

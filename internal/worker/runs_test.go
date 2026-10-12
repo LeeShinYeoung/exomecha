@@ -52,7 +52,7 @@ func TestRunStates(t *testing.T) {
 	e.wantState(name, preparing)
 	e.sbx.add(name)
 	e.wantState(name, preparing)
-	if err := e.runs.record(name, inputs{Repos: []repoRun{{Head: "abc"}}}); err != nil {
+	if err := e.runs.writeStart(name, inputs{Repos: []repoRun{{Head: "abc"}}}); err != nil {
 		t.Fatal(err)
 	}
 	e.wantState(name, running)
@@ -83,7 +83,7 @@ func TestStallStartsOverForNewRuns(t *testing.T) {
 	name := e.runs.name(builderRole, 7)
 	e.sbx.add(name)
 	e.writeCtl(name, "stream.jsonl", "{}\n")
-	if err := e.runs.record(name, inputs{}); err != nil {
+	if err := e.runs.writeStart(name, inputs{}); err != nil {
 		t.Fatal(err)
 	}
 	e.wantState(name, running)
@@ -286,7 +286,7 @@ func TestReaderRunFinishesWithoutItsSandbox(t *testing.T) {
 	for _, name := range []string{reader, project} {
 		e.sbx.add(name)
 		e.writeCtl(name, "stream.jsonl", "{}\n")
-		if err := e.runs.record(name, inputs{}); err != nil {
+		if err := e.runs.writeStart(name, inputs{}); err != nil {
 			t.Fatal(err)
 		}
 		e.sbx.drop(name)
@@ -305,7 +305,7 @@ func TestFinishedReaderGivesItsSlotBack(t *testing.T) {
 	for _, name := range []string{reader, project} {
 		e.sbx.add(name)
 		e.writeCtl(name, "stream.jsonl", "{}\n")
-		if err := e.runs.record(name, inputs{}); err != nil {
+		if err := e.runs.writeStart(name, inputs{}); err != nil {
 			t.Fatal(err)
 		}
 		e.writeCtl(name, "exit", "0\n")

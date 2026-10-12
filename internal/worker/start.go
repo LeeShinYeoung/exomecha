@@ -151,7 +151,7 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	// Undo the start even when shutdown cancelled ctx.
 	cleanup := context.WithoutCancel(ctx)
 	if p != nil {
-		kept := r.keep(cleanup, ro, n, p.outputs)
+		kept := r.keepOutputs(cleanup, ro, n, p.outputs)
 		if err := toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept); err != nil {
 			return err
 		}
@@ -196,7 +196,7 @@ func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, erro
 		}
 	}
 	// Before setup, so the project's script can change what the defaults set.
-	if err := r.defaults(ctx, ro, n); err != nil {
+	if err := r.installDefaults(ctx, ro, n); err != nil {
 		return nil, err
 	}
 	input := s.input
@@ -232,7 +232,7 @@ func (r *runs) prepBase(ctx context.Context, s spec) (string, error) {
 			return rs.base, nil
 		}
 	}
-	return baseCommit(ctx, r.Prep)
+	return fetchBase(ctx, r.Prep)
 }
 
 // create makes the run's sandbox, from the project's template and with its allowed hosts for a
@@ -329,10 +329,10 @@ func (r *runs) launch(ctx context.Context, ro role, n int, model agent.Model, in
 	if err := r.Sandboxes.Start(ctx, name, repoDir, r.secretEnv(ro), args...); err != nil {
 		return err
 	}
-	return r.record(name, in)
+	return r.writeStart(name, in)
 }
 
-func (r *runs) record(name string, in inputs) error {
+func (r *runs) writeStart(name string, in inputs) error {
 	b, err := json.Marshal(in)
 	if err != nil {
 		return err

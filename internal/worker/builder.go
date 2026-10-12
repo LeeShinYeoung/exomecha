@@ -125,10 +125,10 @@ func (b *builder) start(ctx context.Context, prd github.Issue, repos []*Repo) er
 	return b.runs.start(ctx, builderRole, n, func(ctx context.Context) (spec, error) {
 		branch := branchName(n)
 		s := spec{tier: label.TierOf(prd.Labels)}
-		var shown []runRepo
+		var shown []repoWithPR
 		var logs string
 		for _, repo := range repos {
-			base, err := baseCommit(ctx, repo.Git)
+			base, err := fetchBase(ctx, repo.Git)
 			if err != nil {
 				return spec{}, err
 			}
@@ -149,9 +149,9 @@ func (b *builder) start(ctx context.Context, prd github.Issue, repos []*Repo) er
 				logs += b.ciLogs(ctx, repo, len(repos), remote)
 			}
 			s.repos = append(s.repos, rs)
-			shown = append(shown, runRepo{repo: repo, pr: pr})
+			shown = append(shown, repoWithPR{repo: repo, pr: pr})
 		}
-		input, err := record(ctx, b.Deps, prd, shown)
+		input, err := sharedInput(ctx, b.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
@@ -241,7 +241,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	if len(in.Repos) > 1 {
 		keyword = "Part of"
 	}
-	var prs []runRepo
+	var prs []repoWithPR
 	for i, rr := range in.Repos {
 		repo, _ := b.runs.repo(rr.Repo)
 		if slices.Contains(changed, i) {
@@ -264,7 +264,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 			hasPR = true
 		}
 		if hasPR {
-			prs = append(prs, runRepo{repo: repo, pr: pr})
+			prs = append(prs, repoWithPR{repo: repo, pr: pr})
 		}
 	}
 	// Every run's summary goes on the PRs, where the record shows the next worker what this run did.
@@ -284,5 +284,5 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	if err := b.GitHub.SetStatus(ctx, n, label.Working, label.Review); err != nil {
 		return err
 	}
-	return b.runs.done(ctx, builderRole, n)
+	return b.runs.drop(ctx, builderRole, n)
 }

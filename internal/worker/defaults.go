@@ -40,10 +40,10 @@ func Seed(dir string) error {
 	return os.CopyFS(dir, sub)
 }
 
-// defaults copies ClaudeDir over claude's user settings in the sandbox, where the project's own
-// settings take precedence over it. settings.json is merged into the template's, which holds the
-// permission mode.
-func (r *runs) defaults(ctx context.Context, ro role, n int) error {
+// installDefaults copies ClaudeDir over claude's user settings in the sandbox, where the
+// project's own settings take precedence over it, and installs the plugins they enable.
+// settings.json is merged into the template's, which holds the permission mode.
+func (r *runs) installDefaults(ctx context.Context, ro role, n int) error {
 	if r.ClaudeDir == "" {
 		return nil
 	}

@@ -122,9 +122,9 @@ func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 	n := prd.Number
 	branch := branchName(n)
 	var s spec
-	var shown []runRepo
+	var shown []repoWithPR
 	for _, p := range prs {
-		base, err := baseCommit(ctx, p.repo.Git)
+		base, err := fetchBase(ctx, p.repo.Git)
 		if err != nil {
 			return err
 		}
@@ -145,14 +145,14 @@ func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 			}
 		}
 		s.repos = append(s.repos, rs)
-		shown = append(shown, runRepo{repo: p.repo, pr: p.open.Number})
+		shown = append(shown, repoWithPR{repo: p.repo, pr: p.open.Number})
 	}
 	// Leave before setup runs for nothing.
 	if !slices.ContainsFunc(s.repos, func(rs repoSpec) bool { return rs.merge }) {
 		return nil
 	}
 	return r.runs.start(ctx, resolverRole, n, func(ctx context.Context) (spec, error) {
-		input, err := record(ctx, r.Deps, prd, shown)
+		input, err := sharedInput(ctx, r.Deps, prd, shown)
 		if err != nil {
 			return spec{}, err
 		}
@@ -230,7 +230,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		}
 	}
 	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
-	return r.runs.done(ctx, resolverRole, n)
+	return r.runs.drop(ctx, resolverRole, n)
 }
 
 // unfinished returns what is still wrong in one repository after the AI reported the merge

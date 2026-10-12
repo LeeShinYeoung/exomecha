@@ -65,8 +65,9 @@ func (g *Gate) Open(ctx context.Context) (bool, error) {
 	return !closed, nil
 }
 
-// stale makes the next Open read usage again, after a run hit a limit the last reading did not show.
-func (g *Gate) stale() {
+// markStale makes the next Open read usage again, after a run hit a limit the last reading did
+// not show.
+func (g *Gate) markStale() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.at = time.Time{}

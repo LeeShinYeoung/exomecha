@@ -73,7 +73,7 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 	if limited {
 		// The reading the start passed missed the limit. A new one keeps the gate closed until the reset.
 		if r.gate != nil {
-			r.gate.stale()
+			r.gate.markStale()
 		}
 		return false, r.restart(ctx, ro, n)
 	}

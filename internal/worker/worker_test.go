@@ -448,7 +448,7 @@ func TestRoundDoesNotStrikeALockedItem(t *testing.T) {
 	t.Parallel()
 	w := &fakeWorker{picks: []int{1}}
 	r := newRounds(w, newClock())
-	r.locks.lock(1)
+	r.locks.tryLock(1)
 	r.run(t.Context())
 	wantInts(t, "tries while locked", w.took(), nil)
 	r.locks.unlock(1)
