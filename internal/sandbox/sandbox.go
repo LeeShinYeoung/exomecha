@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -217,7 +218,37 @@ func (CLI) GitURL(name, dir string) string {
 // GlobalGitHubSecret reports whether sbx has a GitHub secret for every sandbox. Its proxy would
 // hand it to the AI's requests, which could then push past exomecha's checks.
 func (CLI) GlobalGitHubSecret(ctx context.Context) (bool, error) {
-	out, err := run(ctx, "secret", "ls", "--global", "--service", "github", "--json")
+	return globalSecret(ctx, "github")
+}
+
+// ClaudeSignedIn reports whether sbx keeps a Claude login for every sandbox, from a sign-in or an
+// Anthropic API key.
+func (CLI) ClaudeSignedIn(ctx context.Context) (bool, error) {
+	return globalSecret(ctx, "anthropic")
+}
+
+// SignIn runs claude auth login in a sandbox of its own, on the caller's terminal. sbx keeps the
+// login for every sandbox and hands each only a placeholder.
+func (c CLI) SignIn(ctx context.Context, terminal *os.File) error {
+	const name = "exomecha-login"
+	// One an interrupted sign-in left behind would hold the name.
+	if err := c.Remove(ctx, name); err != nil {
+		return err
+	}
+	if err := c.CreateHelper(ctx, name); err != nil {
+		return err
+	}
+	defer c.Remove(context.WithoutCancel(ctx), name)
+	cmd := exec.CommandContext(ctx, "sbx", "exec", "-it", name, "claude", "auth", "login")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = terminal, terminal, terminal
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sbx exec: %w", err)
+	}
+	return nil
+}
+
+func globalSecret(ctx context.Context, service string) (bool, error) {
+	out, err := run(ctx, "secret", "ls", "--global", "--service", service, "--json")
 	if err != nil {
 		return false, err
 	}

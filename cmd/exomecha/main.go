@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -24,18 +25,39 @@ import (
 )
 
 const usage = `Usage:
-  exomecha run <project>    run the project in this terminal, with ~/.exomecha/<project>.yaml
+  exomecha init <project>   ask for the project's settings, write ~/.exomecha/<project>.yaml and check this machine
+  exomecha run <project>    run the project in this terminal
+  exomecha list             list the projects and whether each is running
 `
 
 func main() {
 	// Until run opens the log file, lines go to the terminal alone, in the same form.
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	if len(os.Args) != 3 || os.Args[1] != "run" {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "exomecha:", err)
+		os.Exit(1)
+	}
+	args := os.Args[1:]
+	switch {
+	case len(args) == 2 && args[0] == "init":
+		// Ctrl-C during the sign-in still removes its sandbox.
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		err = initProject(ctx, home, args[1])
+		stop()
+	case len(args) == 2 && args[0] == "run":
+		if err := run(home, args[1]); err != nil {
+			slog.Error("exomecha could not start", logging.Err, err)
+			os.Exit(1)
+		}
+	case len(args) == 1 && args[0] == "list":
+		err = list(home, os.Stdout)
+	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	if err := run(os.Args[2]); err != nil {
-		slog.Error("exomecha could not start", logging.Err, err)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "exomecha:", err)
 		os.Exit(1)
 	}
 }
@@ -83,16 +105,15 @@ func defaults() config {
 	}
 }
 
-func run(project string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
+func run(home, project string) error {
 	path, err := settingsPath(home, project)
 	if err != nil {
 		return err
 	}
 	c, err := loadConfig(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s has no settings. Make them with: exomecha init %s", project, project)
+	}
 	if err != nil {
 		return err
 	}
@@ -100,7 +121,7 @@ func run(project string) error {
 	// Without this a write to stderr after whatever reads it has gone, such as tee, ends exomecha.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 
-	c.root = filepath.Join(home, ".exomecha", c.prd.owner, c.prd.name)
+	c.root = projectRoot(home, c.prd)
 	// Only here, so the e2e runs, which set their own root, leave the operator's defaults alone.
 	c.claudeDir = filepath.Join(home, ".exomecha", "claude")
 	if err := os.MkdirAll(c.root, 0o755); err != nil {
@@ -120,6 +141,10 @@ func run(project string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	return serve(ctx, c)
+}
+
+func projectRoot(home string, prd target) string {
+	return filepath.Join(home, ".exomecha", prd.owner, prd.name)
 }
 
 // lock keeps a second exomecha off the repository: both would take the same PRDs and sandboxes and
