@@ -248,7 +248,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 			// A run that did not start from the branch began from the base branch, so it replaces any
 			// old branch of the same name.
 			if err := repo.Git.PushCommit(ctx, heads[i], branch, rr.Head != rr.Remote); err != nil {
-				return err
+				return fmt.Errorf("%s: %w", repo.Name, err)
 			}
 		}
 		pr, hasPR, err := repo.GitHub.OpenPR(ctx, branch)

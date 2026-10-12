@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -200,7 +201,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	for i, rr := range merges {
 		repo, _ := r.runs.repo(rr.Repo)
 		if err := repo.Git.PushCommit(ctx, heads[i], branchName(n), false); err != nil {
-			return err
+			return fmt.Errorf("%s: %w", repo.Name, err)
 		}
 	}
 	// The record shows reviewer and the next workers how the merge was settled.

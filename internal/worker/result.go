@@ -79,6 +79,8 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 	}
 	if err != nil {
 		slog.ErrorContext(ctx, "exomecha could not read the run", logging.Sandbox, name, logging.Err, err)
+		// The AI can write the run's files, so reading them again is not sure to work.
+		return false, r.stuck(ctx, ro, n, fmt.Sprintf("exomecha could not read the run's result: %s. The error is in exomecha's log.", failure))
 	}
 	if failure != "" {
 		return false, r.failed(ctx, ro, n, failure)
@@ -90,25 +92,26 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 }
 
 // outcome reads a finished run. failure says why the run failed, in words fit for a comment. err
-// is set when exomecha could not read the run, which is exomecha's failure, not the AI's. limited
-// is set when the run ended at the Claude usage limit.
+// is set when exomecha could not read the run, and failure then says why. The AI can write the
+// run's files, so that can be the AI's doing as much as exomecha's. limited is set when the run
+// ended at the Claude usage limit.
 func (r *runs) outcome(name string) (res json.RawMessage, failure string, limited bool, err error) {
 	b, err := readCtl(r.ctl(name), "exit", 64)
 	if err != nil {
-		return res, "exomecha could not read how claude ended", false, err
+		return res, "the file that records how claude ended could not be read", false, err
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil {
-		return res, "exomecha could not read how claude ended", false, fmt.Errorf("exit file holds %q", b)
+		return res, "the file that records how claude ended holds no exit status", false, fmt.Errorf("exit file holds %q", b)
 	}
 	f, err := openCtl(r.ctl(name), "stream.jsonl")
 	if err != nil {
-		return res, "exomecha could not read claude's output", false, err
+		return res, "claude's output file could not be read", false, err
 	}
 	defer f.Close()
 	s, err := agent.ReadStream(io.LimitReader(f, streamLimit))
 	if err != nil {
-		return res, "exomecha could not read claude's output", false, err
+		return res, "claude's output file could not be read", false, err
 	}
 	res, err = s.Result()
 	if (err != nil || code != 0) && s.Rejected {

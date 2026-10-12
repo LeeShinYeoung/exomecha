@@ -112,7 +112,7 @@ func TestOutcome(t *testing.T) {
 		{"no result", "143", init, "with an error or without a result", false},
 		{"no structured output", "0", init + `{"type":"result","subtype":"success","is_error":false,"result":"text"}` + "\n", "with an error or without a result", false},
 		{"bad exit with a result", "1", streamOf(`{"result":"done"}`), "claude ended with an error", false},
-		{"bad exit file", "", streamOf(`{"result":"done"}`), "could not read how claude ended", false},
+		{"bad exit file", "", streamOf(`{"result":"done"}`), "holds no exit status", false},
 		{"usage limit", "1", init + `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected"}}` + "\n" +
 			`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit"}` + "\n", "", true},
 	} {

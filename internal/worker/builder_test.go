@@ -582,6 +582,56 @@ func TestBuilderFailedRunGoesStuck(t *testing.T) {
 	wantContains(t, "kept output", e.wantKept(name, "stream.jsonl"), "secret detail")
 }
 
+// The AI can write the files a run is read from, so a run exomecha cannot read goes to a person,
+// and the comment says exomecha could not read it instead of blaming the AI.
+func TestBuilderStuckWhenTheRunCannotBeRead(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, name := e.startedPRD()
+	e.play(name, commit(t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
+	e.writeCtl(name, "exit", "not a number\n")
+
+	e.step(prd)
+
+	e.wantStatus(prd, label.Stuck)
+	comment := e.lastComment(prd)
+	wantStuckComment(t, comment, "exomecha could not read the run's result: the file that records how claude ended holds no exit status.", label.Ready)
+	wantNotContains(t, "stuck comment", comment, "The AI's run failed")
+}
+
+// A PRD can change several repositories, so a failed push says which one.
+func TestPushErrorsNameTheRepository(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		worker  string
+		arrange func(e *env) int
+		handle  func(e *env, n int) error
+	}{
+		{"builder", func(e *env) int {
+			prd, name := e.startedPRD()
+			e.play(name, commit(e.t, "feat: x", map[string]string{"x.txt": "x\n"}), builderDone)
+			return prd
+		}, func(e *env, n int) error { return e.builder().Handle(e.t.Context(), n) }},
+		{"resolver", func(e *env) int {
+			prd, name, _ := e.conflicted()
+			e.play(name, resolveWith(e.t, "main\nfeature\n"), resolverDone)
+			return prd
+		}, func(e *env, n int) error { return e.resolver().Handle(e.t.Context(), n) }},
+	} {
+		t.Run(c.worker, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+			n := c.arrange(e)
+			e.refusePushes(true)
+
+			err := c.handle(e, n)
+			if err == nil || !strings.HasPrefix(err.Error(), e.repo.Name+": ") {
+				t.Errorf("Handle = %v, want the push error to start with %s", err, e.repo.Name)
+			}
+		})
+	}
+}
+
 func TestBuilderResultInAnotherFormFails(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct{ name, result string }{

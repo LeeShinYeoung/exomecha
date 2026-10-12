@@ -152,10 +152,10 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	cleanup := context.WithoutCancel(ctx)
 	if p != nil {
 		kept := r.keep(cleanup, ro, n, p.outputs)
-		if err := r.remove(cleanup, name); err != nil {
+		if err := toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept); err != nil {
 			return err
 		}
-		return toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept)
+		return r.remove(cleanup, name)
 	}
 	if rerr := r.restart(cleanup, ro, n); rerr != nil {
 		return errors.Join(err, rerr)
