@@ -1,9 +1,12 @@
 name: lint
 
 on:
+  # Not **.md: the prompts and default rules are .md files built into the binary.
   push:
     branches: [main]
+    paths-ignore: ['README.md', 'docs/**']
   pull_request:
+    paths-ignore: ['README.md', 'docs/**']
 
 permissions:
   contents: read
