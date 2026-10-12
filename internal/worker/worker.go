@@ -438,6 +438,28 @@ func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from,
 	return gh.SetStatus(ctx, n, from, label.Stuck)
 }
 
+// posted reports whether the newest note of n on PR pr already says text. When a later step
+// fails, the next try collects the same run, or requeues for the same CI runs, and writes the same
+// text, so a match is an earlier try's.
+func posted(ctx context.Context, gh *github.Client, pr int, n github.Note, text string) (bool, error) {
+	comments, err := gh.PRComments(ctx, pr)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range slices.Backward(comments) {
+		if !c.Exomecha || !c.Trusted || c.Note != n {
+			continue
+		}
+		said := c.Body
+		if n.Kind == github.KindApproved {
+			// AddApproval puts a sentence of its own, with no blank line in it, before text.
+			_, said, _ = strings.Cut(said, "\n\n")
+		}
+		return said == strings.TrimSpace(text), nil
+	}
+	return false, nil
+}
+
 // tilde shortens a path in the home directory, whose name gives away this machine's user.
 func tilde(path string) string {
 	home, err := os.UserHomeDir()

@@ -276,7 +276,15 @@ func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) 
 			return err
 		}
 	case "approve":
+		note := github.Note{Worker: reviewerRole.name, Kind: github.KindApproved}
 		for _, p := range open {
+			already, err := posted(ctx, p.repo.GitHub, p.open.Number, note, out.Body)
+			if err != nil {
+				return err
+			}
+			if already {
+				continue
+			}
 			if err := p.repo.GitHub.AddApproval(ctx, p.open.Number, out.Body); err != nil {
 				return err
 			}
@@ -306,17 +314,29 @@ func (r *reviewer) requeue(ctx context.Context, n int, open []repoPR, kind, revi
 	if err != nil {
 		return err
 	}
+	note := github.Note{Worker: reviewerRole.name, Kind: kind}
 	// A PR opened later counts fewer send-backs, so the PRD's count is the largest.
 	sent := 0
+	var unreviewed []repoPR
 	for _, p := range open {
 		count, err := p.repo.GitHub.SendBacks(ctx, p.open.Number, comments)
 		if err != nil {
 			return err
 		}
+		already, err := posted(ctx, p.repo.GitHub, p.open.Number, note, review)
+		if err != nil {
+			return err
+		}
+		if already {
+			// An earlier try left this review, so the count holds it. Leave it out, as that try did.
+			count--
+		} else {
+			unreviewed = append(unreviewed, p)
+		}
 		sent = max(sent, count)
 	}
-	for _, p := range open {
-		if err := p.repo.GitHub.AddReview(ctx, p.open.Number, github.Note{Worker: reviewerRole.name, Kind: kind}, review); err != nil {
+	for _, p := range unreviewed {
+		if err := p.repo.GitHub.AddReview(ctx, p.open.Number, note, review); err != nil {
 			return err
 		}
 	}

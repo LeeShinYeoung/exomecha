@@ -268,8 +268,16 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		}
 	}
 	// Every run's summary goes on the PRs, where the record shows the next worker what this run did.
+	note := github.Note{Worker: builderRole.name, Kind: github.KindSummary}
 	for _, p := range prs {
-		if err := p.repo.GitHub.AddComment(ctx, p.pr, github.Note{Worker: builderRole.name, Kind: github.KindSummary}, out.Summary); err != nil {
+		already, err := posted(ctx, p.repo.GitHub, p.pr, note, out.Summary)
+		if err != nil {
+			return err
+		}
+		if already {
+			continue
+		}
+		if err := p.repo.GitHub.AddComment(ctx, p.pr, note, out.Summary); err != nil {
 			return err
 		}
 	}

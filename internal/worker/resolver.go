@@ -204,6 +204,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		}
 	}
 	// The record shows reviewer and the next workers how the merge was settled.
+	note := github.Note{Worker: resolverRole.name, Kind: github.KindResolved}
 	for _, rr := range in.Repos {
 		repo, ok := r.runs.repo(rr.Repo)
 		if !ok {
@@ -213,10 +214,18 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		if err != nil {
 			return err
 		}
-		if open {
-			if err := repo.GitHub.AddComment(ctx, pr, github.Note{Worker: resolverRole.name, Kind: github.KindResolved}, out.Reason); err != nil {
-				return err
-			}
+		if !open {
+			continue
+		}
+		already, err := posted(ctx, repo.GitHub, pr, note, out.Reason)
+		if err != nil {
+			return err
+		}
+		if already {
+			continue
+		}
+		if err := repo.GitHub.AddComment(ctx, pr, note, out.Reason); err != nil {
+			return err
 		}
 	}
 	// The PRD stays in review, and reviewer looks at it again at its next check, a minute later.
