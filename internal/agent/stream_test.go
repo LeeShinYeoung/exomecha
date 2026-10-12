@@ -54,6 +54,14 @@ func TestReadStreamErrorResult(t *testing.T) {
 	}
 }
 
+func TestReadStreamRejectedWithWindowsOfAnotherShape(t *testing.T) {
+	stream := `{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","unifiedWindows":{"five_hour":{"utilization":"high"}}}}` + "\n"
+	s, err := ReadStream(strings.NewReader(stream))
+	if err != nil || !s.Rejected || s.UsageKnown {
+		t.Errorf("stream = %+v, %v, want a rejection without known usage", s, err)
+	}
+}
+
 func TestReadStreamWithoutResult(t *testing.T) {
 	// A run killed in the middle of a line.
 	stream := `{"type":"system","subtype":"init","permissionMode":"auto"}

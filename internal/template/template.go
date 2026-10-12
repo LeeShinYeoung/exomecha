@@ -148,12 +148,12 @@ func (e *Env) ensure(ctx context.Context, ref, dockerfile string) error {
 	if err := e.sbx.Remove(ctx, e.helper); err != nil {
 		return fmt.Errorf("remove leftover build sandbox: %w", err)
 	}
-	err = e.build(ctx, ref, dockerfile, hosts)
+	err = e.buildTemplate(ctx, ref, dockerfile, hosts)
 	removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeTimeout)
 	defer cancel()
-	if err := e.sbx.Remove(removeCtx, e.helper); err != nil {
+	if removeErr := e.sbx.Remove(removeCtx, e.helper); removeErr != nil {
 		// The next build removes it.
-		slog.WarnContext(ctx, "side task failed", logging.Task, "remove the build sandbox", logging.Sandbox, e.helper, logging.Err, err)
+		slog.WarnContext(ctx, "side task failed", logging.Task, "remove the build sandbox", logging.Sandbox, e.helper, logging.Err, removeErr)
 	}
 	if err != nil {
 		return err
@@ -162,7 +162,7 @@ func (e *Env) ensure(ctx context.Context, ref, dockerfile string) error {
 	return nil
 }
 
-func (e *Env) build(ctx context.Context, ref, dockerfile string, hosts []string) error {
+func (e *Env) buildTemplate(ctx context.Context, ref, dockerfile string, hosts []string) error {
 	if err := e.sbx.CreateHelper(ctx, e.helper); err != nil {
 		return err
 	}

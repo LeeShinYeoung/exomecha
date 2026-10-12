@@ -146,6 +146,10 @@ func (CLI) SetSecret(ctx context.Context, name string, s Secret) error {
 // that is already gone is not an error.
 func (CLI) Remove(ctx context.Context, name string) error {
 	_, err := run(ctx, "rm", "--force", name)
+	// Go's error for a missing sbx also says "not found".
+	if errors.Is(err, exec.ErrNotFound) {
+		return err
+	}
 	if err != nil && strings.Contains(err.Error(), "not found") {
 		return nil
 	}
@@ -204,13 +208,13 @@ func (CLI) LoadTemplate(ctx context.Context, name, ref string) error {
 	output, err := stream(ctx, r, nil, "template", "load", "/dev/stdin")
 	// Unblocks the save if load stopped reading early.
 	r.CloseWithError(errors.New("template load ended"))
-	if saveErr := <-saved; saveErr != nil {
+	saveErr := <-saved
+	if err == nil {
 		return saveErr
 	}
-	if err != nil {
-		return fmt.Errorf("sbx template load: %w: %s", err, output)
-	}
-	return nil
+	// A load that fails stops reading, and the save then fails on the closed pipe, so load's
+	// error comes first.
+	return errors.Join(fmt.Errorf("sbx template load: %w: %s", err, output), saveErr)
 }
 
 // GitURL is a git URL for the repository at dir inside the sandbox. git reaches it by running git

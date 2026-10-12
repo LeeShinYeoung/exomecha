@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -31,15 +30,15 @@ type Window struct {
 func (Claude) Usage(ctx context.Context) (Usage, error) {
 	stdout, stderr, runErr := probe(ctx, "--model", "haiku", "--effort", "low")
 
-	// claude still reports the limits when it refuses the call because one is used up.
-	u, err := parseUsage(bytes.NewReader(stdout))
-	if err != nil || u.Known {
-		return u, err
+	s, err := ReadStream(bytes.NewReader(stdout))
+	if err != nil {
+		return Usage{}, err
 	}
-	if runErr != nil {
+	// claude still reports the limits when it refuses the call because one is used up.
+	if !s.UsageKnown && runErr != nil {
 		return Usage{}, fmt.Errorf("run claude: %w: %s", runErr, stderr)
 	}
-	return u, nil
+	return Usage{Known: s.UsageKnown, Rejected: s.Rejected, FiveHour: s.FiveHour, Weekly: s.Weekly}, nil
 }
 
 // Check makes a short claude call on m in auto permission mode, as every worker's run is, so a
@@ -47,13 +46,11 @@ func (Claude) Usage(ctx context.Context) (Usage, error) {
 func (Claude) Check(ctx context.Context, m Model) error {
 	stdout, stderr, runErr := probe(ctx, "--model", m.Name, "--effort", m.Effort, "--permission-mode", "auto")
 	err := checkStream(bytes.NewReader(stdout), m)
-	if errors.Is(err, errNotStarted) && runErr != nil {
-		return fmt.Errorf("run claude: %w: %s", runErr, stderr)
+	if err != nil && runErr != nil {
+		return fmt.Errorf("%w: run claude: %w: %s", err, runErr, stderr)
 	}
 	return err
 }
-
-var errNotStarted = errors.New("claude did not start")
 
 // SignedIn reports whether claude on this machine has a login, which the usage and model checks use.
 func (Claude) SignedIn(ctx context.Context) (bool, error) {
@@ -82,7 +79,7 @@ func checkStream(r io.Reader, m Model) error {
 	}
 	switch {
 	case s.PermissionMode == "":
-		return errNotStarted
+		return errors.New("claude did not start")
 	case s.PermissionMode != "auto":
 		return fmt.Errorf("claude does not run %s in auto permission mode", m.Name)
 	// A used up limit is a normal state that exomecha waits out, so it must not stop the start.
@@ -114,38 +111,4 @@ func probe(ctx context.Context, args ...string) (stdout []byte, stderr string, e
 	cmd.Stderr = &errOut
 	err = cmd.Run()
 	return out.Bytes(), strings.TrimSpace(errOut.String()), err
-}
-
-func parseUsage(r io.Reader) (Usage, error) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(nil, 16<<20)
-	for sc.Scan() {
-		var line struct {
-			Type string `json:"type"`
-			Info struct {
-				Status  string `json:"status"`
-				Windows map[string]struct {
-					Utilization float64 `json:"utilization"`
-					ResetsAt    int64   `json:"resetsAt"`
-				} `json:"unifiedWindows"`
-			} `json:"rate_limit_info"`
-		}
-		if json.Unmarshal(sc.Bytes(), &line) != nil || line.Type != "rate_limit_event" {
-			continue
-		}
-		window := func(name string) Window {
-			w, ok := line.Info.Windows[name]
-			if !ok {
-				return Window{}
-			}
-			return Window{Used: w.Utilization, ResetsAt: time.Unix(w.ResetsAt, 0)}
-		}
-		return Usage{
-			Known:    true,
-			Rejected: line.Info.Status == "rejected",
-			FiveHour: window("five_hour"),
-			Weekly:   window("seven_day"),
-		}, nil
-	}
-	return Usage{}, sc.Err()
 }
