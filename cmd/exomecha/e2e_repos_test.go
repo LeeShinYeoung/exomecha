@@ -101,8 +101,8 @@ func shoutAcrossPRD(greet, docs *codeRepo) prdText {
 `, greet.full(), docs.full(), greet.name, docs.name, greet.name, greet.name, docs.name)}
 }
 
-// A PRD changes two repositories from a PRD repository that holds only the PRDs and the sandbox's
-// files. Each repository gets a PR, reviewer approves both, and the PRD closes after both merge.
+// A PRD changes two repositories from a PRD repository that holds only the PRDs. Each repository
+// gets a PR, reviewer approves both, and the PRD closes after both merge.
 func TestE2ETwoRepositories(t *testing.T) {
 	e2e(t, false)
 	const grace = 10 * time.Second
@@ -110,10 +110,10 @@ func TestE2ETwoRepositories(t *testing.T) {
 printf '%s' "$E2E_TOKEN" > /home/agent/token.txt
 `
 	w := newWorld(t, "multi", map[string]string{
-		"README.md":            "# plans\n\nThe PRDs of the greet project.\n",
-		".exomecha/setup.sh":   setup,
-		".exomecha/sandbox.md": "Run each repository's tests from its own folder.\n",
+		"README.md": "# plans\n\nThe PRDs of the greet project.\n",
 	}, func(c *config) { c.ciGrace = grace })
+	w.writeSetup("setup.sh", setup)
+	w.writeSetup("sandbox.md", "Run each repository's tests from its own folder.\n")
 	secret := sandbox.Secret{Env: "E2E_TOKEN", Hosts: []string{"example.com"}, Command: "/bin/echo e2e-not-a-secret"}
 	w.cfg.repos = nil
 	w.cfg.secrets = []sandbox.Secret{secret}

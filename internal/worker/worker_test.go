@@ -75,7 +75,7 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		GitHub:        client,
 		PRDRepo:       e.repo.Name,
 		Repos:         []*Repo{e.repo},
-		Prep:          e.git,
+		SetupDir:      t.TempDir(),
 		Sandboxes:     e.sbx,
 		Environment:   e.envr,
 		SandboxDir:    t.TempDir(),

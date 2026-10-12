@@ -276,6 +276,16 @@ func (w *world) git(dir string, args ...string) string {
 
 // push commits files to branch in origin as a person would, and returns the commit. A branch that
 // does not exist yet starts from from. A file starting with "#!" is executable.
+func (w *world) writeSetup(name, content string) {
+	dir := setupDir(w.root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		w.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
 func (w *world) push(branch, from, message string, files map[string]string) string {
 	w.t.Helper()
 	dir := filepath.Join(w.t.TempDir(), "clone")

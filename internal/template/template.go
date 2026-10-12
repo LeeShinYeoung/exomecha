@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 )
 
-const dockerfilePath = ".exomecha/Dockerfile"
+const dockerfileName = "Dockerfile"
 
 var (
 	// A Dockerfile can hang, for example on a download that never ends.
@@ -22,10 +25,6 @@ var (
 	// Removing the helper runs after the caller's context may be gone.
 	removeTimeout = time.Minute
 )
-
-type Files interface {
-	BaseFile(ctx context.Context, path string) (content string, ok bool, err error)
-}
 
 type Sandboxes interface {
 	Templates(ctx context.Context) ([]sandbox.Template, error)
@@ -39,8 +38,8 @@ type Sandboxes interface {
 	Remove(ctx context.Context, name string) error
 }
 
-// Problem is a failure only a person can fix on the base branch. Its Reason goes into the
-// PRD's stuck comment.
+// Problem is a failure only a person can fix in the setup files. Its Reason goes into the PRD's
+// stuck comment.
 type Problem struct {
 	Reason string
 	output string // never in the comment: build output can hold secrets
@@ -54,7 +53,7 @@ func (p *Problem) Why() string { return p.Reason }
 func (p *Problem) Output() string { return p.output }
 
 type Env struct {
-	files  Files
+	dir    string // the setup files' folder
 	sbx    Sandboxes
 	slug   string
 	helper string // the sandbox a build runs in
@@ -71,8 +70,20 @@ type build struct {
 	abandoned bool
 }
 
-func New(files Files, sbx Sandboxes, owner, repo string) *Env {
-	return &Env{files: files, sbx: sbx, slug: sandbox.Slug(owner, repo), helper: sandbox.BuildName(owner, repo)}
+func New(dir string, sbx Sandboxes, owner, repo string) *Env {
+	return &Env{dir: dir, sbx: sbx, slug: sandbox.Slug(owner, repo), helper: sandbox.BuildName(owner, repo)}
+}
+
+const fix = " Fix it, or make it again with /exomecha:setup."
+
+func (e *Env) path(name string) string { return filepath.Join(e.dir, name) }
+
+func (e *Env) read(name string) (content string, ok bool, err error) {
+	b, err := os.ReadFile(e.path(name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	return string(b), err == nil, err
 }
 
 func (e *Env) repository() string { return "docker.io/library/exomecha-" + e.slug }
@@ -82,9 +93,9 @@ func (e *Env) ref(dockerfile string) string {
 	return e.repository() + ":" + hex.EncodeToString(sum[:])[:12]
 }
 
-// An empty ref means the base branch has no Dockerfile for exomecha.
+// An empty ref means the project has no Dockerfile for exomecha.
 func (e *Env) Template(ctx context.Context) (ref string, err error) {
-	dockerfile, ok, err := e.files.BaseFile(ctx, dockerfilePath)
+	dockerfile, ok, err := e.read(dockerfileName)
 	if err != nil || !ok {
 		return "", err
 	}
@@ -169,7 +180,7 @@ func (e *Env) buildTemplate(ctx context.Context, ref, dockerfile string, hosts [
 	// Downloads in the Dockerfile meet the same network policy as the PRD sandboxes.
 	if err := e.sbx.Allow(ctx, e.helper, hosts); err != nil {
 		if p, ok := errors.AsType[*sandbox.PatternError](err); ok {
-			return &Problem{Reason: fmt.Sprintf("sbx rejected `%s`: %s. Fix it on the base branch.", hostsPath, p.Detail)}
+			return &Problem{Reason: fmt.Sprintf("sbx rejected `%s`: %s.", e.path(hostsName), p.Detail) + fix}
 		}
 		return err
 	}
@@ -183,12 +194,12 @@ func (e *Env) buildTemplate(ctx context.Context, ref, dockerfile string, hosts [
 		return ctx.Err()
 	case buildCtx.Err() != nil:
 		return &Problem{
-			Reason: fmt.Sprintf("`%s` did not build within %d minutes. Fix it on the base branch.", dockerfilePath, int(buildTimeout.Minutes())),
+			Reason: fmt.Sprintf("`%s` did not build within %d minutes.", e.path(dockerfileName), int(buildTimeout.Minutes())) + fix,
 			output: output,
 		}
 	default:
 		return &Problem{
-			Reason: fmt.Sprintf("`%s` failed to build (%v). Fix it on the base branch.", dockerfilePath, err),
+			Reason: fmt.Sprintf("`%s` failed to build (%v).", e.path(dockerfileName), err) + fix,
 			output: output,
 		}
 	}

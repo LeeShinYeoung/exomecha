@@ -17,9 +17,19 @@ import (
 // The file the test setup scripts write. Git ignores it, the way it ignores what a real setup script creates.
 const setupMarker = ".setup-ran"
 
-func setupRepo(script string) map[string]string {
-	return map[string]string{"app.txt": "v1\n", ".gitignore": setupMarker + "\n", setupScript: script}
+func setupRepo() map[string]string {
+	return map[string]string{"app.txt": "v1\n", ".gitignore": setupMarker + "\n"}
 }
+
+// newSetupEnv is a project whose setup script is script.
+func newSetupEnv(t *testing.T, script string) *env {
+	t.Helper()
+	e := newEnv(t, setupRepo())
+	e.writeSetup(setupScript, script)
+	return e
+}
+
+func (e *env) writeSetup(name, content string) { writeFile(e.t, e.deps.SetupDir, name, content) }
 
 // captureLog swaps the process-wide logger, so a test that calls it must not run in parallel.
 func captureLog(t *testing.T) *bytes.Buffer {
@@ -50,7 +60,7 @@ func cancelWhenExists(ctx context.Context, cancel context.CancelFunc, path strin
 
 func TestBuilderDoesNotPushTheSetupMarker(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
+	e := newSetupEnv(t, "echo ran > "+setupMarker+"\n")
 	prd, name := e.startedPRD()
 	if _, err := os.Stat(filepath.Join(e.sbx.repo(name), setupMarker)); err != nil {
 		t.Fatalf("setup did not run: %v", err)
@@ -64,28 +74,9 @@ func TestBuilderDoesNotPushTheSetupMarker(t *testing.T) {
 	wantNotContains(t, "pushed files", files, setupMarker)
 }
 
-func TestBuilderRunsBaseSetupOnPRBranch(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, setupRepo("echo base > "+setupMarker+"\n"))
-	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
-	branch := branchName(prd)
-	gittest.Commit(t, e.origin, branch, "main", map[string]string{
-		setupScript:   "echo branch > " + setupMarker + "\n",
-		"feature.txt": "first\n",
-	})
-	e.gh.AddPull(branch, "main")
-
-	e.step(prd)
-
-	b, err := os.ReadFile(filepath.Join(e.sbx.repo(e.builderBox(prd)), setupMarker))
-	if err != nil || string(b) != "base\n" {
-		t.Errorf("setup marker = %q, %v, want the base branch's script to have run", b, err)
-	}
-}
-
 func TestBuilderRequeuesWhenSetupIsInterrupted(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("touch "+setupMarker+"\nexec sleep 10\n"))
+	e := newSetupEnv(t, "touch "+setupMarker+"\nexec sleep 10\n")
 	prd := e.addPRD("PRD", "", label.PRD, string(label.Ready))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -106,7 +97,7 @@ func TestResolverRunsSetupBeforeMerge(t *testing.T) {
 	t.Parallel()
 	// The first line fails if the merge has already started.
 	script := "test ! -e \"$(git rev-parse --git-path MERGE_HEAD)\"\necho ran > " + setupMarker + "\n"
-	e := newEnv(t, setupRepo(script))
+	e := newSetupEnv(t, script)
 	prd, name, _ := e.conflicted()
 	if _, err := os.Stat(filepath.Join(e.sbx.repo(name), setupMarker)); err != nil {
 		t.Fatalf("setup did not run: %v", err)
@@ -123,13 +114,13 @@ func TestResolverRunsSetupBeforeMerge(t *testing.T) {
 
 func TestResolverStuckWhenSetupFails(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("exit 1\n"))
+	e := newSetupEnv(t, "exit 1\n")
 	prd, _, head := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"})
 
 	e.resolve(prd)
 
 	e.wantStatus(prd, label.Stuck)
-	wantStuckComment(t, e.lastComment(prd), "`"+setupScript+"` did not end cleanly (exit status 1)", label.Review)
+	wantStuckComment(t, e.lastComment(prd), setupScript+"` did not end cleanly (exit status 1)", label.Review)
 	if got := gittest.Head(e.origin, branchName(prd)); got != head {
 		t.Errorf("branch moved to %s, want it left at %s", got, head)
 	}

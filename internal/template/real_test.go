@@ -20,15 +20,15 @@ func TestRealBuild(t *testing.T) {
 	const from = "FROM docker/sandbox-templates:claude-code-docker\n"
 	const box = "impl-env-from-template"
 	files := fakeFiles{
-		dockerfilePath: from + "USER root\nRUN echo from-template > /etc/exomecha-template\nUSER agent\n",
-		hostsPath:      "example.com # proves the helper takes allowed-hosts\n",
+		dockerfileName: from + "USER root\nRUN echo from-template > /etc/exomecha-template\nUSER agent\n",
+		hostsName:      "example.com # proves the helper takes allowed-hosts\n",
 	}
-	e := New(files, sandbox.CLI{}, "impl-env", "realtest")
+	e := New(setupDir(t, files), sandbox.CLI{}, "impl-env", "realtest")
 	t.Cleanup(func() { cleanUp(t, e, box) })
 	ctx := t.Context()
 
 	first, err := e.Template(ctx)
-	if err != nil || first != e.ref(files[dockerfilePath]) {
+	if err != nil || first != e.ref(files[dockerfileName]) {
 		t.Fatalf("Template = %q, %v", first, err)
 	}
 	wantTags(t, e, first)
@@ -47,14 +47,14 @@ func TestRealBuild(t *testing.T) {
 	}
 	sbx(t, "rm", "--force", box)
 
-	files[dockerfilePath] = from + "RUN true # changed\n"
+	writeFile(t, e.dir, dockerfileName, from+"RUN true # changed\n")
 	second, err := e.Template(ctx)
 	if err != nil || second == "" || second == first {
 		t.Fatalf("Template after a change = %q, %v", second, err)
 	}
 	wantTags(t, e, second)
 
-	files[dockerfilePath] = from + "RUN echo exomecha-test-output && false\n"
+	writeFile(t, e.dir, dockerfileName, from+"RUN echo exomecha-test-output && false\n")
 	_, err = e.Template(ctx)
 	p, ok := errors.AsType[*Problem](err)
 	if !ok {

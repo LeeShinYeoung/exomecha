@@ -11,18 +11,18 @@ import (
 )
 
 const setupScript = "git config core.hooksPath .githooks\nmkdir -p .cache\necho ran > .cache/setup-ran\n" +
+	"echo .cache/ >> \"$(git rev-parse --git-path info/exclude)\"\n" +
 	"docker run -d --restart unless-stopped --name e2e-svc busybox sleep 100000\n"
 
 func TestE2ESetupAndCommitChecks(t *testing.T) {
 	e2e(t, false)
 	files := project(map[string]string{
-		".exomecha/setup.sh": setupScript,
-		".gitignore":         ".cache/\n",
 		".githooks/commit-msg": "#!/bin/sh\nhead -n 1 \"$1\" | grep -q ' \\[e2e\\]$' && exit 0\n" +
 			"echo 'commit-msg: the first line must end with \" [e2e]\"' >&2\nexit 1\n",
 	})
 	files["CLAUDE.md"] += "- The commit-msg hook in .githooks checks every commit message.\n"
 	w := newWorld(t, "setup", files, func(c *config) { c.ciGrace = time.Hour })
+	w.writeSetup("setup.sh", setupScript)
 	prd := w.filePRD(shoutPRD, string(label.Ready), string(label.Light))
 	w.start()
 

@@ -137,7 +137,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 // The token can push past every check exomecha makes, so nothing a run can read may hold it.
 func TestRunsNeverSeeTheToken(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
+	e := newSetupEnv(t, "echo ran > "+setupMarker+"\n")
 	s, builder := e.testSpec()
 	if p := e.open(s); p != nil {
 		t.Fatalf("open problem: %s", p.why)
@@ -181,7 +181,7 @@ func TestRunsNeverSeeTheToken(t *testing.T) {
 // A reader's run does not run the project, so none of the project's environment goes in.
 func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("echo ran > "+setupMarker+"\n"))
+	e := newSetupEnv(t, "echo ran > "+setupMarker+"\n")
 	e.envr.err = errors.New("read the project's environment")
 	e.sbx.fail["allow"] = errors.New("allow hosts")
 	s, _ := e.testSpec()
@@ -227,12 +227,12 @@ func TestOpenReaderGetsOnlyTheCode(t *testing.T) {
 func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile on the base branch does not build.",
+	e.envr.err = fmt.Errorf("build template: %w", personError{why: "The Dockerfile does not build.",
 		detail: "build failed", output: "step 3/5: a secret in the build output"})
 	s, name := e.testSpec()
 
 	p := e.open(s)
-	if p == nil || p.why != "The Dockerfile on the base branch does not build." {
+	if p == nil || p.why != "The Dockerfile does not build." {
 		t.Fatalf("problem = %+v, want only the reason", p)
 	}
 	wantContains(t, "kept build output", p.outputs["build.log"], "a secret in the build output")
@@ -320,7 +320,7 @@ func TestOpenWhenTheLastSlotIsTaken(t *testing.T) {
 
 func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo(`echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n"))
+	e := newSetupEnv(t, `echo "prd $EXOMECHA_PRD" > `+setupMarker+"\n")
 	s, name := e.testSpec()
 
 	if p := e.open(s); p != nil {
@@ -330,7 +330,8 @@ func TestSetupRunsInTheSandboxBeforeClaude(t *testing.T) {
 	if err != nil || string(b) != "prd 1\n" {
 		t.Errorf("setup marker = %q, %v", b, err)
 	}
-	if got, want := e.readCtl(name, "input.md"), s.input+setupNote+" It ran before you started.\n\n"; got != want {
+	note := "## Setup\n\nexomecha ran the project's setup script (`" + filepath.Join(e.runs.ctl(name), setupScript) + "`) in this directory."
+	if got, want := e.readCtl(name, "input.md"), s.input+note+" It ran before you started.\n\n"; got != want {
 		t.Errorf("input.md = %q", got)
 	}
 }
@@ -353,16 +354,16 @@ func (e *env) wantOpenProblem(s spec, subs ...string) *problem {
 func TestSetupFailure(t *testing.T) {
 	t.Parallel()
 	// exit 0 is never reached: the script stops at the first failing command.
-	e := newEnv(t, setupRepo("echo 'a secret in the output' >&2\nfalse\nexit 0\n"))
+	e := newSetupEnv(t, "echo 'a secret in the output' >&2\nfalse\nexit 0\n")
 	s, name := e.testSpec()
-	p := e.wantOpenProblem(s, "`"+setupScript+"` did not end cleanly (exit status 1)")
+	p := e.wantOpenProblem(s, setupScript+"` did not end cleanly (exit status 1)")
 	wantNotContains(t, "setup problem", p.why, "a secret in the output", "merge the base branch")
 	wantContains(t, "setup.log", e.readCtl(name, "setup.log"), "a secret in the output")
 }
 
 func TestSetupUsesPipefail(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("false | true\n"))
+	e := newSetupEnv(t, "false | true\n")
 	s, _ := e.testSpec()
 	e.wantOpenProblem(s, "did not end cleanly (exit status 1)")
 }
@@ -370,14 +371,14 @@ func TestSetupUsesPipefail(t *testing.T) {
 func TestSetupTimesOut(t *testing.T) {
 	t.Parallel()
 	// 124 is what timeout exits with when it stops the script.
-	e := newEnv(t, setupRepo("exit 124\n"))
+	e := newSetupEnv(t, "exit 124\n")
 	s, _ := e.testSpec()
 	e.wantOpenProblem(s, "ran past 10 minutes")
 }
 
 func TestSetupLeavesChanges(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("echo stray > stray.txt\n"))
+	e := newSetupEnv(t, "echo stray > stray.txt\n")
 	s, _ := e.testSpec()
 	p := e.wantOpenProblem(s, "changed the working copy")
 	wantContains(t, "kept git status", p.outputs["git-status.log"], "?? stray.txt")
@@ -385,14 +386,14 @@ func TestSetupLeavesChanges(t *testing.T) {
 
 func TestSetupCommits(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("git commit -q --allow-empty -m 'from setup'\n"))
+	e := newSetupEnv(t, "git commit -q --allow-empty -m 'from setup'\n")
 	s, _ := e.testSpec()
 	e.wantOpenProblem(s, "changed the working copy")
 }
 
 func TestSetupGetsNoGitAuth(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("env > "+setupMarker+"\n"))
+	e := newSetupEnv(t, "env > "+setupMarker+"\n")
 	s, name := e.testSpec()
 	e.open(s)
 
@@ -408,7 +409,7 @@ func TestSetupGetsNoGitAuth(t *testing.T) {
 // A service the script starts keeps its output open. setup must still return, and the service may stay.
 func TestSetupMayLeaveAServiceRunning(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t, setupRepo("sleep 60 &\necho started\n"))
+	e := newSetupEnv(t, "sleep 60 &\necho started\n")
 	s, name := e.testSpec()
 	begin := time.Now()
 	if p := e.open(s); p != nil {
@@ -420,17 +421,4 @@ func TestSetupMayLeaveAServiceRunning(t *testing.T) {
 	if got := e.readCtl(name, "setup.log"); got != "started\n" {
 		t.Errorf("setup.log = %q", got)
 	}
-}
-
-// The script and the .gitignore entry it relies on reach the base branch after the PR branch
-// started. Fixing the base branch cannot help that branch, so the problem must say to merge.
-func TestSetupOnABranchOlderThanTheScript(t *testing.T) {
-	t.Parallel()
-	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-	old := gittest.Commit(t, e.origin, branchName(1), "main", map[string]string{"feature.txt": "first\n"})
-	gittest.Commit(t, e.origin, "main", "", setupRepo("echo ran > "+setupMarker+"\n"))
-	s, _ := e.testSpec()
-	s.repos[0].head = old
-
-	e.wantOpenProblem(s, "changed the working copy", "merge the base branch into `"+branchName(1)+"`")
 }

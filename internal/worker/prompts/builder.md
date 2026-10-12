@@ -22,7 +22,7 @@ Each repository is a new branch off its base branch until it has a PR. With a PR
 - Start from the files listed under Files. The list is a starting point, not a limit. If you change files outside it, name them and say why in `summary`.
 - Run **only the tests you can run right here in this directory**, and fix things until they pass. Meet every acceptance criterion and cover every test scenario in the PRD.
 - Run commands in the foreground. When you give your result, claude ends and stops anything still running in the background.
-- A 403 response that says "Approval required for <host>" means the sandbox's network policy blocked that host. Report stuck and name the host, so a person can add it to `.exomecha/allowed-hosts`.
+- A 403 response that says "Approval required for <host>" means the sandbox's network policy blocked that host. Report stuck and name the host, so a person can allow it.
 - Do not do what Out of scope excludes.
 - Do not use `git push` or `gh`. exomecha pushes and opens the PR.
 - Do not merge or rebase the base branch into this branch (`git merge`, `git rebase`, `git pull`). Conflicts with the base branch belong to resolver. Only write the code the PRD asks for.
