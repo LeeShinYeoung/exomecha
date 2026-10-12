@@ -47,7 +47,7 @@ func initProject(ctx context.Context, home, project string) error {
 	switch {
 	case term.IsTerminal(int(os.Stdin.Fd())):
 		q := newQuestions(current, func(prd target) error { return checkPRDRepo(home, path, prd) })
-		if err := q.form().RunWithContext(ctx); err != nil {
+		if err := q.ask(ctx, os.Stdout); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				return errors.New("stopped before writing the settings")
 			}
@@ -114,6 +114,7 @@ var (
 	passStyle    = lipgloss.NewStyle().Foreground(lipgloss.Green)
 	failStyle    = lipgloss.NewStyle().Foreground(lipgloss.Red)
 	detailStyle  = lipgloss.NewStyle().Faint(true)
+	answerStyle  = lipgloss.NewStyle().Bold(true)
 )
 
 func printHeading(out io.Writer, group string) {
@@ -211,22 +212,59 @@ func newQuestions(current settings, checkPRD func(target) error) *questions {
 	}
 }
 
-func (q *questions) form() *huh.Form {
-	return huh.NewForm(
-		huh.NewGroup(huh.NewInput().
-			Title("Repositories PRDs may change").
-			Description("owner/name or clone URLs, separated by commas").
-			Value(&q.repos).Validate(q.checkRepos)),
-		huh.NewGroup(huh.NewInput().
-			Title("PRD repository, whose issues are the PRDs").
-			Description("owner/name or a clone URL").
-			Value(&q.prd).Validate(q.checkPRDRepo)).
-			WithHideFunc(func() bool { return !q.asksPRD() }),
-		huh.NewGroup(
-			huh.NewInput().Title("Base branch of every repository").Value(&q.base).Validate(required("the base branch")),
-			huh.NewInput().Title("GitHub token").EchoMode(huh.EchoModePassword).Value(&q.token).Validate(required("the GitHub token")),
-		),
-	)
+// ask asks one question at a time, and leaves a line with each answer in place of its question.
+func (q *questions) ask(ctx context.Context, out io.Writer) error {
+	const reposTitle, prdTitle, baseTitle, tokenTitle = "Repositories PRDs may change", "PRD repository, whose issues are the PRDs",
+		"Base branch of every repository", "GitHub token"
+	repos := huh.NewInput().Title(reposTitle).Description("owner/name or clone URLs, separated by commas").Value(&q.repos).Validate(q.checkRepos)
+	if err := askOne(ctx, repos); err != nil {
+		return err
+	}
+	printAnswer(out, reposTitle, strings.Join(fullNames(q.answers().repos), ", "))
+	if q.asksPRD() {
+		prd := huh.NewInput().Title(prdTitle).Description("owner/name or a clone URL").Value(&q.prd).Validate(q.checkPRDRepo)
+		if err := askOne(ctx, prd); err != nil {
+			return err
+		}
+		printAnswer(out, prdTitle, q.answers().prd)
+	}
+	base := huh.NewInput().Title(baseTitle).Value(&q.base).Validate(required("the base branch"))
+	if err := askOne(ctx, base); err != nil {
+		return err
+	}
+	printAnswer(out, baseTitle, q.answers().base)
+
+	// The saved token is not filled in, since the field would show its length.
+	var typed string
+	token := huh.NewInput().Title(tokenTitle).EchoMode(huh.EchoModeNone).Value(&typed).Validate(func(s string) error {
+		if strings.TrimSpace(s) == "" && q.token == "" {
+			return errors.New("the GitHub token must be set")
+		}
+		return nil
+	})
+	if q.token != "" {
+		token.Placeholder("Enter keeps the current token (" + masked(q.token) + ")")
+	}
+	if err := askOne(ctx, token); err != nil {
+		return err
+	}
+	q.token = cmp.Or(strings.TrimSpace(typed), q.token)
+	printAnswer(out, tokenTitle, masked(q.token))
+	return nil
+}
+
+// askOne runs one question as a form of its own, which clears it once answered.
+func askOne(ctx context.Context, input *huh.Input) error {
+	return huh.NewForm(huh.NewGroup(input)).RunWithContext(ctx)
+}
+
+func printAnswer(out io.Writer, title, answer string) {
+	lipgloss.Fprintln(out, passStyle.Render("✓")+" "+title+"  "+answerStyle.Render(answer))
+}
+
+// masked shows the token's last 4 characters, enough to tell which one the file holds.
+func masked(token string) string {
+	return "..." + token[max(0, len(token)-4):]
 }
 
 // With one repository, that repository holds the PRDs, unless the file gives it a PRD repository
