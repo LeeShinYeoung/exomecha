@@ -13,7 +13,7 @@ import (
 type headerTrip struct{ remaining []string }
 
 func (h *headerTrip) RoundTrip(*http.Request) (*http.Response, error) {
-	res := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}}
+	res := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: http.NoBody}
 	res.Header.Set("X-RateLimit-Remaining", h.remaining[0])
 	res.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Date(2026, 10, 8, 13, 0, 0, 0, time.UTC).Unix(), 10))
 	h.remaining = h.remaining[1:]
@@ -30,9 +30,11 @@ func TestRateWatchLogsTheWaitOnce(t *testing.T) {
 	w := &rateWatch{base: &headerTrip{remaining: []string{"1", "0", "0", "4999", "4998"}}, now: func() time.Time { return now }}
 	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/x", nil)
 	for range 5 {
-		if _, err := w.RoundTrip(req); err != nil {
+		res, err := w.RoundTrip(req)
+		if err != nil {
 			t.Fatal(err)
 		}
+		res.Body.Close()
 		now = now.Add(30 * time.Minute)
 	}
 

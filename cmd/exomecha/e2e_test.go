@@ -344,7 +344,7 @@ func (w *world) testsPass(ref string) error {
 	w.git(dir, "checkout", "-q", ref)
 	out, err := exec.Command("sh", "-c", "cd "+dir+" && sh test.sh").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("sh test.sh: %v\n%s", err, out)
+		return fmt.Errorf("sh test.sh: %w\n%s", err, out)
 	}
 	return nil
 }
