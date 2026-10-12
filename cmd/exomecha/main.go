@@ -41,7 +41,7 @@ func main() {
 	switch {
 	case len(args) == 2 && args[0] == "init":
 		// Ctrl-C during the sign-in still removes its sandbox.
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		ctx, stop := signalContext()
 		err = initProject(ctx, home, args[1])
 		stop()
 	case len(args) == 2 && args[0] == "run":
@@ -147,11 +147,18 @@ func run(home, project string) error {
 		return err
 	}
 
-	// Closing the terminal sends SIGHUP. Treat it like Ctrl-C, so a sandbox start in progress is
-	// undone instead of cut off.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	ctx, stop := signalContext()
 	defer stop()
 	return serve(ctx, c)
+}
+
+// Closing the terminal sends SIGHUP. Treat it like Ctrl-C, so a sandbox start in progress is undone
+// instead of cut off. After the first signal the default comes back, so a second Ctrl-C ends
+// exomecha at once.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	context.AfterFunc(ctx, stop)
+	return ctx, stop
 }
 
 func projectRoot(home, project string) string {
@@ -165,7 +172,13 @@ func lock(root string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	// list holds the lock for a moment to see whether an exomecha runs, so wait about a second for it.
+	for try := 0; try < 10 && errors.Is(err, syscall.EWOULDBLOCK); try++ {
+		time.Sleep(100 * time.Millisecond)
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	}
+	if err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return nil, errors.New("another exomecha is already running for this project")
@@ -175,7 +188,6 @@ func lock(root string) (*os.File, error) {
 	return f, nil
 }
 
-// serve runs exomecha until ctx is done.
 func serve(ctx context.Context, c config) error {
 	ctx = github.WaitForRateLimit(ctx)
 
@@ -206,14 +218,14 @@ func serve(ctx context.Context, c config) error {
 				return err
 			}
 		}
-		g := clone(c, t)
+		g := newGit(c, t)
 		if t == c.prd {
 			prep = g
 		}
 		repos = append(repos, &worker.Repo{Name: t.full(), GitHub: repoGH, Git: g})
 	}
 	if prep == nil {
-		prep = clone(c, c.prd)
+		prep = newGit(c, c.prd)
 	}
 	deps := worker.Deps{
 		GitHub:        gh,
@@ -251,11 +263,11 @@ func serve(ctx context.Context, c config) error {
 		logging.WeeklyLimit, c.weekly, logging.SandboxLimit, c.projectLimit, logging.ReadSandboxLimit, c.readLimit,
 		logging.ReviewLimit, c.reviewLimit, logging.TierLight, c.light, logging.TierNormal, c.normal, logging.TierHeavy, c.heavy,
 		logging.ResolverModel, c.resolver, logging.CreatedLabels, created)
-	check := agent.Claude{}.Usage
+	readUsage := agent.Claude{}.Usage
 	if c.usage != nil {
-		check = c.usage
+		readUsage = c.usage
 	}
-	gate := &worker.Gate{Check: check, FiveHour: c.fiveHour, Weekly: c.weekly}
+	gate := &worker.Gate{Check: readUsage, FiveHour: c.fiveHour, Weekly: c.weekly}
 	if c.started != nil {
 		c.started()
 	}
@@ -271,8 +283,8 @@ func client(t target, token string) (*github.Client, error) {
 	return github.New(t.owner, t.name, token)
 }
 
-// clone is exomecha's shared clone of t, under the PRD repository's root.
-func clone(c config, t target) *git.Git {
+// newGit is the Git of exomecha's shared clone of t, in the project's folder.
+func newGit(c config, t target) *git.Git {
 	root := filepath.Join(c.root, "repos", t.owner, t.name)
 	if t.gitURL != "" {
 		return git.NewAt(root, t.gitURL, c.base, c.token)

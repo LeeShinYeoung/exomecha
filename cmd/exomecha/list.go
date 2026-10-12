@@ -12,7 +12,6 @@ import (
 	"text/tabwriter"
 )
 
-// list prints each project with its PRD repository and whether an exomecha runs it.
 func list(home string, out io.Writer) error {
 	paths, err := filepath.Glob(filepath.Join(home, ".exomecha", "*.yaml"))
 	if err != nil {
@@ -45,13 +44,10 @@ func list(home string, out io.Writer) error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
-	for _, err := range problems {
-		fmt.Fprintln(out, err)
-	}
-	return nil
+	return errors.Join(problems...)
 }
 
-// running reports whether an exomecha holds the lock under root. Unlike lock, it creates nothing.
+// Unlike lock, running creates nothing.
 func running(root string) (bool, error) {
 	f, err := os.Open(filepath.Join(root, "lock"))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -61,6 +57,7 @@ func running(root string) (bool, error) {
 		return false, err
 	}
 	defer f.Close()
+	// Shared, so two lists at the same time do not take each other for an exomecha.
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB)
 	if errors.Is(err, syscall.EWOULDBLOCK) {
 		return true, nil

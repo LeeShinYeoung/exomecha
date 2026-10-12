@@ -1,11 +1,18 @@
 package main
 
 import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
@@ -193,6 +200,62 @@ func TestCheckPRDRepo(t *testing.T) {
 	} {
 		if err := checkPRDRepo(home, c.path, c.prd); err != nil {
 			t.Errorf("%s with %s = %v", filepath.Base(c.path), c.prd.full(), err)
+		}
+	}
+}
+
+func TestSecondInterruptEndsAtOnce(t *testing.T) {
+	if os.Getenv("EXOMECHA_TEST_SIGNAL") == "1" {
+		ctx, stop := signalContext()
+		defer stop()
+		fmt.Println("ready")
+		<-ctx.Done()
+		fmt.Println("stopping")
+		// A shutdown slower than the test waits for.
+		time.Sleep(time.Minute)
+		return
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSecondInterruptEndsAtOnce$")
+	// e2eEnv off, or the child's TestMain removes the sandboxes of e2e scenarios still running. The
+	// killed child cannot remove the folder gittest.Main makes, so TMPDIR puts it in one the test removes.
+	cmd.Env = append(os.Environ(), "EXOMECHA_TEST_SIGNAL=1", e2eEnv+"=", "TMPDIR="+t.TempDir())
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lines := bufio.NewScanner(stdout)
+	waitFor := func(want string) {
+		t.Helper()
+		for lines.Scan() {
+			if lines.Text() == want {
+				return
+			}
+		}
+		t.Fatalf("the child ended before it printed %q", want)
+	}
+	waitFor("ready")
+	cmd.Process.Signal(os.Interrupt)
+	waitFor("stopping")
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	// The default comes back just after ctx ends, so an interrupt sent at once may still be caught.
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		cmd.Process.Signal(os.Interrupt)
+		select {
+		case err := <-done:
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.Sys().(syscall.WaitStatus).Signal() != syscall.SIGINT {
+				t.Errorf("the child ended with %v, want a second interrupt to end it", err)
+			}
+			return
+		case <-tick.C:
 		}
 	}
 }

@@ -68,6 +68,7 @@ func checkPRDRepo(home, path string, prd target) error {
 	if err != nil {
 		return err
 	}
+	// The error is dropped: during init the file does not exist yet, and then SameFile matches nothing.
 	self, _ := os.Stat(path)
 	for _, p := range paths {
 		// SameFile, not the name: on macOS run Acme reads acme.yaml.
@@ -146,11 +147,11 @@ func parseConfig(data []byte) (config, error) {
 		}
 	}
 	for name, v := range s.Secrets {
-		secret, err := parseSecret(name, v)
+		sec, err := parseSecret(name, v)
 		if err != nil {
 			return config{}, err
 		}
-		c.secrets = append(c.secrets, secret)
+		c.secrets = append(c.secrets, sec)
 	}
 	slices.SortFunc(c.secrets, func(a, b sandbox.Secret) int { return strings.Compare(a.Env, b.Env) })
 	if c.fiveHour, err = usageLimit("limits.five_hour", s.Limits.FiveHour, c.fiveHour); err != nil {
@@ -183,9 +184,9 @@ func parseConfig(data []byte) (config, error) {
 	return c, nil
 }
 
-func parseRepos(list []string) ([]target, error) {
+func parseRepos(entries []string) ([]target, error) {
 	var repos []target
-	for _, r := range list {
+	for _, r := range entries {
 		t, err := parseTarget("repos", strings.TrimSpace(r))
 		if err != nil {
 			return nil, err

@@ -85,6 +85,7 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
      ```
      exomecha run <project>
      ```
+     A second Ctrl-C ends it at once, without waiting for the cleanup the first one started.
    - At start, as `exomecha init` does, exomecha checks this machine and does not start until every check passes: sbx is installed, its daemon answers and it is signed in to Docker, sbx has a Claude login and no global `github` secret, this machine's claude is signed in, claude runs each model in auto permission mode (a short call on this machine), and the token reaches every repository. It reports every problem it finds, each with how to fix it. It does not check what the token may do in a repository, since GitHub does not say for a fine-grained token, nor whether sbx's network policy was set up.
    - `exomecha list` shows each project, its PRD repository, and whether an exomecha runs it.
    - exomecha creates any of the ten labels that are missing in the PRD repository when it starts.
