@@ -96,17 +96,27 @@ func initProject(ctx context.Context, home, project string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out)
 	if !ok {
+		fmt.Fprintln(out)
 		return fmt.Errorf("fix the problems above, then run exomecha init %s again", project)
 	}
+	printHeading(out, "Next")
+	step := 1
 	if _, err := os.Stat(filepath.Join(setupDir(projectRoot(home, project)), "setup.sh")); errors.Is(err, fs.ErrNotExist) {
-		fmt.Fprintf(out, "Next, run /exomecha:setup %s in Claude Code to write the sandbox's setup files.\n", project)
-		fmt.Fprintf(out, "Then start the project with: exomecha run %s\n", project)
-		return nil
+		fmt.Fprintln(out, "1. Write the sandbox's setup files: start Claude Code, then enter /exomecha:setup.")
+		printCommand(out, "$", "claude")
+		printCommand(out, ">", "/exomecha:setup "+project)
+		step++
 	}
-	fmt.Fprintf(out, "Start the project with: exomecha run %s\n", project)
+	fmt.Fprintf(out, "%d. Start the project.\n", step)
+	printCommand(out, "$", "exomecha run "+project)
 	return nil
+}
+
+// printCommand shows a command to type, after the prompt of where it goes: $ for the shell, > for
+// Claude Code.
+func printCommand(out io.Writer, prompt, command string) {
+	lipgloss.Fprintln(out, "   "+detailStyle.Render(prompt)+" "+commandStyle.Render(command))
 }
 
 var (
@@ -115,6 +125,7 @@ var (
 	failStyle    = lipgloss.NewStyle().Foreground(lipgloss.Red)
 	detailStyle  = lipgloss.NewStyle().Faint(true)
 	answerStyle  = lipgloss.NewStyle().Bold(true)
+	commandStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 
 	// The terminal's own colors, in place of huh's pink.
 	formTheme    = huh.ThemeFunc(huh.ThemeBase16)
