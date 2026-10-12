@@ -35,7 +35,23 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
    - Write how to install dependencies and run the tests in each repository's CLAUDE.md. builder follows it to run the tests it can run in its sandbox.
    - Run `/exomecha:setup` in the PRD repository and commit what it writes to its base branch: `.exomecha/Dockerfile`, `.exomecha/setup.sh`, `.exomecha/allowed-hosts` (only when a check needs a host the sandbox policy blocks), `.exomecha/sandbox.md` (only when you chose how the sandbox handles a check it cannot run as CLAUDE.md says), and `.gitignore` if it changed. One set of files prepares the sandbox for every repository. With a single repository that also holds the PRDs, run it in that repository. The skill proves the files in a real sandbox before it hands them over. With them, builder's and resolver's sandboxes already have the tools, dependencies, ignored config files and services the project needs when the AI starts. Without them, those sandboxes start from sbx's default claude template with only the code, and the AI installs what it needs on its own, following CLAUDE.md.
 5. Install and run exomecha:
-   - Install from this repository: `go install ./cmd/exomecha` (or `go build -o exomecha ./cmd/exomecha`)
+   - Install exomecha on the machine that runs it. Update it the same way.
+     - On a Mac, with Homebrew. Update with `brew upgrade exomecha`.
+       ```
+       brew install leeshinyeoung/tap/exomecha
+       ```
+     - On Linux, from the latest release. On an ARM machine, replace `amd64` with `arm64`. Run the same commands again to update.
+       ```
+       curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_linux_amd64.tar.gz
+       tar -xzf exomecha_linux_amd64.tar.gz
+       sudo install exomecha /usr/local/bin/
+       ```
+     - From the source, with Go 1.27 or later. The command lands in `$(go env GOPATH)/bin`, which must be on your `PATH`. Pull and run `go install` again to update.
+       ```
+       git clone https://github.com/LeeShinYeoung/exomecha.git
+       cd exomecha
+       go install ./cmd/exomecha
+       ```
    - Run `exomecha init <project>`, where `<project>` is a name of your choice made of letters, digits, `-` and `_`. It asks for the repositories PRDs may change, the PRD repository when there are several, the base branch and the GitHub token, which it does not show as you type. It writes them to `~/.exomecha/<project>.yaml`, which only you can read, and lists the optional settings in the file as comments with their defaults. Then it signs sbx in to Claude when sbx has no login (step 3) and checks this machine. Run it again at any time to sign in again and check, without the questions. To change a setting, edit the file.
      ```yaml
      repos:
