@@ -29,40 +29,44 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 3. Set up sbx on the same machine. Docker Desktop is not needed.
    - Install sbx and sign in to Docker: `sbx login`.
    - Start from the balanced network policy: `sbx policy init balanced`. A sandbox reaches only the hosts that policy allows, plus the ones the project lists in `.exomecha/allowed-hosts`.
-   - Sign in to Claude once from inside a sandbox. sbx keeps the login on this machine, and every sandbox gets a placeholder instead of the real token. All of exomecha's AI work runs with this login. Use the same Claude account as this machine's claude login, because exomecha uses that one only to read the usage limits in step 5.
-     ```
-     mkdir -p /tmp/sbx-login
-     sbx run -d --name sbx-login claude /tmp/sbx-login
-     sbx exec -it sbx-login claude auth login
-     sbx rm --force sbx-login
-     ```
-     `sbx secret ls` then lists `anthropic` as `(oauth configured)`. A token from `claude setup-token` does not work, because sbx does not pass a credential it did not issue on to Anthropic. An Anthropic API key works (`sbx secret set anthropic`), but the usage limits in step 5 do not count what it spends.
+   - Use the same Claude account for this machine's claude login and for sbx. exomecha uses this machine's login only to read the usage limits in step 5, and every worker runs claude with the login sbx keeps. When sbx has no Claude login, `exomecha init` in step 5 starts a sandbox, runs `claude auth login` in it on your terminal, and removes the sandbox. sbx keeps the login on this machine, and every sandbox gets a placeholder instead of the real token. A token from `claude setup-token` does not work, because sbx does not pass a credential it did not issue on to Anthropic. An Anthropic API key works (`sbx secret set anthropic`), but the usage limits in step 5 do not count what it spends.
    - Do not keep a global `github` secret in sbx. Every sandbox could use it, so the AI could push past exomecha's checks. exomecha refuses to start while one exists. Remove it with `sbx secret rm github --force`.
 4. Prepare the projects:
    - Write how to install dependencies and run the tests in each repository's CLAUDE.md. builder follows it to run the tests it can run in its sandbox.
    - Run `/exomecha:setup` in the PRD repository and commit what it writes to its base branch: `.exomecha/Dockerfile`, `.exomecha/setup.sh`, `.exomecha/allowed-hosts` (only when a check needs a host the sandbox policy blocks), `.exomecha/sandbox.md` (only when you chose how the sandbox handles a check it cannot run as CLAUDE.md says), and `.gitignore` if it changed. One set of files prepares the sandbox for every repository. With a single repository that also holds the PRDs, run it in that repository. The skill proves the files in a real sandbox before it hands them over. With them, builder's and resolver's sandboxes already have the tools, dependencies, ignored config files and services the project needs when the AI starts. Without them, those sandboxes start from sbx's default claude template with only the code, and the AI installs what it needs on its own, following CLAUDE.md.
 5. Install and run exomecha:
    - Install from this repository: `go install ./cmd/exomecha` (or `go build -o exomecha ./cmd/exomecha`)
-   - Copy `.env.example` to `<project>.env`, fill in the three environment variables, and add the `.env` file to `.gitignore`.
+   - Run `exomecha init <project>`, where `<project>` is a name of your choice made of letters, digits, `-` and `_`. It asks for the repositories PRDs may change, the PRD repository when there are several, the base branch and the GitHub token, which it does not show as you type. It writes them to `~/.exomecha/<project>.yaml`, which only you can read, and lists the optional settings in the file as comments with their defaults. Then it signs sbx in to Claude when sbx has no login (step 3) and checks this machine. Run it again at any time to sign in again and check, without the questions. To change a setting, edit the file.
+     ```yaml
+     repos:
+       - acme/api
+       - acme/web
+     prd_repo: acme/plans
+     base_branch: main
+     github_token: github_pat_...
      ```
-     EXOMECHA_REPOS=owner/name
-     EXOMECHA_BASE_BRANCH=main
-     EXOMECHA_GITHUB_TOKEN=github_pat_...
+   - `repos` lists the repositories PRDs may change, such as `acme/api` and `acme/web`. Their names after the owner must differ, since a sandbox gives each a folder named after it. Every repository uses `base_branch`.
+   - `prd_repo` is the repository whose issues are the PRDs, such as `acme/plans`. It holds the labels and the files from `/exomecha:setup`, and it may also be one of `repos`. With one repository in `repos` it is optional and defaults to that repository. With several, exomecha does not start without it. Choose a repository whose writers may all change the code in `repos`, since exomecha acts on what they write, and keep it private when the code is.
+   - Optional: `secrets`, values that builder's and resolver's sandboxes need for requests to some hosts, such as a read-only token for a private package registry. Each key is the name of the environment variable that holds the placeholder in the sandbox, with `hosts`, the hosts that get the value, and `command`, a command on this machine that prints it:
+     ```yaml
+     secrets:
+       NPM_TOKEN:
+         hosts: [npm.pkg.github.com]
+         command: /usr/local/bin/npm-read-token
      ```
-   - `EXOMECHA_REPOS` lists the repositories PRDs may change, separated by commas, such as `acme/api,acme/web`. Their names after the owner must differ, since a sandbox gives each a folder named after it. Every repository uses `EXOMECHA_BASE_BRANCH`.
-   - `EXOMECHA_PRD_REPO` is the repository whose issues are the PRDs, such as `acme/plans`. It holds the labels and the files from `/exomecha:setup`, and it may also be one of `EXOMECHA_REPOS`. With one repository in `EXOMECHA_REPOS` it is optional and defaults to that repository. With several, exomecha does not start without it. Choose a repository whose writers may all change the code in `EXOMECHA_REPOS`, since exomecha acts on what they write, and keep it private when the code is.
-   - Optional: `EXOMECHA_SECRET_<NAME>`, a value that builder's and resolver's sandboxes need for requests to some hosts, such as a read-only token for a private package registry. Write the hosts, separated by commas, then a space and a command on this machine that prints the value, for example `EXOMECHA_SECRET_NPM_TOKEN=npm.pkg.github.com /usr/local/bin/npm-read-token`. exomecha has sbx keep the value for each of those sandboxes only (`sbx secret set-custom`, an experimental sbx command). The sandbox holds a placeholder in `$<NAME>`, and the sbx proxy puts the value in place of the placeholder in the request headers sent to those hosts, so the AI never sees the value. setup.sh and the AI use `$<NAME>`, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in `.npmrc`. exomecha refuses a secret whose hosts reach `github.com` or `api.github.com`, where the AI could use it to push.
-   - Optional: `EXOMECHA_FIVE_HOUR_LIMIT` (default 90) and `EXOMECHA_WEEKLY_LIMIT` (default 80), in percent of the Claude plan's 5-hour and weekly limits. exomecha starts no new work at or above them.
-   - Optional: `EXOMECHA_SANDBOX_LIMIT` (default 2), how many PRD sandboxes builder and resolver may have at once, together.
-   - Optional: `EXOMECHA_READ_SANDBOX_LIMIT` (default 2), how many reviewer sandboxes, which only read the code, may exist at once. `EXOMECHA_SANDBOX_LIMIT` does not count them.
-   - Optional: `EXOMECHA_REVIEW_LIMIT` (default 5), how many times reviewer sends a PR back to builder, for a failed CI or a review that asks for changes, before a person decides. The count starts again after reviewer approves the PR or a person answers a stuck PRD.
-   - Optional: `EXOMECHA_TIER_LIGHT` (default `opus:low`), `EXOMECHA_TIER_NORMAL` (default `opus:high`) and `EXOMECHA_TIER_HEAVY` (default `opus:xhigh`), the claude model and effort of each tier, as `model:effort`. Effort is one of low, medium, high, xhigh and max. The model must support that effort and claude's auto permission mode, which haiku does not. reviewer runs on heavy, and builder on its PRD's tier.
-   - Optional: `EXOMECHA_RESOLVER_MODEL` (default `opus:medium`), the claude model and effort of every resolver run, as `model:effort`. A conflict asks the same judgment whatever the PRD's tier, so resolver does not follow the tier label.
-   - At start exomecha makes a short claude call on each of these models, on this machine, and does not start when claude does not run the model in auto permission mode or does not know it.
-   - Run:
+     exomecha has sbx keep the value for each of those sandboxes only (`sbx secret set-custom`, an experimental sbx command). The sandbox holds a placeholder in `$NPM_TOKEN`, and the sbx proxy puts the value in place of the placeholder in the request headers sent to those hosts, so the AI never sees the value. setup.sh and the AI use the variable, such as `//npm.pkg.github.com/:_authToken=${NPM_TOKEN}` in `.npmrc`. exomecha refuses a secret whose hosts reach `github.com` or `api.github.com`, where the AI could use it to push.
+   - Optional: `limits.five_hour` (default 90) and `limits.weekly` (default 80), in percent of the Claude plan's 5-hour and weekly limits. exomecha starts no new work at or above them.
+   - Optional: `limits.sandboxes` (default 2), how many PRD sandboxes builder and resolver may have at once, together.
+   - Optional: `limits.read_sandboxes` (default 2), how many reviewer sandboxes, which only read the code, may exist at once. `limits.sandboxes` does not count them.
+   - Optional: `limits.reviews` (default 5), how many times reviewer sends a PR back to builder, for a failed CI or a review that asks for changes, before a person decides. The count starts again after reviewer approves the PR or a person answers a stuck PRD.
+   - Optional: `models.light` (default `opus:low`), `models.normal` (default `opus:high`) and `models.heavy` (default `opus:xhigh`), the claude model and effort of each tier, as `model:effort`. Effort is one of low, medium, high, xhigh and max. The model must support that effort and claude's auto permission mode, which haiku does not. reviewer runs on heavy, and builder on its PRD's tier.
+   - Optional: `models.resolver` (default `opus:medium`), the claude model and effort of every resolver run, as `model:effort`. A conflict asks the same judgment whatever the PRD's tier, so resolver does not follow the tier label.
+   - Run it in a terminal, where it keeps running until you press Ctrl-C or close the terminal:
      ```
-     set -a; source <project>.env; set +a; exomecha
+     exomecha run <project>
      ```
+   - At start, as `exomecha init` does, exomecha checks this machine and does not start until every check passes: sbx is installed, its daemon answers and it is signed in to Docker, sbx has a Claude login and no global `github` secret, this machine's claude is signed in, claude runs each model in auto permission mode (a short call on this machine), and the token reaches every repository. It reports every problem it finds, each with how to fix it. It does not check what the token may do in a repository, since GitHub does not say for a fine-grained token, nor whether sbx's network policy was set up.
+   - `exomecha list` shows each project, its PRD repository, and whether an exomecha runs it.
    - exomecha creates any of the ten labels that are missing in the PRD repository when it starts.
    - One exomecha runs per PRD repository. A second one for the same PRD repository says so and does not start. Do not let two exomechas change the same repository: both name their branches `exomecha/prd-<number>`.
 
@@ -71,10 +75,10 @@ Any worker blocked by the PRD itself → status:stuck + a comment with the reaso
 - exomecha's log says only how exomecha itself is doing: when it starts and stops, when one of its own steps fails (sbx, git, GitHub, the Claude usage check) and when that step works again, when it pauses for a rate or usage limit, and when a run loses its sandbox. A line at ERROR means exomecha could not do what it set out to do. Each line goes to the terminal and to `~/.exomecha/<owner>/<repo>/logs/exomecha.log`, under the PRD repository's owner and name, as are all the folders below. Once the file would pass 10MB it becomes `exomecha.log.1` and a new one starts, so the log takes at most 20MB. Only you can read the folder.
 - When a PRD goes to stuck, exomecha keeps what that run printed (claude's output, and the setup script's, the Dockerfile build's or the merge's) in a folder under `~/.exomecha/<owner>/<repo>/outputs/<PRD number>/`, and the stuck comment names the folder. Output can hold secrets, so it never goes into a comment or the log. Each file keeps its last 1MB (the Dockerfile build its last 8KB), and once the folders pass 100MB together the oldest run's go. Only you can read them.
 - Only the usage check and the models' check at start use the claude login on this machine. Every worker runs claude in sandboxes, signed in with the login sbx keeps (Setup step 3).
-- reviewer only reads the code. Its sandboxes start from sbx's default claude template and get only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `EXOMECHA_READ_SANDBOX_LIMIT`, take about 625MB each, and are removed at exomecha's next check, within about a minute after claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
+- reviewer only reads the code. Its sandboxes start from sbx's default claude template and get only the code: no project template, allowed hosts, setup script or commit identity. These sandboxes count against `limits.read_sandboxes`, take about 625MB each, and are removed at exomecha's next check, within about a minute after claude ends. Only the run's folder stays until exomecha collects the result. The claude settings in this machine's `~/.claude` do not apply in any sandbox.
 - Every worker's sandbox gets the claude user settings in `~/.exomecha/claude`, laid out like `~/.claude`. exomecha writes the folder the first time it starts: rules on comments and writing in `rules/`, and a `settings.json` that turns on the ponytail and humanizer plugins. After that the folder is yours. Edit a file to change a default and delete it to turn the default off. A change applies from the next sandbox. A deleted folder comes back with the first defaults at the next start. The project's own CLAUDE.md, rules and settings take precedence, so a project can turn a plugin off in its `.claude/settings.json`. exomecha merges `settings.json` into the one in sbx's template and installs the enabled plugins before claude starts, which adds a few seconds to each start. A plugin that fails to install is left out of that run, with a warning in exomecha's log.
 - /exomecha:complete-prd gives each PRD a tier label, `tier:light`, `tier:normal` or `tier:heavy`, by how much building it asks. builder runs on that tier's model, also when it applies a review or fixes CI. A PRD with no tier label runs on normal, and one with several on the heaviest. Change the label to change the model. A run already going keeps its model, and the change applies from builder's next start.
-- Each PRD starts with a `## Repositories` section that lists the repositories it changes, one `- owner/name` item each, in the order the AI should see them. /exomecha:complete-prd writes it, also for a single repository. A PRD whose section is missing, lists nothing, or names a repository not in `EXOMECHA_REPOS` goes to stuck.
+- Each PRD starts with a `## Repositories` section that lists the repositories it changes, one `- owner/name` item each, in the order the AI should see them. /exomecha:complete-prd writes it, also for a single repository. A PRD whose section is missing, lists nothing, or names a repository not in `repos` goes to stuck.
 - A PRD with one repository has it at `/home/agent/repo` in the sandbox, and claude starts there, as in a single checkout. A PRD with several has each in `/home/agent/repo/<name>`, and claude starts in `/home/agent/repo`. The AI's input names each folder, its PR and its base branch.
 - builder opens a PR only in the repositories where it committed. The body of a PR starts with `Closes` and the PRD when the PRD has one repository, and with `Part of` and the PRD when it has several, so GitHub does not close the PRD at the first merge. builder's summary says in which order to merge several PRs. reviewer approves, or sends back, all of a PRD's PRs together. Once every PR of the PRD is merged, exomecha closes the PRD. A PR closed without a merge sends the PRD to stuck.
 - exomecha writes the same summary, review or resolution on each of a PRD's PRs, and the AI's input shows it once.
@@ -118,7 +122,7 @@ The worker's comment says why it is blocked and what needs deciding.
   - `status:ready` when builder got stuck. builder continues on the existing PR branch.
   - `status:review` when resolver got stuck on a conflict. resolver merges the base branch again and settles the conflict the way you answered.
   - `status:review` when reviewer's run failed. reviewer reviews the PR again.
-  - `status:ready` when reviewer sent the PR back `EXOMECHA_REVIEW_LIMIT` times. Its last review on the PR says what it still wants. Answer what builder should do, and builder continues on the same PR with a new count.
+  - `status:ready` when reviewer sent the PR back `limits.reviews` times. Its last review on the PR says what it still wants. Answer what builder should do, and builder continues on the same PR with a new count.
 - When the AI says the sandbox blocked a host, add that host to `.exomecha/allowed-hosts` on the base branch if the PRD really needs it. Then relabel the PRD the way the comment says.
 - When `.exomecha/setup.sh` failed, there is nothing to answer. The comment names the folder that keeps the script's output. Fix the script on the base branch, or merge the base branch into the PRD's branch if the comment says the branch is behind. Then relabel the PRD the way the comment says.
 - When `.exomecha/Dockerfile` failed to build or ran over 30 minutes, or `.exomecha/allowed-hosts` has a bad line, there is nothing to answer either. For a build, the comment names the folder that keeps the build output. Fix the file on the base branch, then relabel the PRD the way the comment says.
@@ -133,13 +137,30 @@ Stop exomecha, then remove what it keeps on this machine for the project:
 - its sandboxes, named `exomecha-run-<slug>-...` and `exomecha-build-<slug>`, with `sbx rm --force`
 - its templates, `exomecha-<slug>` with any tag, with `sbx template rm --force`
 - `~/.exomecha/<owner>/<repo>`
+- `~/.exomecha/<project>.yaml`
 
 `<slug>` is `owner-repo` in lowercase, with every run of characters other than letters and digits turned into one `-`. A slug longer than 32 characters is cut and ends with a short hash of the repository's name. `sbx ls` and `sbx template ls` show the exact names.
+
+## Upgrading from a version with a .env file
+
+- Stop exomecha, then run `exomecha init <project>` and give the same repositories, PRD repository, base branch and token as in `<project>.env`.
+- Move any optional setting from `<project>.env` into `~/.exomecha/<project>.yaml`:
+
+  | `<project>.env` | `<project>.yaml` |
+  |---|---|
+  | `EXOMECHA_SECRET_<NAME>=<hosts> <command>` | `secrets.<NAME>.hosts` and `secrets.<NAME>.command` |
+  | `EXOMECHA_FIVE_HOUR_LIMIT`, `EXOMECHA_WEEKLY_LIMIT` | `limits.five_hour`, `limits.weekly` |
+  | `EXOMECHA_SANDBOX_LIMIT`, `EXOMECHA_READ_SANDBOX_LIMIT` | `limits.sandboxes`, `limits.read_sandboxes` |
+  | `EXOMECHA_REVIEW_LIMIT` | `limits.reviews` |
+  | `EXOMECHA_TIER_LIGHT`, `EXOMECHA_TIER_NORMAL`, `EXOMECHA_TIER_HEAVY` | `models.light`, `models.normal`, `models.heavy` |
+  | `EXOMECHA_RESOLVER_MODEL` | `models.resolver` |
+
+- Start it with `exomecha run <project>`. Once it runs, delete `<project>.env`, which still holds the token.
 
 ## Upgrading from a version with EXOMECHA_REPO
 
 - Upgrade while no PRD is in `status:working` and `sbx ls` shows no `exomecha-run-` sandbox. A run started by the older version is not picked up.
-- In `<project>.env`, rename `EXOMECHA_REPO` to `EXOMECHA_REPOS`. The repository holds the PRDs as before.
+- The repository in `EXOMECHA_REPO` goes in `repos`, as the section above describes. It holds the PRDs as before.
 - Add a `## Repositories` section to each open PRD that a worker has yet to finish, listing the repository as `- owner/name`.
 - exomecha clones each repository again, under `~/.exomecha/<owner>/<repo>/repos/`. You can remove the old clone, `~/.exomecha/<owner>/<repo>/repo`.
 

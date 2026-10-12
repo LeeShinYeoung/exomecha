@@ -62,10 +62,11 @@ What the fake cannot show needs real GitHub. Check it after changes to the skill
 
 1. A practice repository with a small project, its tests, and a CLAUDE.md that says how to install and test. One base branch, `main`, with no "require approval" protection rule, since the token owner cannot approve its own PRs.
 2. A fine-grained token for that repository only: Issues read and write, Pull requests read and write, Contents read and write, Actions read.
-3. Install exomecha and fill `<name>.env` (see the README). Run exomecha in its own terminal and keep the log in view:
+3. Install exomecha and run `exomecha init <name>` (see the README). Run exomecha in its own terminal and keep the log in view:
    ```
    go install ./cmd/exomecha
-   set -a; source <name>.env; set +a; ~/go/bin/exomecha
+   ~/go/bin/exomecha init <name>
+   ~/go/bin/exomecha run <name>
    ```
 4. In the practice repository, install the plugin from your exomecha checkout:
    ```
