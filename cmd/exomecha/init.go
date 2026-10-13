@@ -253,7 +253,7 @@ func (q *questions) ask(ctx context.Context, out io.Writer) error {
 
 	// The saved token is not filled in, since the field would show its length.
 	var typed string
-	token := huh.NewInput().Title(tokenTitle).EchoMode(huh.EchoModeNone).Value(&typed).Validate(func(s string) error {
+	token := huh.NewInput().Title(tokenTitle).Description(tokenHelp).EchoMode(huh.EchoModeNone).Value(&typed).Validate(func(s string) error {
 		if strings.TrimSpace(s) == "" && q.token == "" {
 			return errors.New("the GitHub token must be set")
 		}
@@ -269,6 +269,13 @@ func (q *questions) ask(ctx context.Context, out io.Writer) error {
 	printAnswer(out, tokenTitle, masked(q.token))
 	return nil
 }
+
+const tokenHelp = "A fine-grained token that reaches only the repositories above\n" +
+	"https://github.com/settings/personal-access-tokens/new\n" +
+	"• Issues: Read and write\n" +
+	"• Pull requests: Read and write\n" +
+	"• Contents: Read and write\n" +
+	"• Actions: Read-only"
 
 // askOne runs one question as a form of its own, which clears it once answered.
 func askOne(ctx context.Context, input *huh.Input) error {
