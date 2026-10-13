@@ -31,13 +31,17 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
 
 ## Installation
 
-1. Install exomecha. The commands pick the build for this machine's OS and CPU.
+1. Install exomecha. On an Intel Mac, replace `arm64` with `amd64`. On an ARM Linux machine, replace `amd64` with `arm64`.
 
    ```
-   os=$(uname -s | tr '[:upper:]' '[:lower:]')
-   arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
-   curl -fsSL "https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_${os}_${arch}.tar.gz" | tar -xz exomecha
-   sudo mkdir -p /usr/local/bin
+   # macOS
+   curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_darwin_arm64.tar.gz
+   tar -xzf exomecha_darwin_arm64.tar.gz
+   sudo install exomecha /usr/local/bin/
+
+   # Linux
+   curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_linux_amd64.tar.gz
+   tar -xzf exomecha_linux_amd64.tar.gz
    sudo install exomecha /usr/local/bin/
    ```
 
