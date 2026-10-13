@@ -67,6 +67,19 @@ On a machine that only writes PRDs, without running exomecha, install the plugin
 /plugin install exomecha@exomecha
 ```
 
+## Update
+
+Update exomecha and the plugin each on its own. On Linux, run the install commands again.
+
+```
+# macOS
+brew upgrade exomecha
+
+# The plugin
+claude plugin marketplace update exomecha
+claude plugin update exomecha@exomecha
+```
+
 ## Usage
 
 ```
