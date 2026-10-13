@@ -85,3 +85,7 @@ When a PRD reaches status:approved, merge its PRs. If there are several, merge t
 When a PRD reaches status:stuck, the comment says why. Answer in a comment and change the label to the one the comment names. If there is nothing left to do, close the issue.
 
 If the token is your own, you are the author of every PR. So a "require approval" protection rule on the base branch blocks your merge.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
