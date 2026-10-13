@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/logging"
@@ -37,15 +38,33 @@ const (
 )
 
 // check finds what would stop exomecha on this machine. It reports every problem it finds, each
-// with how to fix it, so one start shows all of them.
+// with how to fix it, so one start shows all of them. The groups run at the same time, so an item
+// must not need one in another group.
 func check(ctx context.Context, items []item) error {
-	var problems []error
-	skip := ""
+	var groups [][]item
 	for _, it := range items {
-		if it.initOnly {
-			continue
+		switch {
+		case it.initOnly:
+		case len(groups) > 0 && groups[len(groups)-1][0].group == it.group:
+			groups[len(groups)-1] = append(groups[len(groups)-1], it)
+		default:
+			groups = append(groups, []item{it})
 		}
-		if it.group == skip {
+	}
+	found := make([][]error, len(groups))
+	var wg sync.WaitGroup
+	for i, g := range groups {
+		wg.Go(func() { found[i] = checkGroup(ctx, g) })
+	}
+	wg.Wait()
+	return errors.Join(slices.Concat(found...)...)
+}
+
+func checkGroup(ctx context.Context, items []item) []error {
+	var problems []error
+	skip := false
+	for _, it := range items {
+		if skip {
 			logStep(ctx, it.step, "skipped", it.attrs...)
 			continue
 		}
@@ -54,15 +73,13 @@ func check(ctx context.Context, items []item) error {
 		attrs := append(slices.Clip(it.attrs), logging.Result, line)
 		if len(found) > 0 {
 			logStep(ctx, it.step, "failed", attrs...)
-			if it.gate {
-				skip = it.group
-			}
+			skip = it.gate
 		} else {
 			logStep(ctx, it.step, "done", attrs...)
 		}
 		problems = append(problems, found...)
 	}
-	return errors.Join(problems...)
+	return problems
 }
 
 func logStep(ctx context.Context, step, phase string, attrs ...any) {
