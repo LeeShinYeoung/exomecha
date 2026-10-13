@@ -25,9 +25,12 @@ const (
 	Waited   = "waited"
 	FiveHour = "five_hour"
 	Weekly   = "weekly"
+	Repo     = "repo"
+	Model    = "model"
+	User     = "user"
+	Result   = "result"
 
 	// Only in the start line.
-	Repo             = "repo"
 	Repos            = "repos"
 	Base             = "base"
 	FiveHourLimit    = "five_hour_limit"

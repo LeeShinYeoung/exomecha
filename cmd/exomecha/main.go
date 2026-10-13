@@ -212,8 +212,9 @@ func lock(root string) (*os.File, error) {
 
 func serve(ctx context.Context, c config) error {
 	ctx = github.WaitForRateLimit(ctx)
+	slog.InfoContext(ctx, "exomecha starting")
 
-	if err := check(ctx, c); err != nil {
+	if err := check(ctx, checks(c)); err != nil {
 		return err
 	}
 	sbx := sandbox.CLI{}
@@ -222,14 +223,20 @@ func serve(ctx context.Context, c config) error {
 	if err != nil {
 		return err
 	}
+	logStep(ctx, "read the token's GitHub user", "start")
 	author, email, err := gh.Identity(ctx)
 	if err != nil {
+		logStep(ctx, "read the token's GitHub user", "failed")
 		return fmt.Errorf("read the token's GitHub user: %w", err)
 	}
+	logStep(ctx, "read the token's GitHub user", "done", logging.User, author)
 	if c.claudeDir != "" {
+		logStep(ctx, "write default claude settings", "start")
 		if err := worker.Seed(c.claudeDir); err != nil {
+			logStep(ctx, "write default claude settings", "failed")
 			return fmt.Errorf("write the default claude settings: %w", err)
 		}
+		logStep(ctx, "write default claude settings", "done")
 	}
 	var repos []*worker.Repo
 	for _, t := range c.repos {
@@ -263,10 +270,13 @@ func serve(ctx context.Context, c config) error {
 		CIGrace:       c.ciGrace,
 	}
 
+	logStep(ctx, "ensure labels", "start")
 	created, err := gh.EnsureLabels(ctx)
 	if err != nil {
+		logStep(ctx, "ensure labels", "failed")
 		return fmt.Errorf("ensure labels: %w", err)
 	}
+	logStep(ctx, "ensure labels", "done")
 
 	var names []string
 	for _, t := range c.repos {
