@@ -46,13 +46,13 @@ type secret struct {
 }
 
 var (
-	projectName = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	projectName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	unknownKey  = regexp.MustCompile(`^(line \d+): field (\S+) not found in type .*$`)
 )
 
 func settingsPath(home, project string) (string, error) {
 	if !projectName.MatchString(project) {
-		return "", fmt.Errorf("a project name holds only letters, digits, - and _: %q", project)
+		return "", fmt.Errorf("a project name starts with a letter or digit and holds only letters, digits, - and _: %q", project)
 	}
 	// EqualFold: on macOS Claude names the same folder.
 	if strings.EqualFold(project, "claude") {

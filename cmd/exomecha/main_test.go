@@ -162,7 +162,7 @@ func TestSettingsPath(t *testing.T) {
 	if got, err := settingsPath("/home/me", "acme_api-2"); err != nil || got != "/home/me/.exomecha/acme_api-2.yaml" {
 		t.Errorf("settingsPath = %q, %v", got, err)
 	}
-	for _, bad := range []string{"", "../acme", "acme.yaml", "a b", "claude", "Claude"} {
+	for _, bad := range []string{"", "../acme", "acme.yaml", "a b", "claude", "Claude", "-x", "--help", "_acme"} {
 		if _, err := settingsPath("/home/me", bad); err == nil {
 			t.Errorf("settingsPath(%q) took the name", bad)
 		}
