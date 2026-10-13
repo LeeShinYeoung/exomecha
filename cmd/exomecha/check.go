@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
 	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
@@ -18,6 +21,9 @@ import (
 type item struct {
 	group string
 	doing string // shown while run runs
+	// The step's name in run's log, with attrs added to its lines.
+	step  string
+	attrs []any
 	// The group's other items need this one, so they are skipped when it finds a problem.
 	gate bool
 	// Only init checks it: run does not need it, and run, unlike init, fixes nothing.
@@ -32,28 +38,63 @@ const (
 )
 
 // check finds what would stop exomecha on this machine. It reports every problem it finds, each
-// with how to fix it, so one start shows all of them.
-func check(ctx context.Context, c config) error {
+// with how to fix it, so one start shows all of them. The groups run at the same time, so an item
+// must not need one in another group.
+func check(ctx context.Context, items []item) error {
+	var groups [][]item
+	for _, it := range items {
+		switch {
+		case it.initOnly:
+		case len(groups) > 0 && groups[len(groups)-1][0].group == it.group:
+			groups[len(groups)-1] = append(groups[len(groups)-1], it)
+		default:
+			groups = append(groups, []item{it})
+		}
+	}
+	found := make([][]error, len(groups))
+	var wg sync.WaitGroup
+	for i, g := range groups {
+		wg.Go(func() { found[i] = checkGroup(ctx, g) })
+	}
+	wg.Wait()
+	return errors.Join(slices.Concat(found...)...)
+}
+
+func checkGroup(ctx context.Context, items []item) []error {
 	var problems []error
-	skip := ""
-	for _, it := range checks(c) {
-		if it.initOnly || it.group == skip {
+	skip := false
+	for _, it := range items {
+		if skip {
+			logStep(ctx, it.step, "skipped", it.attrs...)
 			continue
 		}
-		_, found := it.run(ctx)
-		if len(found) > 0 && it.gate {
-			skip = it.group
+		logStep(ctx, it.step, "start", it.attrs...)
+		line, found := it.run(ctx)
+		attrs := append(slices.Clip(it.attrs), logging.Result, line)
+		if len(found) > 0 {
+			logStep(ctx, it.step, "failed", attrs...)
+			skip = it.gate
+		} else {
+			logStep(ctx, it.step, "done", attrs...)
 		}
 		problems = append(problems, found...)
 	}
-	return errors.Join(problems...)
+	return problems
+}
+
+func logStep(ctx context.Context, step, phase string, attrs ...any) {
+	level := slog.LevelInfo
+	if phase == "failed" {
+		level = slog.LevelError
+	}
+	slog.Log(ctx, level, step+": "+phase, attrs...)
 }
 
 func checks(c config) []item {
 	sbx := sandbox.CLI{}
 	claude := agent.Claude{}
 	items := []item{
-		{group: groupSBX, doing: "Checking sbx", gate: true, run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Checking sbx", step: "check sbx", gate: true, run: func(ctx context.Context) (string, []error) {
 			if _, err := exec.LookPath("sbx"); err != nil {
 				return "Not installed", []error{errors.New("sbx is not installed. Every worker runs claude in Docker Sandboxes")}
 			}
@@ -63,7 +104,7 @@ func checks(c config) []item {
 			}
 			return "Installed and running", nil
 		}},
-		{group: groupSBX, doing: "Running sbx diagnose", run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Running sbx diagnose", step: "sbx diagnose", run: func(ctx context.Context) (string, []error) {
 			failed, err := sbx.Diagnose(ctx)
 			var problems []error
 			if err != nil {
@@ -77,7 +118,7 @@ func checks(c config) []item {
 			}
 			return "sbx diagnose found no problems", nil
 		}},
-		{group: groupSBX, doing: "Checking for a GitHub secret shared with every sandbox", run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Checking for a GitHub secret shared with every sandbox", step: "check GitHub secret shared with every sandbox", run: func(ctx context.Context) (string, []error) {
 			has, err := sbx.HasGlobalGitHubSecret(ctx)
 			switch {
 			case err != nil:
@@ -88,7 +129,7 @@ func checks(c config) []item {
 			}
 			return "No GitHub secret shared with every sandbox", nil
 		}},
-		{group: groupSBX, doing: "Checking the sandboxes' Claude login", run: func(ctx context.Context) (string, []error) {
+		{group: groupSBX, doing: "Checking the sandboxes' Claude login", step: "check sandboxes' Claude login", run: func(ctx context.Context) (string, []error) {
 			in, err := sbx.ClaudeSignedIn(ctx)
 			switch {
 			case err != nil:
@@ -98,7 +139,7 @@ func checks(c config) []item {
 			}
 			return "Sandboxes are signed in to Claude", nil
 		}},
-		{group: groupClaude, doing: "Checking the Claude login on this machine", gate: true, run: func(ctx context.Context) (string, []error) {
+		{group: groupClaude, doing: "Checking the Claude login on this machine", step: "check Claude login on this machine", gate: true, run: func(ctx context.Context) (string, []error) {
 			in, err := claude.SignedIn(ctx)
 			switch {
 			case err != nil:
@@ -110,7 +151,7 @@ func checks(c config) []item {
 		}},
 	}
 	items = append(items, modelItems(c)...)
-	items = append(items, item{group: groupClaude, doing: "Checking the exomecha plugin (installs it if missing)", initOnly: true, run: func(ctx context.Context) (string, []error) {
+	items = append(items, item{group: groupClaude, doing: "Checking the exomecha plugin (installs it if missing)", step: "check exomecha plugin", initOnly: true, run: func(ctx context.Context) (string, []error) {
 		v, err := claude.PluginVersion(ctx)
 		if err == nil && v != "" {
 			return "exomecha plugin installed", nil
@@ -131,7 +172,7 @@ func checks(c config) []item {
 		targets = append([]target{c.prd}, targets...)
 	}
 	for _, t := range targets {
-		items = append(items, item{group: groupGitHub, doing: "Checking the token's access to " + t.full(), run: func(ctx context.Context) (string, []error) {
+		items = append(items, item{group: groupGitHub, doing: "Checking the token's access to " + t.full(), step: "check token access", attrs: []any{logging.Repo, t.full()}, run: func(ctx context.Context) (string, []error) {
 			gh, err := client(t, c.token)
 			if err == nil {
 				err = gh.Reach(ctx)
@@ -182,7 +223,7 @@ func modelItems(c config) []item {
 			users = "(used by " + joinAnd(u.keys) + ")"
 		}
 		name := u.model.Name
-		items = append(items, item{group: groupClaude, doing: "Checking " + name, run: func(ctx context.Context) (string, []error) {
+		items = append(items, item{group: groupClaude, doing: "Checking " + name, step: "check model", attrs: []any{logging.Model, name}, run: func(ctx context.Context) (string, []error) {
 			if err := (agent.Claude{}).Check(ctx, u.model); err != nil {
 				return name + " is not available " + users, []error{fmt.Errorf("models.%s: %w", u.keys[0], err)}
 			}
