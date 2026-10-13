@@ -151,24 +151,24 @@ func TestParseAuthStatus(t *testing.T) {
 	}
 }
 
-func TestHasUserPlugin(t *testing.T) {
+func TestUserPluginVersion(t *testing.T) {
 	cases := []struct {
 		out  string
-		want bool
+		want string
 	}{
-		{`[{"id":"exomecha@exomecha","scope":"user","enabled":true}]`, true},
-		{`[{"id":"exomecha@exomecha","scope":"local","enabled":true,"projectPath":"/x"}]`, false},
-		{`[{"id":"exomecha@exomecha","scope":"user","enabled":false}]`, false},
-		{`[{"id":"codex@openai-codex","scope":"user","enabled":true}]`, false},
-		{`[]`, false},
+		{`[{"id":"exomecha@exomecha","version":"0.4.0","scope":"user","enabled":true}]`, "0.4.0"},
+		{`[{"id":"exomecha@exomecha","version":"0.4.0","scope":"local","enabled":true,"projectPath":"/x"}]`, ""},
+		{`[{"id":"exomecha@exomecha","version":"0.4.0","scope":"user","enabled":false}]`, ""},
+		{`[{"id":"codex@openai-codex","version":"1.0.0","scope":"user","enabled":true}]`, ""},
+		{`[]`, ""},
 	}
 	for _, c := range cases {
-		if got, err := hasUserPlugin([]byte(c.out)); err != nil || got != c.want {
-			t.Errorf("hasUserPlugin(%s) = %v, %v, want %v", c.out, got, err, c.want)
+		if got, err := userPluginVersion([]byte(c.out)); err != nil || got != c.want {
+			t.Errorf("userPluginVersion(%s) = %q, %v, want %q", c.out, got, err, c.want)
 		}
 	}
-	if _, err := hasUserPlugin([]byte("Installed plugins:")); err == nil {
-		t.Error("hasUserPlugin of text = nil error")
+	if _, err := userPluginVersion([]byte("Installed plugins:")); err == nil {
+		t.Error("userPluginVersion of text = nil error")
 	}
 }
 

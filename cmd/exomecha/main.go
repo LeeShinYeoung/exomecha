@@ -28,6 +28,7 @@ const usage = `Usage:
   exomecha init <project>   ask for the project's settings, write ~/.exomecha/<project>.yaml and check this machine
   exomecha run <project>    run the project in this terminal
   exomecha list             list the projects and whether each is running
+  exomecha update           update exomecha and its Claude Code plugin to the latest release
   exomecha --version        print the version
 `
 
@@ -69,6 +70,10 @@ func main() {
 		}
 	case len(args) == 1 && args[0] == "list":
 		err = list(home, os.Stdout)
+	case len(args) == 1 && args[0] == "update":
+		ctx, stop := signalContext()
+		err = update(ctx, os.Stdout)
+		stop()
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
