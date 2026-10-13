@@ -1,0 +1,16 @@
+version: 2
+
+builds:
+  - main: ./cmd/exomecha
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    # README downloads the latest release by a name without the version.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+changelog:
+  use: github-native

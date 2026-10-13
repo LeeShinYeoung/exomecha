@@ -1,0 +1,63 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as 0.4.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Commit the plugin version and tag it
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Run the release on main"
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The version must look like 0.4.0"
+            exit 1
+          fi
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists"
+            exit 1
+          fi
+
+          # Claude Code updates an installed plugin only when this version changes.
+          jq --arg v "$VERSION" '.version = $v' .claude-plugin/plugin.json > plugin.json
+          mv plugin.json .claude-plugin/plugin.json
+          # A first install takes the plugin from the tag, not from unreleased commits on main.
+          jq --arg t "$tag" '.plugins[0].source = {source: "github", repo: "LeeShinYeoung/exomecha", ref: $t}' .claude-plugin/marketplace.json > marketplace.json
+          mv marketplace.json .claude-plugin/marketplace.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # A rerun after a failed release finds the files already changed.
+          if ! git diff --quiet; then
+            git commit -am ".claude-plugin: release $tag"
+          fi
+          git tag "$tag"
+          git push --atomic origin HEAD:main "$tag"
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

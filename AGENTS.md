@@ -40,3 +40,9 @@ A Go daemon, the `exomecha` command. Its code is in `cmd/exomecha` and `internal
 | `status:stuck` | person | Answers the worker's question. | the status the comment names |
 
 A worker that needs a person's decision moves the PRD to `status:stuck`.
+
+## Release
+
+A person runs the release workflow in GitHub Actions with a version such as 0.4.0. The workflow sets the plugin's version, points the marketplace's plugin source at the new tag, and commits and tags this on main. Then GoReleaser builds the binaries for macOS and Linux and publishes the GitHub release with the list of PRs GitHub generates.
+
+Do not change the plugin's version or the marketplace's plugin source by hand.

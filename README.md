@@ -31,15 +31,13 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
 
 ## Installation
 
-1. Install exomecha. On an ARM Linux machine, replace `amd64` with `arm64`.
+1. Install exomecha. The commands pick the build for this machine's OS and CPU.
 
    ```
-   # macOS
-   brew install leeshinyeoung/tap/exomecha
-
-   # Linux
-   curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_linux_amd64.tar.gz
-   tar -xzf exomecha_linux_amd64.tar.gz
+   os=$(uname -s | tr '[:upper:]' '[:lower:]')
+   arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+   curl -fsSL "https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_${os}_${arch}.tar.gz" | tar -xz exomecha
+   sudo mkdir -p /usr/local/bin
    sudo install exomecha /usr/local/bin/
    ```
 
@@ -65,6 +63,15 @@ On a machine that only writes PRDs, without running exomecha, install the plugin
 ```
 /plugin marketplace add LeeShinYeoung/exomecha
 /plugin install exomecha@exomecha
+```
+
+## Update
+
+To update exomecha, run the install commands in step 1 again. Update the plugin on its own:
+
+```
+claude plugin marketplace update exomecha
+claude plugin update exomecha@exomecha
 ```
 
 ## Usage
