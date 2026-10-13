@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
@@ -29,7 +30,7 @@ var reviewerRole = role{
 	schema: reviewerSchema,
 	from:   label.Review,
 	back:   label.Review,
-	tier:   label.Heavy,
+	model:  func(m Models) agent.Model { return m.Reviewer },
 }
 
 // merged, closed and failing drop the run, which was about a PR that no longer stands, and Handle
@@ -227,7 +228,7 @@ func (r *reviewer) look(ctx context.Context, prd github.Issue, repos []*Repo) (p
 func (r *reviewer) start(ctx context.Context, prd github.Issue, prs []repoPR) error {
 	n := prd.Number
 	return r.runs.start(ctx, reviewerRole, n, func(ctx context.Context) (spec, error) {
-		var s spec
+		s := spec{tier: label.TierOf(prd.Labels)}
 		var shown []repoWithPR
 		for _, p := range prs {
 			base, err := fetchBase(ctx, p.repo.Git)

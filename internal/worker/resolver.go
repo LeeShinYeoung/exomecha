@@ -27,8 +27,7 @@ var resolverRole = role{
 	project: true,
 	from:    label.Review,
 	back:    label.Review,
-	// A conflict asks the same judgment whatever the PRD's tier.
-	model: func(d Deps) agent.Model { return d.ResolverModel },
+	model:   func(m Models) agent.Model { return m.Resolver },
 }
 
 // begin does nothing when the PRD branch is missing or already has the base branch.
@@ -121,7 +120,7 @@ func (r *resolver) place(ctx context.Context, prd github.Issue) (place, []repoPR
 func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) error {
 	n := prd.Number
 	branch := branchName(n)
-	var s spec
+	s := spec{tier: label.TierOf(prd.Labels)}
 	var shown []repoWithPR
 	for _, p := range prs {
 		base, err := fetchBase(ctx, p.repo.Git)

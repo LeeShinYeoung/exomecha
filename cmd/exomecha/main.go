@@ -103,8 +103,7 @@ type config struct {
 	fiveHour, weekly        float64
 	projectLimit, readLimit int
 	reviewLimit             int
-	light, normal, heavy    agent.Model
-	resolver                agent.Model
+	light, normal, heavy    worker.Models
 
 	project           string // the name of the project's file, which check's fixes name
 	root              string // what exomecha keeps of the project
@@ -115,16 +114,16 @@ type config struct {
 }
 
 func defaults() config {
+	opus := func(effort string) agent.Model { return agent.Model{Name: "opus", Effort: effort} }
 	return config{
 		fiveHour:     0.9,
 		weekly:       0.8,
 		projectLimit: 2,
 		readLimit:    2,
 		reviewLimit:  5,
-		light:        agent.Model{Name: "opus", Effort: "low"},
-		normal:       agent.Model{Name: "opus", Effort: "high"},
-		heavy:        agent.Model{Name: "opus", Effort: "xhigh"},
-		resolver:     agent.Model{Name: "opus", Effort: "medium"},
+		light:        worker.Models{Builder: opus("low"), Reviewer: opus("xhigh"), Resolver: opus("medium")},
+		normal:       worker.Models{Builder: opus("high"), Reviewer: opus("xhigh"), Resolver: opus("medium")},
+		heavy:        worker.Models{Builder: opus("xhigh"), Reviewer: opus("xhigh"), Resolver: opus("medium")},
 	}
 }
 
@@ -254,8 +253,7 @@ func serve(ctx context.Context, c config) error {
 		ReviewLimit:   c.reviewLimit,
 		GitName:       author,
 		GitEmail:      email,
-		Models:        map[label.Tier]agent.Model{label.Light: c.light, label.Normal: c.normal, label.Heavy: c.heavy},
-		ResolverModel: c.resolver,
+		Models:        map[label.Tier]worker.Models{label.Light: c.light, label.Normal: c.normal, label.Heavy: c.heavy},
 		Interval:      c.interval,
 		CIGrace:       c.ciGrace,
 	}
@@ -272,7 +270,7 @@ func serve(ctx context.Context, c config) error {
 	slog.Info("exomecha started", logging.Repo, c.prd.full(), logging.Repos, strings.Join(names, ","), logging.Base, c.base, logging.FiveHourLimit, c.fiveHour,
 		logging.WeeklyLimit, c.weekly, logging.SandboxLimit, c.projectLimit, logging.ReadSandboxLimit, c.readLimit,
 		logging.ReviewLimit, c.reviewLimit, logging.TierLight, c.light, logging.TierNormal, c.normal, logging.TierHeavy, c.heavy,
-		logging.ResolverModel, c.resolver, logging.CreatedLabels, created)
+		logging.CreatedLabels, created)
 	readUsage := agent.Claude{}.Usage
 	if c.usage != nil {
 		readUsage = c.usage

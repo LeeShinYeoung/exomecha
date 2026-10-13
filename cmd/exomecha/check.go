@@ -10,6 +10,7 @@ import (
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
 
 // item is one line of the machine check. run returns the line to show and the problems it found,
@@ -144,7 +145,7 @@ func checks(c config) []item {
 	return items
 }
 
-// modelItems checks each model once, with the first tier's that uses it: the check finds a model's
+// modelItems checks each model once, with the first key that uses it: the check finds a model's
 // problems, and claude reports nothing about the effort.
 func modelItems(c config) []item {
 	type use struct {
@@ -152,23 +153,32 @@ func modelItems(c config) []item {
 		keys  []string
 	}
 	var uses []*use
+	keys := 0
 	for _, t := range []struct {
-		key   string
-		model agent.Model
+		tier   string
+		models worker.Models
 	}{
-		{"light", c.light}, {"normal", c.normal}, {"heavy", c.heavy}, {"resolver", c.resolver},
+		{"light", c.light}, {"normal", c.normal}, {"heavy", c.heavy},
 	} {
-		i := slices.IndexFunc(uses, func(u *use) bool { return u.model.Name == t.model.Name })
-		if i < 0 {
-			uses = append(uses, &use{model: t.model})
-			i = len(uses) - 1
+		for _, w := range []struct {
+			name  string
+			model agent.Model
+		}{
+			{"builder", t.models.Builder}, {"reviewer", t.models.Reviewer}, {"resolver", t.models.Resolver},
+		} {
+			i := slices.IndexFunc(uses, func(u *use) bool { return u.model.Name == w.model.Name })
+			if i < 0 {
+				uses = append(uses, &use{model: w.model})
+				i = len(uses) - 1
+			}
+			uses[i].keys = append(uses[i].keys, t.tier+"."+w.name)
+			keys++
 		}
-		uses[i].keys = append(uses[i].keys, t.key)
 	}
 	var items []item
 	for _, u := range uses {
-		users := "(used by every tier and resolver)"
-		if len(u.keys) < 4 {
+		users := "(used by every worker)"
+		if len(u.keys) < keys {
 			users = "(used by " + joinAnd(u.keys) + ")"
 		}
 		name := u.model.Name

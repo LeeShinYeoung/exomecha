@@ -432,13 +432,21 @@ const optionalSettings = `
 #   read_sandboxes: %d
 #   reviews: %d
 
-# The claude model and effort of each tier, as model:effort. reviewer runs on heavy and builder on
-# its PRD's tier label. resolver runs on its own, whatever the PRD's tier.
+# The claude model and effort of each worker in each tier, as model:effort. A PRD's tier label
+# picks the tier, and a PRD with none is normal.
 # models:
-#   light: %s
-#   normal: %s
-#   heavy: %s
-#   resolver: %s
+#   light:
+#     builder: %s
+#     reviewer: %s
+#     resolver: %s
+#   normal:
+#     builder: %s
+#     reviewer: %s
+#     resolver: %s
+#   heavy:
+#     builder: %s
+#     reviewer: %s
+#     resolver: %s
 `
 
 func settingsFile(a answers) []byte {
@@ -456,7 +464,9 @@ func settingsFile(a answers) []byte {
 	fmt.Fprintf(&b, "github_token: %s\n", scalar(a.token))
 	d := defaults()
 	fmt.Fprintf(&b, optionalSettings, int(math.Round(d.fiveHour*100)), int(math.Round(d.weekly*100)),
-		d.projectLimit, d.readLimit, d.reviewLimit, d.light, d.normal, d.heavy, d.resolver)
+		d.projectLimit, d.readLimit, d.reviewLimit,
+		d.light.Builder, d.light.Reviewer, d.light.Resolver, d.normal.Builder, d.normal.Reviewer, d.normal.Resolver,
+		d.heavy.Builder, d.heavy.Reviewer, d.heavy.Resolver)
 	return []byte(b.String())
 }
 

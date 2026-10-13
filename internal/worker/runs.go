@@ -99,10 +99,8 @@ type role struct {
 	// ready is builder's alone: a start moves the PRD from ready to from, and a start that is
 	// undone or starts over moves it back.
 	ready label.Status
-	// tier picks the model of the role's runs, unless the spec names one. model, when set, picks
-	// it instead of any tier.
-	tier  label.Tier
-	model func(Deps) agent.Model
+	// model picks the role's own from the models of the PRD's tier.
+	model func(Models) agent.Model
 }
 
 type run struct {

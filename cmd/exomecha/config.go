@@ -15,6 +15,7 @@ import (
 
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
 
 // settings is a project's file, ~/.exomecha/<project>.yaml.
@@ -32,11 +33,16 @@ type settings struct {
 		Reviews       *int `yaml:"reviews"`
 	} `yaml:"limits"`
 	Models struct {
-		Light    string `yaml:"light"`
-		Normal   string `yaml:"normal"`
-		Heavy    string `yaml:"heavy"`
-		Resolver string `yaml:"resolver"`
+		Light  tierModels `yaml:"light"`
+		Normal tierModels `yaml:"normal"`
+		Heavy  tierModels `yaml:"heavy"`
 	} `yaml:"models"`
+}
+
+type tierModels struct {
+	Builder  string `yaml:"builder"`
+	Reviewer string `yaml:"reviewer"`
+	Resolver string `yaml:"resolver"`
 }
 
 type secret struct {
@@ -169,16 +175,13 @@ func parseConfig(data []byte) (config, error) {
 	if c.reviewLimit, err = limit("limits.reviews", s.Limits.Reviews, c.reviewLimit); err != nil {
 		return config{}, err
 	}
-	if c.light, err = model("models.light", s.Models.Light, c.light); err != nil {
+	if c.light, err = models("models.light", s.Models.Light, c.light); err != nil {
 		return config{}, err
 	}
-	if c.normal, err = model("models.normal", s.Models.Normal, c.normal); err != nil {
+	if c.normal, err = models("models.normal", s.Models.Normal, c.normal); err != nil {
 		return config{}, err
 	}
-	if c.heavy, err = model("models.heavy", s.Models.Heavy, c.heavy); err != nil {
-		return config{}, err
-	}
-	if c.resolver, err = model("models.resolver", s.Models.Resolver, c.resolver); err != nil {
+	if c.heavy, err = models("models.heavy", s.Models.Heavy, c.heavy); err != nil {
 		return config{}, err
 	}
 	return c, nil
@@ -297,6 +300,21 @@ func limit(key string, v *int, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be a whole number of at least 1: %d", key, *v)
 	}
 	return *v, nil
+}
+
+func models(key string, v tierModels, fallback worker.Models) (worker.Models, error) {
+	m := fallback
+	var err error
+	if m.Builder, err = model(key+".builder", v.Builder, m.Builder); err != nil {
+		return worker.Models{}, err
+	}
+	if m.Reviewer, err = model(key+".reviewer", v.Reviewer, m.Reviewer); err != nil {
+		return worker.Models{}, err
+	}
+	if m.Resolver, err = model(key+".resolver", v.Resolver, m.Resolver); err != nil {
+		return worker.Models{}, err
+	}
+	return m, nil
 }
 
 func model(key, v string, fallback agent.Model) (agent.Model, error) {

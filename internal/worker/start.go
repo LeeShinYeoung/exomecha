@@ -1,7 +1,6 @@
 package worker
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -105,7 +104,7 @@ func (r *runs) slotFree(ctx context.Context, ro role, self string) (bool, error)
 type spec struct {
 	repos []repoSpec
 	input string     // claude's input. open adds what setup and the merge did.
-	tier  label.Tier // "" for the role's tier
+	tier  label.Tier // the PRD's
 }
 
 // repoSpec is what one repository of a run gets.
@@ -169,13 +168,9 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 // open creates the sandbox, sends the code in, runs setup, and starts claude. The problem is set
 // when only a person can fix what stopped it. On a problem or error the caller removes the sandbox.
 func (r *runs) open(ctx context.Context, ro role, n int, s spec) (*problem, error) {
-	tier := cmp.Or(s.tier, ro.tier)
-	model := r.Models[tier]
-	if ro.model != nil {
-		model = ro.model(r.Deps)
-	}
+	model := ro.model(r.Models[s.tier])
 	if model == (agent.Model{}) {
-		return nil, fmt.Errorf("no model for %s", cmp.Or(string(tier), ro.name))
+		return nil, fmt.Errorf("no %s model for %s", ro.name, s.tier)
 	}
 	if p, err := r.create(ctx, ro, n); p != nil || err != nil {
 		return p, err

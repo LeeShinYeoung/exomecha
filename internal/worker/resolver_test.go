@@ -16,8 +16,8 @@ const resolverDone = `{"result": "resolved", "reason": "kept both lines"}`
 
 // conflictPRD sets up a PRD in review whose branch and main both changed since the branch
 // started, and whose PR GitHub reports as conflicting. It returns the branch head.
-func (e *env) conflictPRD(feature, main map[string]string) (prd, pr int, head string) {
-	prd = e.addPRD("PRD", "PRD body", label.PRD, string(label.Review))
+func (e *env) conflictPRD(feature, main map[string]string, labels ...string) (prd, pr int, head string) {
+	prd = e.addPRD("PRD", "PRD body", append([]string{label.PRD, string(label.Review)}, labels...)...)
 	head = gittest.Commit(e.t, e.origin, branchName(prd), "main", feature)
 	gittest.Commit(e.t, e.origin, "main", "", main)
 	pr = e.gh.AddPull(branchName(prd), "main")
@@ -58,6 +58,24 @@ func (e *env) conflicted() (prd int, name, head string) {
 	name = e.resolverBox(prd)
 	e.wantState(name, running)
 	return prd, name, head
+}
+
+func TestResolverRunsThePRDsTier(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		labels []string
+		want   label.Tier
+	}{
+		{nil, label.Normal},
+		{[]string{string(label.Heavy)}, label.Heavy},
+	} {
+		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+		prd, _, _ := e.conflictPRD(map[string]string{"app.txt": "feature\n"}, map[string]string{"app.txt": "main\n"}, c.labels...)
+		e.resolve(prd)
+		if got := e.startedModel(e.resolverBox(prd)); got != testModels[c.want].Resolver {
+			t.Errorf("PRD with %q got %v, want %v", c.labels, got, testModels[c.want].Resolver)
+		}
+	}
 }
 
 func TestResolverPicks(t *testing.T) {

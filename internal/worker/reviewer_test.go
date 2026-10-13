@@ -28,8 +28,8 @@ func (e *env) reviewerBox(n int) string { return e.runs.name(reviewerRole, n) }
 
 // reviewPRD sets up a PRD in review, with a pushed branch and an open, mergeable PR. With no
 // CI runs set, its head commit is an hour old.
-func (e *env) reviewPRD() (prd, pr int, sha string) {
-	prd = e.addPRD("PRD", "PRD body", label.PRD, string(label.Review))
+func (e *env) reviewPRD(labels ...string) (prd, pr int, sha string) {
+	prd = e.addPRD("PRD", "PRD body", append([]string{label.PRD, string(label.Review)}, labels...)...)
 	sha = gittest.Commit(e.t, e.origin, branchName(prd), "main", map[string]string{"feature.txt": "x\n"})
 	pr = e.gh.AddPull(branchName(prd), "main")
 	e.gh.SetMergeable(pr, new(true))
@@ -54,6 +54,24 @@ func (e *env) wantUntouched(prd, pr int) {
 	e.wantStatus(prd, label.Review)
 	if p := e.gh.Pull(pr); p.Merged || len(p.Reviews) != 0 {
 		e.t.Errorf("PR changed: merged=%v reviews=%d", p.Merged, len(p.Reviews))
+	}
+}
+
+func TestReviewerRunsThePRDsTier(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		labels []string
+		want   label.Tier
+	}{
+		{nil, label.Normal},
+		{[]string{string(label.Light)}, label.Light},
+	} {
+		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+		prd, _, _ := e.reviewPRD(c.labels...)
+		e.review(prd)
+		if got := e.startedModel(e.reviewerBox(prd)); got != testModels[c.want].Reviewer {
+			t.Errorf("PRD with %q got %v, want %v", c.labels, got, testModels[c.want].Reviewer)
+		}
 	}
 }
 
