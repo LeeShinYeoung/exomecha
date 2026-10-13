@@ -14,18 +14,3 @@ archives:
 
 changelog:
   use: github-native
-
-homebrew_casks:
-  - repository:
-      owner: LeeShinYeoung
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: https://github.com/LeeShinYeoung/exomecha
-    description: PRD-driven Agent Orchestrator
-    hooks:
-      post:
-        # The binary is not signed, so without this macOS refuses to run it.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/exomecha"]
-          end
