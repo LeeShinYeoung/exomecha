@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -27,7 +28,11 @@ const usage = `Usage:
   exomecha init <project>   ask for the project's settings, write ~/.exomecha/<project>.yaml and check this machine
   exomecha run <project>    run the project in this terminal
   exomecha list             list the projects and whether each is running
+  exomecha --version        print the version
 `
+
+// .goreleaser.yaml sets it to the release's version by this name.
+var version = "dev"
 
 func main() {
 	// Until run opens the log file, lines go to the terminal alone, in the same form.
@@ -39,6 +44,12 @@ func main() {
 	}
 	args := os.Args[1:]
 	switch {
+	case wantsHelp(args):
+		fmt.Print(usage)
+		return
+	case len(args) == 1 && args[0] == "--version":
+		fmt.Println("exomecha", version)
+		return
 	case len(args) == 2 && args[0] == "init":
 		// Ctrl-C during the sign-in still removes its sandbox.
 		ctx, stop := signalContext()
@@ -66,6 +77,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "exomecha:", err)
 		os.Exit(1)
 	}
+}
+
+// wantsHelp looks for -h and --help anywhere, so "run --help" shows the usage too.
+func wantsHelp(args []string) bool {
+	return len(args) > 0 && args[0] == "help" || slices.Contains(args, "-h") || slices.Contains(args, "--help")
 }
 
 // target is a repository exomecha works with.

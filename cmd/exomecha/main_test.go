@@ -169,6 +169,27 @@ func TestSettingsPath(t *testing.T) {
 	}
 }
 
+func TestWantsHelp(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"--help"}, true},
+		{[]string{"-h"}, true},
+		{[]string{"help"}, true},
+		{[]string{"run", "--help"}, true},
+		{[]string{"init", "acme", "-h"}, true},
+		{[]string{"run", "help"}, false},
+		{[]string{"list"}, false},
+		{[]string{"--version"}, false},
+		{nil, false},
+	} {
+		if got := wantsHelp(c.args); got != c.want {
+			t.Errorf("wantsHelp(%q) = %v, want %v", c.args, got, c.want)
+		}
+	}
+}
+
 func TestCheckPRDRepo(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".exomecha")
