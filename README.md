@@ -79,6 +79,7 @@ claude plugin update exomecha@exomecha
 ```
 exomecha run <project>   # runs in this terminal until Ctrl-C
 exomecha list            # lists the projects and whether each is running
+exomecha --version       # prints the installed version
 ```
 
 You write PRDs in Claude Code with the skills.
