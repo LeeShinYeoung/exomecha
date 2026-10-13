@@ -7,8 +7,8 @@ func TestTierOf(t *testing.T) {
 		labels []string
 		want   Tier
 	}{
-		{nil, ""},
-		{[]string{PRD, string(Working)}, ""},
+		{nil, Normal},
+		{[]string{PRD, string(Working)}, Normal},
 		{[]string{PRD, string(Light)}, Light},
 		{[]string{string(Light), PRD, string(Heavy)}, Heavy},
 		{[]string{string(Normal), string(Light)}, Normal},

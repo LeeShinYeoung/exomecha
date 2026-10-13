@@ -32,7 +32,7 @@ func (e *env) testSpec() (spec, string) {
 		e.t.Fatal(err)
 	}
 	base := e.rev("origin/main")
-	return spec{repos: []repoSpec{{repo: e.repo, branch: branchName(1), base: base, head: base}}, input: "the PRD\n\n"}, e.runs.name(builderRole, 1)
+	return spec{repos: []repoSpec{{repo: e.repo, branch: branchName(1), base: base, head: base}}, input: "the PRD\n\n", tier: label.Normal}, e.runs.name(builderRole, 1)
 }
 
 func (e *env) open(s spec) *problem {
@@ -112,7 +112,7 @@ func TestOpenStartsClaudeInASandbox(t *testing.T) {
 		t.Errorf("start = %q", start)
 	}
 	for flag, want := range map[string]string{"--permission-mode": "auto", "--append-system-prompt": prompt("builder"), "--json-schema": builderSchema,
-		"--model": "normal-model", "--effort": "medium"} {
+		"--model": "normal-builder", "--effort": "medium"} {
 		if i := slices.Index(start, flag); i < 0 || start[i+1] != want {
 			t.Errorf("claude does not get %s %.40q: %.200q", flag, want, start)
 		}
@@ -241,37 +241,27 @@ func TestOpenEnvironmentNeedsAPerson(t *testing.T) {
 	}
 }
 
-func TestOpenRunsTheRolesModel(t *testing.T) {
+func TestOpenRunsTheRolesModelOfTheTier(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		ro   role
-		tier label.Tier // the spec's
-		want agent.Model
-	}{
-		{reviewerRole, "", testModels[label.Heavy]},
-		{resolverRole, "", testResolverModel},
-		{builderRole, "", testModels[label.Normal]},
-		{builderRole, label.Light, testModels[label.Light]},
-	} {
-		name := c.ro.name
-		if c.tier != "" {
-			name += " with " + string(c.tier)
+	for _, ro := range []role{builderRole, reviewerRole, resolverRole} {
+		for _, tier := range []label.Tier{label.Light, label.Normal, label.Heavy} {
+			t.Run(ro.name+" with "+string(tier), func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+				s, _ := e.testSpec()
+				if !ro.project {
+					s.repos[0].branch = ""
+				}
+				s.tier = tier
+				if p, err := e.runs.open(t.Context(), ro, 1, s); p != nil || err != nil {
+					t.Fatalf("open = %+v, %v", p, err)
+				}
+				want := strings.TrimPrefix(string(tier), "tier:") + "-" + ro.name
+				if got := e.startedModel(e.runs.name(ro, 1)); got.Name != want {
+					t.Errorf("claude got %v, want %s", got, want)
+				}
+			})
 		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
-			s, _ := e.testSpec()
-			if !c.ro.project {
-				s.repos[0].branch = ""
-			}
-			s.tier = c.tier
-			if p, err := e.runs.open(t.Context(), c.ro, 1, s); p != nil || err != nil {
-				t.Fatalf("open = %+v, %v", p, err)
-			}
-			if got := e.startedModel(e.runs.name(c.ro, 1)); got != c.want {
-				t.Errorf("claude got %v, want %v", got, c.want)
-			}
-		})
 	}
 }
 
@@ -282,7 +272,6 @@ func TestOpenWithoutAModelCreatesNoSandbox(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 			delete(e.runs.Models, label.Normal)
-			e.runs.ResolverModel = agent.Model{}
 			s, _ := e.testSpec()
 			if p, err := e.runs.open(t.Context(), ro, 1, s); p != nil || err == nil {
 				t.Errorf("open = %+v, %v, want an error", p, err)

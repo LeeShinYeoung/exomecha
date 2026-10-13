@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/github"
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 	"github.com/LeeShinYeoung/exomecha/internal/logging"
@@ -30,8 +31,7 @@ var builderRole = role{
 	from:    label.Working,
 	back:    label.Ready,
 	ready:   label.Ready,
-	// For a PRD with no tier label. A tier label takes its place.
-	tier: label.Normal,
+	model:   func(m Models) agent.Model { return m.Builder },
 }
 
 // begin waits while a blocker is open. A run of a ready PRD was left when a person sent the PRD

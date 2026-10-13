@@ -66,9 +66,9 @@ func TestE2EStartRefusesUnknownModel(t *testing.T) {
 	cfg.prd = target{owner: gh.Owner, name: gh.Repo, apiURL: gh.URL}
 	cfg.repos = []target{cfg.prd}
 	cfg.token = "e2e-token"
-	cfg.light = agent.Model{Name: "opsu", Effort: "low"}
+	cfg.light.Builder = agent.Model{Name: "opsu", Effort: "low"}
 	err := serve(t.Context(), cfg)
-	if err == nil || !strings.Contains(err.Error(), "models.light") || !strings.Contains(err.Error(), "opsu") || strings.Contains(err.Error(), "cannot reach") {
-		t.Errorf("start with light opsu: %v, want only a refusal naming models.light and opsu", err)
+	if err == nil || !strings.Contains(err.Error(), "models.light.builder") || !strings.Contains(err.Error(), "opsu") || strings.Contains(err.Error(), "cannot reach") {
+		t.Errorf("start with light builder opsu: %v, want only a refusal naming models.light.builder and opsu", err)
 	}
 }

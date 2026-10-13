@@ -45,7 +45,7 @@ The practice project is plain POSIX sh, so claude needs nothing installed to bui
 | Restart | Stopping exomecha leaves a running build's sandbox alone, and after a restart the build is collected without starting claude again. |
 | SentBackByReview | A wrong commit gets reviewer's review asking for changes, which reaches builder's record, and builder fixes it on the same PR. |
 | SentBackByPerson | A person's review and line comment reach builder's record after reviewer's approval, comments from accounts without write access do not, and builder does what the person asked on the same PR. |
-| Conflict | resolver merges main into a conflicting PR on its own model, with a merge commit that ends with `PRD: #<n>` and passing tests. reviewer does not take the PR while it conflicts. |
+| Conflict | resolver merges main into a conflicting PR on its model for the PRD's tier, with a merge commit that ends with `PRD: #<n>` and passing tests. reviewer does not take the PR while it conflicts. |
 | Contradiction | A PR that main contradicts goes stuck with a question, and resolver settles it the way the answer says. builder never takes part. |
 | SetupAndCommitChecks | The setup script runs before claude and can start a Docker service, its files stay out of the PR, and builder's and resolver's commits pass a `commit-msg` hook. |
 | StartRefusesUnknownModel | exomecha refuses to start on a misspelled model. |

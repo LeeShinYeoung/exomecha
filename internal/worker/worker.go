@@ -33,6 +33,10 @@ type Worker interface {
 	Handle(ctx context.Context, number int) error
 }
 
+type Models struct {
+	Builder, Reviewer, Resolver agent.Model
+}
+
 type Deps struct {
 	// GitHub is the PRD repository's. Its issues are the PRDs.
 	GitHub *github.Client
@@ -63,9 +67,8 @@ type Deps struct {
 	// The commit identity for project runs, the token owner's. A sandbox has none of its own.
 	GitName  string
 	GitEmail string
-	// Models has a model for every tier.
-	Models        map[label.Tier]agent.Model
-	ResolverModel agent.Model
+	// Models has the models of every tier.
+	Models map[label.Tier]Models
 	// Zero takes the default. Only the e2e tests shorten them.
 	Interval time.Duration // between two checks of a worker, and the first wait after an error
 	CIGrace  time.Duration

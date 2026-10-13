@@ -363,8 +363,8 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	if strings.Count(input, "please rename X") != 1 {
 		t.Error("exomecha's review is in the input more than once")
 	}
-	if got := e.startedModel(name); got != testModels[label.Heavy] {
-		t.Errorf("the run for the review got %v, want the PRD's tier %v", got, testModels[label.Heavy])
+	if got := e.startedModel(name); got != testModels[label.Heavy].Builder {
+		t.Errorf("the run for the review got %v, want the PRD's tier %v", got, testModels[label.Heavy].Builder)
 	}
 	e.play(name, commit(t, "fix: rename X", map[string]string{"feature.txt": "second\n"}), builderDone)
 	e.step(prd)
@@ -486,8 +486,8 @@ func TestBuilderRunsTheTasksTier(t *testing.T) {
 		e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 		prd := e.addPRD("PRD", "", append([]string{label.PRD, string(label.Ready)}, c.labels...)...)
 		e.step(prd)
-		if got := e.startedModel(e.builderBox(prd)); got != testModels[c.want] {
-			t.Errorf("PRD with %q got %v, want %v", c.labels, got, testModels[c.want])
+		if got := e.startedModel(e.builderBox(prd)); got != testModels[c.want].Builder {
+			t.Errorf("PRD with %q got %v, want %v", c.labels, got, testModels[c.want].Builder)
 		}
 	}
 }

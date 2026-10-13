@@ -36,14 +36,24 @@ type env struct {
 	runs   *runs
 }
 
-// Each tier has a model and an effort no other tier has, so a start's args show which tier it got.
-var testModels = map[label.Tier]agent.Model{
-	label.Light:  {Name: "light-model", Effort: "low"},
-	label.Normal: {Name: "normal-model", Effort: "medium"},
-	label.Heavy:  {Name: "heavy-model", Effort: "high"},
+// Each worker of each tier has a model no other has, so a start's args show which one it got.
+var testModels = map[label.Tier]Models{
+	label.Light: {
+		Builder:  agent.Model{Name: "light-builder", Effort: "low"},
+		Reviewer: agent.Model{Name: "light-reviewer", Effort: "low"},
+		Resolver: agent.Model{Name: "light-resolver", Effort: "low"},
+	},
+	label.Normal: {
+		Builder:  agent.Model{Name: "normal-builder", Effort: "medium"},
+		Reviewer: agent.Model{Name: "normal-reviewer", Effort: "medium"},
+		Resolver: agent.Model{Name: "normal-resolver", Effort: "medium"},
+	},
+	label.Heavy: {
+		Builder:  agent.Model{Name: "heavy-builder", Effort: "high"},
+		Reviewer: agent.Model{Name: "heavy-reviewer", Effort: "high"},
+		Resolver: agent.Model{Name: "heavy-resolver", Effort: "high"},
+	},
 }
-
-var testResolverModel = agent.Model{Name: "resolver-model", Effort: "xhigh"}
 
 func TestMain(m *testing.M) { gittest.Main(m) }
 
@@ -87,7 +97,6 @@ func newEnv(t *testing.T, files map[string]string) *env {
 		GitName:       "Owner Name",
 		GitEmail:      "4242+owner@users.noreply.github.com",
 		Models:        maps.Clone(testModels),
-		ResolverModel: testResolverModel,
 	}
 	e.newRuns()
 	return e

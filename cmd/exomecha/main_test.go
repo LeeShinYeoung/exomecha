@@ -17,6 +17,7 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/agent"
 	"github.com/LeeShinYeoung/exomecha/internal/git/gittest"
 	"github.com/LeeShinYeoung/exomecha/internal/sandbox"
+	"github.com/LeeShinYeoung/exomecha/internal/worker"
 )
 
 func TestMain(m *testing.M) {
@@ -66,20 +67,36 @@ func TestParseConfig(t *testing.T) {
 			if c.fiveHour != d.fiveHour || c.weekly != d.weekly || c.projectLimit != d.projectLimit || c.readLimit != d.readLimit || c.reviewLimit != d.reviewLimit {
 				t.Errorf("limits = %v %v %d %d %d, want the defaults", c.fiveHour, c.weekly, c.projectLimit, c.readLimit, c.reviewLimit)
 			}
-			if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy || c.resolver != d.resolver {
-				t.Errorf("models = %v %v %v %v, want the defaults", c.light, c.normal, c.heavy, c.resolver)
+			if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy {
+				t.Errorf("models = %v %v %v, want the defaults", c.light, c.normal, c.heavy)
 			}
 			opus := func(effort string) agent.Model { return agent.Model{Name: "opus", Effort: effort} }
-			if d.light != opus("low") || d.normal != opus("high") || d.heavy != opus("xhigh") || d.resolver != opus("medium") || d.projectLimit != 2 || d.reviewLimit != 5 {
-				t.Errorf("defaults: models %v %v %v %v, sandbox limit %d, review limit %d", d.light, d.normal, d.heavy, d.resolver, d.projectLimit, d.reviewLimit)
+			for _, m := range []struct {
+				got  worker.Models
+				want [3]string
+			}{
+				{d.light, [3]string{"low", "xhigh", "medium"}},
+				{d.normal, [3]string{"high", "xhigh", "medium"}},
+				{d.heavy, [3]string{"xhigh", "xhigh", "medium"}},
+			} {
+				if m.got != (worker.Models{Builder: opus(m.want[0]), Reviewer: opus(m.want[1]), Resolver: opus(m.want[2])}) {
+					t.Errorf("default models %v, want builder, reviewer and resolver on opus at %v", m.got, m.want)
+				}
+			}
+			if d.projectLimit != 2 || d.reviewLimit != 5 {
+				t.Errorf("defaults: sandbox limit %d, review limit %d", d.projectLimit, d.reviewLimit)
 			}
 		}},
-		{name: "set values", yaml: required + "limits:\n  five_hour: 50\n  sandboxes: 3\n  reviews: 2\nmodels:\n  light: sonnet:low\n  resolver: sonnet:high\n", check: func(t *testing.T, c config) {
-			if c.fiveHour != 0.5 || c.projectLimit != 3 || c.light != (agent.Model{Name: "sonnet", Effort: "low"}) {
-				t.Errorf("five-hour %v, sandbox limit %d, light %v", c.fiveHour, c.projectLimit, c.light)
+		{name: "set values", yaml: required + "limits:\n  five_hour: 50\n  sandboxes: 3\n  reviews: 2\nmodels:\n  light:\n    builder: sonnet:low\n  heavy:\n    resolver: sonnet:high\n", check: func(t *testing.T, c config) {
+			d := defaults()
+			if c.fiveHour != 0.5 || c.projectLimit != 3 || c.reviewLimit != 2 {
+				t.Errorf("five-hour %v, sandbox limit %d, review limit %d", c.fiveHour, c.projectLimit, c.reviewLimit)
 			}
-			if c.resolver != (agent.Model{Name: "sonnet", Effort: "high"}) || c.reviewLimit != 2 {
-				t.Errorf("resolver %v, review limit %d", c.resolver, c.reviewLimit)
+			light, heavy := d.light, d.heavy
+			light.Builder = agent.Model{Name: "sonnet", Effort: "low"}
+			heavy.Resolver = agent.Model{Name: "sonnet", Effort: "high"}
+			if c.light != light || c.normal != d.normal || c.heavy != heavy {
+				t.Errorf("models = %v %v %v, want %v %v %v", c.light, c.normal, c.heavy, light, d.normal, heavy)
 			}
 		}},
 		{name: "several repositories", yaml: "repos: [acme/api, acme/web]\nprd_repo: acme/plans\nbase_branch: main\ngithub_token: secret\n", check: func(t *testing.T, c config) {
@@ -123,8 +140,7 @@ func TestParseConfig(t *testing.T) {
 		{name: "secret for every host", yaml: required + "secrets:\n  X:\n    hosts: ['**']\n    command: /bin/x\n", wantErr: "reaches github.com"},
 		{name: "usage limit out of range", yaml: required + "limits:\n  weekly: 0\n", wantErr: "limits.weekly"},
 		{name: "limit not a number", yaml: required + "limits:\n  sandboxes: two\n", wantErr: "two"},
-		{name: "model without effort", yaml: required + "models:\n  heavy: opus\n", wantErr: "models.heavy"},
-		{name: "resolver model without effort", yaml: required + "models:\n  resolver: opus\n", wantErr: "models.resolver"},
+		{name: "model without effort", yaml: required + "models:\n  heavy:\n    reviewer: opus\n", wantErr: "models.heavy.reviewer"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := parseConfig([]byte(c.yaml))

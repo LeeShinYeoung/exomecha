@@ -123,7 +123,7 @@ A small change closes most rows with `code` or `n/a` and needs few questions. A 
 
 ## Tier
 
-The tier picks the model that builds the PRD.
+The tier picks the models that builder, reviewer and resolver run on for the PRD.
 
 - `light`: a mechanical change, such as a rename, a config value, or a small fix in one file.
 - `normal`: a usual feature or fix that needs reading the code across a few files. Pick this when unsure.

@@ -38,7 +38,6 @@ const (
 	TierLight        = "tier_light"
 	TierNormal       = "tier_normal"
 	TierHeavy        = "tier_heavy"
-	ResolverModel    = "resolver_model"
 	CreatedLabels    = "created_labels"
 )
 

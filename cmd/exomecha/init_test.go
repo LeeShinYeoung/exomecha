@@ -203,8 +203,8 @@ func TestSettingsFileReadsBack(t *testing.T) {
 	if c.fiveHour != d.fiveHour || c.weekly != d.weekly || c.projectLimit != d.projectLimit || c.readLimit != d.readLimit || c.reviewLimit != d.reviewLimit {
 		t.Errorf("uncommented limits = %v %v %d %d %d, want the defaults", c.fiveHour, c.weekly, c.projectLimit, c.readLimit, c.reviewLimit)
 	}
-	if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy || c.resolver != d.resolver {
-		t.Errorf("uncommented models = %v %v %v %v, want the defaults", c.light, c.normal, c.heavy, c.resolver)
+	if c.light != d.light || c.normal != d.normal || c.heavy != d.heavy {
+		t.Errorf("uncommented models = %v %v %v, want the defaults", c.light, c.normal, c.heavy)
 	}
 	want := []sandbox.Secret{{Env: "NPM_TOKEN", Hosts: []string{"npm.pkg.github.com"}, Value: "npm_..."}}
 	if !slices.EqualFunc(c.secrets, want, func(a, b sandbox.Secret) bool {
