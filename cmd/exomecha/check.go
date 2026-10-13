@@ -110,8 +110,8 @@ func checks(c config) []item {
 	}
 	items = append(items, modelItems(c)...)
 	items = append(items, item{group: groupClaude, doing: "Checking the exomecha plugin (installs it if missing)", initOnly: true, run: func(ctx context.Context) (string, []error) {
-		in, err := claude.PluginInstalled(ctx)
-		if err == nil && in {
+		v, err := claude.PluginVersion(ctx)
+		if err == nil && v != "" {
 			return "exomecha plugin installed", nil
 		}
 		if err == nil {

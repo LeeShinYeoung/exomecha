@@ -31,18 +31,20 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
 
 ## Installation
 
-1. Install exomecha. On an Intel Mac, replace `arm64` with `amd64`. On an ARM Linux machine, replace `amd64` with `arm64`.
+1. Install exomecha in `~/.local/bin`, where Claude Code installs itself. On an Intel Mac, replace `arm64` with `amd64`. On an ARM Linux machine, replace `amd64` with `arm64`.
 
    ```
    # macOS
    curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_darwin_arm64.tar.gz
    tar -xzf exomecha_darwin_arm64.tar.gz
-   sudo install exomecha /usr/local/bin/
+   mkdir -p ~/.local/bin
+   install exomecha ~/.local/bin/
 
    # Linux
    curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_linux_amd64.tar.gz
    tar -xzf exomecha_linux_amd64.tar.gz
-   sudo install exomecha /usr/local/bin/
+   mkdir -p ~/.local/bin
+   install exomecha ~/.local/bin/
    ```
 
 2. Sign sbx in to Docker and start from the balanced network policy. claude on this machine and sbx must use the same Claude account.
@@ -71,7 +73,13 @@ On a machine that only writes PRDs, without running exomecha, install the plugin
 
 ## Update
 
-To update exomecha, run the install commands in step 1 again. Update the plugin on its own:
+Update exomecha and its plugin to the latest release:
+
+```
+exomecha update
+```
+
+On a machine that only writes PRDs, update the plugin on its own:
 
 ```
 claude plugin marketplace update exomecha
@@ -83,6 +91,7 @@ claude plugin update exomecha@exomecha
 ```
 exomecha run <project>   # runs in this terminal until Ctrl-C
 exomecha list            # lists the projects and whether each is running
+exomecha update          # updates exomecha and its plugin to the latest release
 exomecha --version       # prints the installed version
 ```
 

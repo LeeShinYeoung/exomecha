@@ -19,7 +19,7 @@ A Go daemon, the `exomecha` command. Its code is in `cmd/exomecha` and `internal
 
 ### Parts
 
-- **Commands**: `init` (settings, checks and the plugin), `run` (runs a project), `list` (projects), `--version` (the installed release).
+- **Commands**: `init` (settings, checks and the plugin), `run` (runs a project), `list` (projects), `update` (exomecha and the plugin to the latest release), `--version` (the installed release).
 - **Workers**: builder, reviewer and resolver. Each checks the PRDs every minute and takes one step.
 - **Sandboxes**: one sbx sandbox per PRD, with claude running in it.
 - **Project environment**: the setup files in the project folder. They prepare builder's and resolver's sandboxes.
