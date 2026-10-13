@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ func initProject(ctx context.Context, home, project string) error {
 	switch {
 	case term.IsTerminal(int(os.Stdin.Fd())):
 		q := newQuestions(current, func(prd target) error { return checkPRDRepo(home, path, prd) })
-		if err := q.ask(ctx, os.Stdout); err != nil {
+		if err := q.ask(ctx, os.Stdout, project); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				return errors.New("stopped before writing the settings")
 			}
@@ -230,7 +231,7 @@ func newQuestions(current settings, checkPRD func(target) error) *questions {
 }
 
 // ask asks one question at a time, and leaves a line with each answer in place of its question.
-func (q *questions) ask(ctx context.Context, out io.Writer) error {
+func (q *questions) ask(ctx context.Context, out io.Writer, project string) error {
 	const reposTitle, prdTitle, baseTitle, tokenTitle = "Repositories exomecha works on", "Repository where you file PRDs",
 		"Base branch", "GitHub token"
 	repos := huh.NewInput().Title(reposTitle).Description("owner/name or clone URLs, separated by commas").Value(&q.repos).Validate(q.checkRepos)
@@ -253,7 +254,7 @@ func (q *questions) ask(ctx context.Context, out io.Writer) error {
 
 	// The saved token is not filled in, since the field would show its length.
 	var typed string
-	token := huh.NewInput().Title(tokenTitle).Description(tokenHelp).EchoMode(huh.EchoModeNone).Value(&typed).Validate(func(s string) error {
+	token := huh.NewInput().Title(tokenTitle).Description(tokenHelp(project, q.answers().repos[0].owner)).EchoMode(huh.EchoModeNone).Value(&typed).Validate(func(s string) error {
 		if strings.TrimSpace(s) == "" && q.token == "" {
 			return errors.New("the GitHub token must be set")
 		}
@@ -270,12 +271,24 @@ func (q *questions) ask(ctx context.Context, out io.Writer) error {
 	return nil
 }
 
-const tokenHelp = "A fine-grained token that reaches only the repositories above\n" +
-	"https://github.com/settings/personal-access-tokens/new\n" +
-	"• Issues: Read and write\n" +
-	"• Pull requests: Read and write\n" +
-	"• Contents: Read and write\n" +
-	"• Actions: Read-only"
+// tokenHelp links to GitHub's form with the token's name, owner, expiry and permissions filled
+// in. GitHub has no parameter for the repositories, so the person picks them.
+func tokenHelp(project, owner string) string {
+	const form = "https://github.com/settings/personal-access-tokens/new"
+	fill := url.Values{
+		"name": {"exomecha-" + project}, "target_name": {owner}, "expires_in": {"90"},
+		"issues": {"write"}, "pull_requests": {"write"}, "contents": {"write"}, "actions": {"read"},
+	}
+	// The full URL wraps in the form, and a wrapped URL cannot be clicked. A terminal without
+	// hyperlinks still opens the bare form.
+	link := lipgloss.NewStyle().Hyperlink(form + "?" + fill.Encode()).Render(form)
+	return link + "\n" +
+		"Pick \"Only select repositories\" and choose the repositories above\n" +
+		"• Issues: Read and write\n" +
+		"• Pull requests: Read and write\n" +
+		"• Contents: Read and write\n" +
+		"• Actions: Read-only"
+}
 
 // askOne runs one question as a form of its own, which clears it once answered.
 func askOne(ctx context.Context, input *huh.Input) error {
