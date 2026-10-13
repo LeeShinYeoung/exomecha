@@ -133,6 +133,36 @@ func TestList(t *testing.T) {
 	f.wantCalls([]string{"ls", "--json"})
 }
 
+func TestListBareArray(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.48.0.
+	f.answer("ls", `[
+  {
+    "name": "exomecha-format-check",
+    "id": "12e596b6-e038-403a-9969-d923234bca20",
+    "agent": "claude",
+    "status": "running",
+    "last_used_at": "2026-10-13T14:09:10.053061Z",
+    "created_at": "2026-10-13T14:09:07Z"
+  }
+]`)
+	boxes, err := (CLI{}).List(t.Context())
+	want := []Box{{Name: "exomecha-format-check", Status: "running"}}
+	if err != nil || !slices.Equal(boxes, want) {
+		t.Errorf("List = %+v, %v, want %+v", boxes, err, want)
+	}
+}
+
+func TestListEmptyBareArray(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.48.0 with no sandbox.
+	f.answer("ls", "[]\n")
+	boxes, err := (CLI{}).List(t.Context())
+	if err != nil || len(boxes) != 0 {
+		t.Errorf("List = %+v, %v, want none", boxes, err)
+	}
+}
+
 func TestExec(t *testing.T) {
 	f := newFakeSBX(t)
 	f.answer("exec", "out\n")
@@ -237,6 +267,26 @@ func TestTemplates(t *testing.T) {
 		t.Errorf("Templates = %+v, %v, want %+v", got, err, want)
 	}
 	f.wantCalls([]string{"template", "ls", "--json"})
+}
+
+func TestTemplatesBareArray(t *testing.T) {
+	f := newFakeSBX(t)
+	// From sbx v0.48.0.
+	f.answer("template", `[
+  {
+    "id": "549730947ed8",
+    "repository": "docker.io/docker/sandbox-templates",
+    "tag": "claude-code-docker",
+    "flavor": "claude-code-docker",
+    "created_at": "2026-09-23T18:15:37Z",
+    "size": 920132471
+  }
+]`)
+	got, err := (CLI{}).Templates(t.Context())
+	want := []Template{{ID: "549730947ed8", Repository: "docker.io/docker/sandbox-templates", Tag: "claude-code-docker"}}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("Templates = %+v, %v, want %+v", got, err, want)
+	}
 }
 
 func TestRemoveTemplate(t *testing.T) {

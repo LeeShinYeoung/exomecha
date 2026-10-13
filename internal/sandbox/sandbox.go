@@ -32,13 +32,11 @@ func (CLI) List(ctx context.Context) ([]Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	var list struct {
-		Sandboxes []Box `json:"sandboxes"`
-	}
-	if err := decode(out, &list); err != nil {
+	boxes, err := decodeList[Box](out, "sandboxes")
+	if err != nil {
 		return nil, fmt.Errorf("read sbx ls: %w", err)
 	}
-	return list.Sandboxes, nil
+	return boxes, nil
 }
 
 // Create starts a sandbox with `sbx run -d`. A sandbox made by `sbx create` stops 30 seconds after
@@ -169,13 +167,11 @@ func (CLI) Templates(ctx context.Context) ([]Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	var list struct {
-		Images []Template `json:"images"`
-	}
-	if err := decode(out, &list); err != nil {
+	images, err := decodeList[Template](out, "images")
+	if err != nil {
 		return nil, fmt.Errorf("read sbx template ls: %w", err)
 	}
-	return list.Images, nil
+	return images, nil
 }
 
 func (CLI) RemoveTemplate(ctx context.Context, ref string) error {
@@ -363,6 +359,29 @@ func ParseName(prefix, name string) (issue int, role string, ok bool) {
 // it on stdout at times.
 func decode(out []byte, v any) error {
 	return json.NewDecoder(bytes.NewReader(out)).Decode(v)
+}
+
+// sbx v0.46.0 prints a list inside an object under key, and v0.48.0 prints the bare array.
+func decodeList[T any](out []byte, key string) ([]T, error) {
+	var raw json.RawMessage
+	if err := decode(out, &raw); err != nil {
+		return nil, err
+	}
+	var list []T
+	if bytes.HasPrefix(raw, []byte("[")) {
+		err := json.Unmarshal(raw, &list)
+		return list, err
+	}
+	var wrapped map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return nil, err
+	}
+	if inner, ok := wrapped[key]; ok {
+		if err := json.Unmarshal(inner, &list); err != nil {
+			return nil, err
+		}
+	}
+	return list, nil
 }
 
 func run(ctx context.Context, args ...string) ([]byte, error) {
