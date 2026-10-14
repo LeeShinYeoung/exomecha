@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -218,6 +219,33 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 		t.Errorf("PR = head %q base %q title %q body %q", p.Head, p.Base, p.Title, p.Body)
 	}
 	e.wantSummary(p.Number, "did it")
+}
+
+func TestBuilderLogsTheRun(t *testing.T) {
+	log := captureLog(t)
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd := e.addPRD("Add feature", "do it", label.PRD, string(label.Ready))
+	name := e.builderBox(prd)
+
+	e.step(prd)
+	e.step(prd)
+	e.play(name, commit(t, "feat: add feature", map[string]string{"feature.txt": "hello\n"}), builderDone)
+	e.step(prd)
+
+	var got []string
+	for line := range strings.Lines(log.String()) {
+		_, msg, _ := strings.Cut(line, " level=")
+		got = append(got, strings.TrimSpace(msg))
+	}
+	want := []string{
+		`INFO msg="status changed" from=status:ready to=status:working`,
+		`INFO msg="run started"`,
+		`INFO msg="run finished"`,
+		`INFO msg="status changed" from=status:working to=status:review`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("log lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }
 
 func TestBuilderStuck(t *testing.T) {

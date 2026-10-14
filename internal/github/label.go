@@ -4,12 +4,14 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
 	gh "github.com/google/go-github/v92/github"
 
 	"github.com/LeeShinYeoung/exomecha/internal/label"
+	"github.com/LeeShinYeoung/exomecha/internal/logging"
 )
 
 func (c *Client) EnsureLabels(ctx context.Context) ([]string, error) {
@@ -67,12 +69,16 @@ func (c *Client) replaceStatus(ctx context.Context, number int, from, to label.S
 			labels = append(labels, name)
 		}
 	}
+	was := cmp.Or(strings.Join(current, ", "), "none")
 	if from != label.None && !slices.Equal(current, []string{string(from)}) {
-		return fmt.Errorf("the status of issue #%d is now %s, not %s", number, cmp.Or(strings.Join(current, ", "), "none"), from)
+		return fmt.Errorf("the status of issue #%d is now %s, not %s", number, was, from)
 	}
 	if to != label.None {
 		labels = append(labels, string(to))
 	}
-	_, _, err = c.api.Issues.ReplaceLabelsForIssue(ctx, c.owner, c.repo, number, labels)
-	return err
+	if _, _, err := c.api.Issues.ReplaceLabelsForIssue(ctx, c.owner, c.repo, number, labels); err != nil {
+		return err
+	}
+	slog.InfoContext(ctx, "status changed", logging.From, was, logging.To, cmp.Or(string(to), "none"))
+	return nil
 }
