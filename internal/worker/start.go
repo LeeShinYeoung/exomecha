@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -145,6 +146,7 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 		p, err = r.open(ctx, ro, n, s)
 	}
 	if p == nil && err == nil {
+		slog.InfoContext(ctx, "run started")
 		return nil
 	}
 	// Undo the start even when shutdown cancelled ctx.
