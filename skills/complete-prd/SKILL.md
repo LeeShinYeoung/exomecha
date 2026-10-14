@@ -1,11 +1,11 @@
 ---
 name: complete-prd
-description: Write a PRD (a plan with every decision made) from this conversation, or turn draft PRDs into ready ones. Build a decision ledger in plan mode and close every row, asking only what the conversation and drafts left open. Check the open drafts for overlap and ask what to do with each, split the work into several PRDs only when one PR would be too big, check each draft with a subagent that sees only that draft and the repository, get approval, then label each PRD status:ready with a tier so exomecha builds it. Use when a person invokes /exomecha:complete-prd.
+description: Write a PRD (a plan with every decision made) from this conversation, or turn draft PRDs into ready ones. Build a decision ledger in plan mode and close every row, asking only what the conversation and drafts left open. Check the open drafts for overlap and ask what to do with each, split the work into several PRDs only when one PR would be too big, check each draft that is not light with a subagent that sees only that draft and the repository, get approval, then label each PRD status:ready with a tier so exomecha builds it. Use when a person invokes /exomecha:complete-prd.
 ---
 
 # Complete a PRD
 
-exomecha builds each PRD as one PR in each repository it changes and reviews them without a person, and a person merges the PRs once the AI approves them. builder sees only the PRD's body and its comments. Anything the PRD leaves out is missing when the code gets written. **Make every decision here.** After this, a person only merges the approved PRs and answers when a PRD is blocked (`status:stuck`).
+exomecha builds each PRD as one PR in each repository it changes and reviews them without a person, and a person merges the PRs once the AI approves them. builder reads the repository, but of this conversation it sees only the PRD's body and its comments. A decision the PRD leaves out is missing when the code gets written. **Make every decision here**, and leave out what builder can read in the repository. After this, a person only merges the approved PRs and answers when a PRD is blocked (`status:stuck`).
 
 ## Rules
 
@@ -29,7 +29,7 @@ exomecha builds each PRD as one PR in each repository it changes and reviews the
    - Were the guesses in the investigation notes right?
 
    Briefly report what you found.
-3. Enter plan mode. Read the code the change touches, then build the decision ledger below and close its rows. Most rows of a well discussed change close with `code`, `decided` or `n/a`, so ask only about the rest.
+3. Enter plan mode. Read the code the change touches and pick the tier (see Tier below). Then build the decision ledger below and close its rows. Most rows of a well discussed change close with `code`, `decided` or `n/a`, so ask only about the rest.
 4. Check the other drafts for overlap. Read every open draft except the ones being completed. Filter the labels with `--jq`, not `--label`: GitHub's label filter can miss an issue labeled in the last few minutes.
    ```
    gh issue list --state open --limit 1000 --json number,title,body,labels --jq '[.[] | select(any(.labels[]; .name == "prd") and any(.labels[]; .name == "status:draft"))]'
@@ -47,7 +47,7 @@ exomecha builds each PRD as one PR in each repository it changes and reviews the
 
    When unsure, keep one PRD. The person decides on the split when approving. A draft that is split becomes the first PRD, and the others are new issues.
 6. Write each PRD draft in the plan file under its own heading `# PRD <k>: <title>`, in the order to file them, even when there is only one. Under the heading, write the body in exactly the body format below, with the ledger as its last section. Its Filing row names its issue (new, or the draft's number), its tier (see Tier below), the PRDs it is blocked by, and what was decided for each overlapping draft.
-7. Check each draft with a fresh reader. Give a subagent only that PRD's body and the path of each repository it changes, and ask: "If you had to implement this with only this text and the repository, how would you do it, and where would you get stuck or have to guess?" For each place it gets stuck, fix the draft if code or the ledger answers it. Otherwise ask the person. Repeat until it no longer gets stuck.
+7. Check each draft with a fresh reader, unless its tier is light. Give a subagent only that PRD's body and the path of each repository it changes, and ask: "Which decision does this text leave open that the repository cannot answer, so that you would have to guess what the person wants?" For each one, fix the draft if code or the ledger answers it. Otherwise ask the person. A heavy PRD is checked again after the fixes, until nothing is left open. A normal one is checked once.
 8. Get approval (exit plan mode).
 9. Check that the labels exist: `gh label list --limit 100`. If `prd`, `status:ready` or a tier label you need is missing, do not file. Tell the person that running exomecha once creates the labels.
 10. File the PRDs in order. For each one:
