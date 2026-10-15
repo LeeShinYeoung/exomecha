@@ -41,5 +41,5 @@ Each repository is a new branch off its base branch until it has a PR. With a PR
 ## Result
 
 - `result`: `done` if finished, `stuck` if you cannot do it
-- `summary`: what you did in this run, the files you changed outside Files and why, and every check you ran with its result, such as which tests passed or which could not run here and why. When you changed several repositories, also say in which order a person should merge their PRs, and why. It goes on each PR as a comment, and the first run's summary also becomes the PR description. reviewer does not run the tests, so it reads the checks you list here.
+- `summary`: what you did in this run, the files you changed outside Files and why, and every check you ran with its result, such as which tests passed or which could not run here and why. When you changed several repositories, also say in which order a person should merge their PRs, and why. It becomes the description of each PR this run opens, and goes as a comment on each PR that is already open. reviewer does not run the tests, so it reads the checks you list here.
 - `stuck_reason`: if stuck, why, and what a person needs to decide. Empty string if done.

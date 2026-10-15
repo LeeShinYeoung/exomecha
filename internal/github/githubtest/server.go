@@ -79,15 +79,17 @@ func (i Issue) HasLabel(name string) bool {
 }
 
 type Pull struct {
-	Number    int
-	Head      string
-	Base      string
-	Title     string
-	Body      string
-	Open      bool
-	Mergeable *bool
-	Reviews   []Review
-	Merged    bool
+	Number      int
+	Head        string
+	Base        string
+	Title       string
+	Body        string
+	Open        bool
+	Mergeable   *bool
+	Reviews     []Review
+	Merged      bool
+	Association string
+	At          time.Time
 	// Comments are on the conversation, LineComments on lines of the diff.
 	Comments     []Comment
 	LineComments []LineComment
@@ -287,14 +289,16 @@ func (s *Server) pullJSON(p *Pull) (any, error) {
 		state = "closed"
 	}
 	m := map[string]any{
-		"number":    p.Number,
-		"state":     state,
-		"title":     p.Title,
-		"body":      p.Body,
-		"head":      map[string]string{"ref": p.Head, "sha": s.head(p)},
-		"base":      map[string]string{"ref": p.Base},
-		"mergeable": mergeable,
-		"merged":    p.Merged,
+		"number":             p.Number,
+		"state":              state,
+		"title":              p.Title,
+		"body":               p.Body,
+		"head":               map[string]string{"ref": p.Head, "sha": s.head(p)},
+		"base":               map[string]string{"ref": p.Base},
+		"mergeable":          mergeable,
+		"merged":             p.Merged,
+		"created_at":         p.At.Format(time.RFC3339),
+		"author_association": p.Association,
 	}
 	if p.Merged {
 		m["merged_at"] = commentEpoch.Format(time.RFC3339)
@@ -533,7 +537,7 @@ func (s *Server) createPull(r *http.Request) (int, any) {
 
 func (s *Server) newPull(head, base, title, body string) *Pull {
 	s.number++
-	p := &Pull{Number: s.number, Head: head, Base: base, Title: title, Body: body, Open: true}
+	p := &Pull{Number: s.number, Head: head, Base: base, Title: title, Body: body, Open: true, Association: associationOwner, At: s.now()}
 	s.pulls[p.Number] = p
 	return p
 }

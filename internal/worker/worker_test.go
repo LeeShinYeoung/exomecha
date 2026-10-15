@@ -633,8 +633,8 @@ func TestEveryHandleErrorReachesTheLoop(t *testing.T) {
 		{"builder", "collect's SetStatus", built, githubFault(labelsRoute), builderHandle, func(e *env, n int, name string) {
 			e.wantStatus(n, label.Review)
 			e.wantRemoved(name)
-			if got := e.gh.Pulls()[0].Comments; len(got) != 1 {
-				e.t.Errorf("PR comments = %+v, want the summary once", got)
+			if got := e.gh.Pulls()[0].Comments; len(got) != 0 {
+				e.t.Errorf("PR comments = %+v, want none: the description has the summary", got)
 			}
 		}},
 		{"builder", "restart's SetStatus", func(e *env) (int, string) {

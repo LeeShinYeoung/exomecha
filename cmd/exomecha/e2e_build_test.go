@@ -56,8 +56,9 @@ func TestE2EHappyPath(t *testing.T) {
 	if n := len(p.Reviews); n != 1 || p.Reviews[0].Event != "COMMENT" || approvals(p.Reviews) != 1 {
 		t.Errorf("reviews = %+v, want one approval", p.Reviews)
 	}
-	if note, _, _ := github.ParseNote(lastOf(p.Comments).Body); note != (github.Note{Worker: "builder", Kind: github.KindSummary}) {
-		t.Errorf("PR comments = %+v, want builder's summary", p.Comments)
+	_, desc, _ := strings.Cut(p.Body, "\n\n")
+	if note, _, _ := github.ParseNote(desc); note != (github.Note{Worker: "builder", Kind: github.KindSummary}) || len(p.Comments) != 0 {
+		t.Errorf("PR body = %q, comments = %+v, want builder's summary in the body only", p.Body, p.Comments)
 	}
 	if !p.Open || p.Merged {
 		t.Errorf("PR open=%v merged=%v, want it left for a person", p.Open, p.Merged)
