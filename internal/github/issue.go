@@ -26,12 +26,13 @@ type Note struct {
 }
 
 const (
-	KindSummary  = "summary"  // what builder did in a run
-	KindChanges  = "changes"  // reviewer asks builder for changes
-	KindApproved = "approved" // reviewer found nothing to fix
-	KindCI       = "ci"       // reviewer sends the PR back for a failed CI
-	KindResolved = "resolved" // how resolver settled a merge of the base branch
-	KindStuck    = "stuck"    // a worker needs a person
+	KindSummary   = "summary"   // what builder did in a run, and from its second run, what it decided
+	KindDecisions = "decisions" // what builder's first run decided, beside the summary in the PR description
+	KindChanges   = "changes"   // reviewer asks builder for changes
+	KindApproved  = "approved"  // reviewer found nothing to fix
+	KindCI        = "ci"        // reviewer sends the PR back for a failed CI
+	KindResolved  = "resolved"  // how resolver settled a merge of the base branch
+	KindStuck     = "stuck"     // a worker needs a person
 )
 
 // trusted reports whether GitHub says the author can write to the repository. On a public

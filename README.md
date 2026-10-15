@@ -101,7 +101,7 @@ You write PRDs in Claude Code with the skills.
 - `/exomecha:summary-all-drafts`: shows each draft's title and a summary of up to three lines.
 - `/exomecha:complete-prd`: makes every decision and sets the PRD to status:ready.
 
-When a PRD reaches status:approved, merge its PRs. If there are several, merge them in the order builder's summary gives. If something needs fixing, write it on the PR or the PRD and set it back to status:ready.
+When a PRD reaches status:approved, merge its PRs. If there are several, merge them in the order builder's summary gives. builder lists what it decided on its own, apart from the PRD, in a comment on the PR each run, so read those first. If something needs fixing, write it on the PR or the PRD and set it back to status:ready.
 
 When a PRD reaches status:stuck, the comment says why. Answer in a comment and change the label to the one the comment names. If there is nothing left to do, close the issue.
 

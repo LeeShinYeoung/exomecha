@@ -14,7 +14,7 @@ The PRD, Run and the record. Each repository with a PR is a working copy of the 
 - Check that the PRD's acceptance criteria are met, existing behavior is not broken, and there are no bugs.
 - With several repositories, check that the changes fit together, such as an API and the code that calls it.
 - Check that the change covers every test scenario in the PRD.
-- Check that the change handles the PRD's Edge cases, keeps to the decisions in its Context and Decision ledger, and does nothing its Out of scope excludes. Changes to files outside Files are fine when the PRD needs them.
+- Check that the change handles the PRD's Edge cases, keeps to the decisions in its Context and Decision ledger, and does nothing its Out of scope excludes.
 
 ## Result
 

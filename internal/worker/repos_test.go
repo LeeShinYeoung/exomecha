@@ -169,9 +169,7 @@ func TestBuilderBuildsAcrossRepositories(t *testing.T) {
 		if len(pulls) != 1 || pulls[0].Body != c.body || pulls[0].Title != "Add feature" {
 			t.Fatalf("PRs = %+v, want one with body %q", pulls, c.body)
 		}
-		if comments := pulls[0].Comments; len(comments) != 0 {
-			t.Errorf("PR comments = %+v, want none: the description has the summary", comments)
-		}
+		wantDecisionsOnly(t, pulls[0].Comments, noDecisions)
 		shown = append(shown, repoWithPR{c.repo, pulls[0].Number})
 	}
 	record, err := sharedInput(t.Context(), e.deps, e.issue(prd), shown)
