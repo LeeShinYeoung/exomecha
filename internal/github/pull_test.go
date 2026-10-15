@@ -190,3 +190,22 @@ func TestPRComments(t *testing.T) {
 		t.Errorf("PRComments =\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestPRCommentsReadsExomechasDescription(t *testing.T) {
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	note := Note{Worker: "builder", Kind: KindSummary}
+	pr, err := client.CreatePR(t.Context(), "exomecha/prd-1", "main", "PRD", "Closes #1\n\n"+NoteBody(note, "did it"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddPullComment(pr, "looks good")
+
+	got, err := client.PRComments(t.Context(), pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Body != "did it" || got[0].Note != note || !got[0].Exomecha || !got[0].Trusted || got[1].Body != "looks good" {
+		t.Errorf("PRComments = %+v, want the description as builder's summary, then the comment", got)
+	}
+}

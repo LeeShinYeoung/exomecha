@@ -241,6 +241,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	if len(in.Repos) > 1 {
 		keyword = "Part of"
 	}
+	note := github.Note{Worker: builderRole.name, Kind: github.KindSummary}
 	var prs []repoWithPR
 	for i, rr := range in.Repos {
 		repo, _ := b.runs.repo(rr.Repo)
@@ -257,7 +258,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		}
 		if !hasPR && slices.Contains(changed, i) {
 			// The keyword is what makes GitHub link the PR and the PRD to each other.
-			body := fmt.Sprintf("%s %s\n\n%s", keyword, b.ref(repo.Name, n), out.Summary)
+			body := fmt.Sprintf("%s %s\n\n%s", keyword, b.ref(repo.Name, n), github.NoteBody(note, out.Summary))
 			if pr, err = repo.GitHub.CreatePR(ctx, branch, repo.Git.Base(), prd.Title, body); err != nil {
 				return err
 			}
@@ -268,7 +269,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		}
 	}
 	// Every run's summary goes on the PRs, where the record shows the next worker what this run did.
-	note := github.Note{Worker: builderRole.name, Kind: github.KindSummary}
+	// A PR this run opened has it in the description already, which posted reads.
 	for _, p := range prs {
 		already, err := posted(ctx, p.repo.GitHub, p.pr, note, out.Summary)
 		if err != nil {

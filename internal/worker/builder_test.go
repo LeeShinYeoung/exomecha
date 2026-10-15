@@ -215,10 +215,13 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 		t.Fatalf("pulls = %+v, want one", pulls)
 	}
 	p := pulls[0]
-	if p.Head != branch || p.Base != "main" || p.Title != "Add feature" || p.Body != fmt.Sprintf("Closes #%d\n\ndid it", prd) {
+	summary := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary}, "did it")
+	if p.Head != branch || p.Base != "main" || p.Title != "Add feature" || p.Body != fmt.Sprintf("Closes #%d\n\n%s", prd, summary) {
 		t.Errorf("PR = head %q base %q title %q body %q", p.Head, p.Base, p.Title, p.Body)
 	}
-	e.wantSummary(p.Number, "did it")
+	if len(p.Comments) != 0 {
+		t.Errorf("PR comments = %+v, want none: the description has the summary", p.Comments)
+	}
 }
 
 func TestBuilderLogsTheRun(t *testing.T) {
