@@ -18,9 +18,11 @@ const builderSchema = `{
   "properties": {
     "result": {"type": "string", "enum": ["done", "stuck"]},
     "summary": {"type": "string"},
+    "product_decisions": {"type": "string"},
+    "code_decisions": {"type": "string"},
     "stuck_reason": {"type": "string"}
   },
-  "required": ["result", "summary", "stuck_reason"],
+  "required": ["result", "summary", "product_decisions", "code_decisions", "stuck_reason"],
   "additionalProperties": false
 }`
 
@@ -198,9 +200,11 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	n := prd.Number
 	branch := branchName(n)
 	var out struct {
-		Result      string `json:"result"`
-		Summary     string `json:"summary"`
-		StuckReason string `json:"stuck_reason"`
+		Result           string `json:"result"`
+		Summary          string `json:"summary"`
+		ProductDecisions string `json:"product_decisions"`
+		CodeDecisions    string `json:"code_decisions"`
+		StuckReason      string `json:"stuck_reason"`
 	}
 	if ok, err := b.runs.result(ctx, builderRole, n, &out); err != nil || !ok {
 		return err
@@ -268,17 +272,27 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 			prs = append(prs, repoWithPR{repo: repo, pr: pr})
 		}
 	}
-	// Every run's summary goes on the PRs, where the record shows the next worker what this run did.
-	// A PR this run opened has it in the description already, which posted reads.
+	// Every run leaves one comment on each PR with its summary and decisions, where the record shows
+	// the next worker what this run did. A PR this run opened has the summary in its description
+	// already, which posted reads, so its comment has the decisions alone.
+	decisions := decisionsBody(out.ProductDecisions, out.CodeDecisions)
 	for _, p := range prs {
-		already, err := posted(ctx, p.repo.GitHub, p.pr, note, out.Summary)
+		opened, err := posted(ctx, p.repo.GitHub, p.pr, note, out.Summary)
+		if err != nil {
+			return err
+		}
+		said, text := note, out.Summary+"\n\n"+decisions
+		if opened {
+			said, text = github.Note{Worker: builderRole.name, Kind: github.KindDecisions}, decisions
+		}
+		already, err := posted(ctx, p.repo.GitHub, p.pr, said, text)
 		if err != nil {
 			return err
 		}
 		if already {
 			continue
 		}
-		if err := p.repo.GitHub.AddComment(ctx, p.pr, note, out.Summary); err != nil {
+		if err := p.repo.GitHub.AddComment(ctx, p.pr, said, text); err != nil {
 			return err
 		}
 	}
@@ -286,4 +300,16 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		return err
 	}
 	return b.runs.drop(ctx, builderRole, n)
+}
+
+func decisionsBody(product, code string) string {
+	return "### Product decisions\n\n" + orNone(product) + "\n\n### Code decisions\n\n" + orNone(code)
+}
+
+// A run that decided nothing still says so, so a person can tell it from a section left empty.
+func orNone(decisions string) string {
+	if decisions = strings.TrimSpace(decisions); decisions == "" {
+		return "None"
+	}
+	return decisions
 }

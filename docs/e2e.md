@@ -39,7 +39,7 @@ The practice project is plain POSIX sh, so claude needs nothing installed to bui
 
 | Test | What it checks |
 |---|---|
-| HappyPath | A PRD with no tier label builds with opus, the PR closes the PRD, the commit has the token owner as author and ends with `PRD: #<n>`, the PR's tests pass, builder leaves its summary on the PR, and reviewer approves with a COMMENT review and leaves the PR open. |
+| HappyPath | A PRD with no tier label builds with opus, the PR closes the PRD, the commit has the token owner as author and ends with `PRD: #<n>`, the PR's tests pass, builder leaves its summary in the PR description and its decisions in one comment, and reviewer approves with a COMMENT review and leaves the PR open. |
 | StuckAndBack | builder asks for a missing decision and goes stuck with a notice that names it. After an answer and a relabel, it uses the answer. |
 | BlockedHost | builder names the host the sandbox blocked. After the host is added to allowed-hosts, the PR opens. |
 | Restart | Stopping exomecha leaves a running build's sandbox alone, and after a restart the build is collected without starting claude again. |

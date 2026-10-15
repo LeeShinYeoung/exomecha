@@ -10,7 +10,7 @@ A Claude Code plugin that people use. Its code is in `skills` and `.claude-plugi
 
 - `/exomecha:draft-prd`: records a problem as a draft. The issue gets the `prd` and `status:draft` labels, and no worker takes it.
 - `/exomecha:summary-all-drafts`: summarizes the open drafts, to help pick what to settle next.
-- `/exomecha:complete-prd`: writes a PRD with every decision in it, from the conversation or from drafts. When one PR would be too big, it splits the work into several PRDs, and a PRD that needs an earlier one is blocked by it. Last, it adds `status:ready` and a tier label. The tier picks the models that builder, reviewer and resolver run on for the PRD.
+- `/exomecha:complete-prd`: writes a PRD with every decision the repository cannot answer, from the conversation or from drafts. builder makes the rest and lists them on the PR. When one PR would be too big, it splits the work into several PRDs, and a PRD that needs an earlier one is blocked by it. Last, it adds `status:ready` and a tier label. The tier picks the models that builder, reviewer and resolver run on for the PRD.
 - `/exomecha:setup`: writes the files that prepare a PRD's sandbox to the project folder, and proves them in a real sandbox. `init` says to run it when the project has no setup script.
 
 ## Orchestrator
