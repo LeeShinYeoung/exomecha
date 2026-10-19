@@ -31,9 +31,9 @@
   </style>
 </head>
 <body>
-  <svg viewBox="0 0 960 472" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="exomecha-prd-skills-title exomecha-prd-skills-desc">
+  <svg viewBox="0 0 960 496" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="exomecha-prd-skills-title exomecha-prd-skills-desc">
     <title id="exomecha-prd-skills-title">How the PRD skills make a PRD</title>
-    <desc id="exomecha-prd-skills-desc">Swimlane with lanes for the discussion between a human and Claude Code, the exomecha plugin's skills, and the GitHub issues: from the discussion, draft-prd files a reported problem as a draft, summary-all-drafts reads the drafts so the human can pick some, and complete-prd reads the drafts, re-checks the base branch, builds a decision ledger, checks overlap, splits the work if it is too big and checks it with a fresh reader, gets the human's decisions and approval, then files the PRD, and builder takes it.</desc>
+    <desc id="exomecha-prd-skills-desc">Swimlane with lanes for the discussion between a human and Claude Code, the exomecha plugin's skills, and the GitHub issues: from the discussion, draft-prd files a reported problem as a draft, summary-all-drafts reads the drafts so the human can pick some, and complete-prd reads the drafts, re-checks the base branch, builds a decision ledger, checks overlap, splits the work if it is too big and checks it with a fresh reader, sets the tier and the PRDs it is blocked by, gets the human's decisions and approval, then files the PRD, and builder takes it.</desc>
     <defs>
       <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto-start-reverse"><polygon points="0 0, 8 3, 0 6" fill="#555555"/></marker>
       <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
@@ -49,38 +49,38 @@
     <rect width="100%" height="100%" fill="#ffffff"/>
 
     <!-- Zones -->
-    <rect x="24" y="128" width="912" height="176" rx="8" fill="#f8f8f8" stroke="rgba(17,17,17,0.10)" stroke-width="0.8"/>
+    <rect x="24" y="128" width="912" height="200" rx="8" fill="#f8f8f8" stroke="rgba(17,17,17,0.10)" stroke-width="0.8"/>
     <rect x="40" y="120" width="140" height="16" fill="#ffffff"/>
     <text class="zone" x="48" y="133">EXOMECHA PLUGIN</text>
 
-    <rect x="24" y="344" width="752" height="104" rx="8" fill="#fbfbfb" stroke="rgba(17,17,17,0.12)" stroke-width="0.8"/>
-    <rect x="40" y="336" width="64" height="16" fill="#ffffff"/>
-    <text class="zone" x="48" y="349">GITHUB</text>
+    <rect x="24" y="368" width="752" height="104" rx="8" fill="#fbfbfb" stroke="rgba(17,17,17,0.12)" stroke-width="0.8"/>
+    <rect x="40" y="360" width="64" height="16" fill="#ffffff"/>
+    <text class="zone" x="48" y="373">GITHUB</text>
 
     <text class="lane human" x="48" y="74">discussion</text>
-    <text class="lane" x="48" y="222">skills</text>
-    <text class="lane" x="48" y="402">issues</text>
+    <text class="lane" x="48" y="234">skills</text>
+    <text class="lane" x="48" y="426">issues</text>
 
     <!-- Connections: every skill starts from the discussion -->
     <g fill="none" stroke="#555555" stroke-width="1.2">
       <line x1="232" y1="96" x2="232" y2="196" marker-end="url(#arrow)"/>
       <line x1="424" y1="96" x2="424" y2="196" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
       <line x1="660" y1="96" x2="660" y2="144" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-      <line x1="232" y1="236" x2="232" y2="368" marker-end="url(#arrow)"/>
+      <line x1="232" y1="236" x2="232" y2="392" marker-end="url(#arrow)"/>
       <!-- One read line from the drafts splits to the two skills that read them -->
-      <path d="M 272,368 V 332 Q 272,324 280,324 H 612 Q 620,324 620,316 V 288" marker-end="url(#arrow)"/>
-      <line x1="424" y1="324" x2="424" y2="236" marker-end="url(#arrow)"/>
-      <line x1="700" y1="288" x2="700" y2="368" marker-end="url(#arrow)"/>
+      <path d="M 272,392 V 356 Q 272,348 280,348 H 612 Q 620,348 620,340 V 308" marker-end="url(#arrow)"/>
+      <line x1="424" y1="348" x2="424" y2="236" marker-end="url(#arrow)"/>
+      <line x1="700" y1="308" x2="700" y2="392" marker-end="url(#arrow)"/>
     </g>
-    <line x1="740" y1="396" x2="808" y2="396" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
-    <circle cx="424" cy="324" r="3" fill="#555555"/>
+    <line x1="740" y1="420" x2="808" y2="420" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+    <circle cx="424" cy="348" r="3" fill="#555555"/>
 
     <text class="say" x="244" y="116">report a problem</text>
     <text class="say" x="436" y="116">pick drafts</text>
     <text class="say" x="672" y="116">decide / approve</text>
-    <text class="say" x="244" y="324">file</text>
-    <text class="say center" x="520" y="342">read</text>
-    <text class="say" x="712" y="332">file / label</text>
+    <text class="say" x="244" y="348">file</text>
+    <text class="say center" x="520" y="366">read</text>
+    <text class="say" x="712" y="356">file / label</text>
 
     <!-- The discussion between the human and Claude Code -->
     <rect x="168" y="40" width="592" height="56" rx="8" fill="#ffffff" stroke="#111111" stroke-width="1"/>
@@ -95,7 +95,7 @@
     <g fill="#ffffff" stroke="#111111" stroke-width="1">
       <rect x="168" y="196" width="128" height="40" rx="6"/>
       <rect x="344" y="196" width="160" height="40" rx="6"/>
-      <rect x="560" y="144" width="200" height="144" rx="6"/>
+      <rect x="560" y="144" width="200" height="164" rx="6"/>
     </g>
     <text class="skill center" x="232" y="220">/draft-prd</text>
     <text class="skill center" x="424" y="220">/summary-all-drafts</text>
@@ -107,18 +107,19 @@
       <text x="576" y="234">overlap with drafts</text>
       <text x="576" y="252">split if too big</text>
       <text x="576" y="270">fresh-reader check</text>
+      <text x="576" y="288">tier and blockers</text>
     </g>
 
     <!-- Issues: the copy behind Drafts stands for the other drafts -->
-    <rect x="174" y="374" width="128" height="56" rx="6" fill="#ffffff" stroke="#bbbbbb" stroke-width="1"/>
-    <rect x="168" y="368" width="128" height="56" rx="6" fill="#ffffff" stroke="#555555" stroke-width="1"/>
-    <rect x="580" y="368" width="160" height="56" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
-    <text class="name center" x="232" y="400">Drafts</text>
-    <text class="name center" x="660" y="400">PRD</text>
+    <rect x="174" y="398" width="128" height="56" rx="6" fill="#ffffff" stroke="#bbbbbb" stroke-width="1"/>
+    <rect x="168" y="392" width="128" height="56" rx="6" fill="#ffffff" stroke="#555555" stroke-width="1"/>
+    <rect x="580" y="392" width="160" height="56" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+    <text class="name center" x="232" y="424">Drafts</text>
+    <text class="name center" x="660" y="424">PRD</text>
 
     <!-- The worker that takes a ready PRD -->
-    <rect x="808" y="376" width="128" height="40" rx="6" fill="#000000"/>
-    <text class="name center" x="872" y="400" style="fill:#ffffff">builder</text>
+    <rect x="808" y="400" width="128" height="40" rx="6" fill="#000000"/>
+    <text class="name center" x="872" y="424" style="fill:#ffffff">builder</text>
   </svg>
 </body>
 </html>
