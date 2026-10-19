@@ -33,7 +33,7 @@
 <body>
   <svg viewBox="0 0 960 472" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="exomecha-prd-skills-title exomecha-prd-skills-desc">
     <title id="exomecha-prd-skills-title">How the PRD skills make a PRD</title>
-    <desc id="exomecha-prd-skills-desc">Swimlane with lanes for the discussion between a human and Claude Code, the exomecha plugin's skills, and the GitHub issues: from the discussion, draft-prd files a reported problem as a draft, summary-all-drafts reads the drafts so the human can pick some, and complete-prd reads the drafts, re-checks the base branch, builds a decision ledger, checks overlap, splits the work if it is too big and checks it with a fresh reader, gets the human's decisions and approval, then files the PRD with status:ready and a tier, and builder takes it.</desc>
+    <desc id="exomecha-prd-skills-desc">Swimlane with lanes for the discussion between a human and Claude Code, the exomecha plugin's skills, and the GitHub issues: from the discussion, draft-prd files a reported problem as a draft, summary-all-drafts reads the drafts so the human can pick some, and complete-prd reads the drafts, re-checks the base branch, builds a decision ledger, checks overlap, splits the work if it is too big and checks it with a fresh reader, gets the human's decisions and approval, then files the PRD, and builder takes it.</desc>
     <defs>
       <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto-start-reverse"><polygon points="0 0, 8 3, 0 6" fill="#555555"/></marker>
       <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
@@ -113,10 +113,8 @@
     <rect x="174" y="374" width="128" height="56" rx="6" fill="#ffffff" stroke="#bbbbbb" stroke-width="1"/>
     <rect x="168" y="368" width="128" height="56" rx="6" fill="#ffffff" stroke="#555555" stroke-width="1"/>
     <rect x="580" y="368" width="160" height="56" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
-    <text class="name center" x="232" y="390">Drafts</text>
-    <text class="mono center" x="232" y="408">status:draft</text>
-    <text class="name center" x="660" y="390">PRD</text>
-    <text class="mono center" x="660" y="408">status:ready · tier</text>
+    <text class="name center" x="232" y="400">Drafts</text>
+    <text class="name center" x="660" y="400">PRD</text>
 
     <!-- The worker that takes a ready PRD -->
     <rect x="808" y="376" width="128" height="40" rx="6" fill="#000000"/>
