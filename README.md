@@ -4,25 +4,37 @@ PRD-driven Agent Orchestrator
 
 ## Overview
 
-A PRD is an issue in the PRD repository. It gets one PR in each repository it changes. exomecha reads the PRD's labels and hands the work to builder, reviewer and resolver.
+File a PRD as a GitHub issue, and agents write the code, review it and open the PRs. The agents run on your Claude Code subscription, each in an isolated Docker sandbox. All you do is the final code review and the call to merge.
 
 ![exomecha's parts and how they connect](docs/diagrams/overview.svg)
 
-![How the workers move a PRD](docs/diagrams/workers.svg)
+### Working on PRDs
 
-When a worker cannot go on, it moves the PRD to status:stuck and leaves the reason in a comment.
-
-For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of its own. The GitHub token never enters a sandbox.
-
-## Working on PRDs
-
-You write PRDs in Claude Code with the skills.
+You make PRDs in Claude Code with the exomecha plugin's skills. Use them however you like. All you need in the end is complete-prd, which files the PRD. You can record several problems with draft-prd and sort them out together later with summary-all-drafts, or talk one problem through in depth and call complete-prd right away.
 
 - `/exomecha:draft-prd`: records a problem as a draft. Workers don't take drafts.
 - `/exomecha:summary-all-drafts`: shows each draft's title and a summary of up to three lines.
 - `/exomecha:complete-prd`: makes every decision and sets the PRD to status:ready.
+  - When one PR would be too big, it splits the work into PRDs that can each be merged alone. A PRD that has to wait for another is marked as blocked by it on GitHub. PRDs with nothing blocking them are built at the same time, and a blocked PRD starts once its blockers are merged. You decide the split and its order when you approve.
+  - It labels each PRD with a tier by how complex the work is. The workers' model and effort are set by the tier.
+    - light
+    - normal
+    - heavy
 
 ![How the PRD skills make a PRD](docs/diagrams/prd-skills.svg)
+
+### Workers
+
+builder, reviewer and resolver handle a filed PRD by its status label.
+
+![How the workers move a PRD](docs/diagrams/workers.svg)
+
+- `status:draft`: a draft. No worker takes it.
+- `status:ready`: builder writes the code and opens the PRs, once no open issue blocks the PRD.
+- `status:working`: builder is writing the code and running the tests.
+- `status:review`: reviewer reviews the PRs once CI passes, and moves the PRD to status:approved, or back to status:ready when something needs fixing. resolver merges the base branch into a conflicting PR.
+- `status:approved`: you merge the PRs in the order builder's summary gives. When a PR conflicts, resolver sends the PRD back to status:review.
+- `status:stuck`: a worker waits for your decision. Answer its comment and set the label it names.
 
 ## Requirements
 
