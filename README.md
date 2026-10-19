@@ -8,7 +8,7 @@ Write a PRD as a GitHub issue, and agents write the code, review it and open the
 
 ![exomecha's parts and how they connect](docs/diagrams/overview.svg)
 
-### Working on PRDs
+### PRDs
 
 You make PRDs in Claude Code with the exomecha plugin's skills. Use them however you like, as long as you finish with complete-prd, which files the PRD. You can record several problems with draft-prd and sort them out together later with summary-all-drafts, or talk one problem through in depth and call complete-prd right away.
 
