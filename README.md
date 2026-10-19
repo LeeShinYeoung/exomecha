@@ -23,11 +23,7 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
 - macOS or Linux
 - Claude Code and a Claude account
 - sbx (Docker Sandboxes). You don't need Docker Desktop.
-- A GitHub fine-grained token that reaches only the PRD repository and the repositories PRDs change, with these permissions:
-  - Issues: read and write
-  - Pull requests: read and write
-  - Contents: read and write
-  - Actions: read
+- A GitHub fine-grained token that reaches only the PRD repository and the repositories PRDs change. `exomecha init` links to GitHub's form with its permissions filled in.
 
 ## Installation
 
@@ -64,22 +60,16 @@ For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of i
 
 5. In Claude Code, run `/exomecha:setup <project>`. It writes the files that prepare each PRD's sandbox to the project folder and proves them in a real sandbox. Answer its questions.
 
-On a machine that only writes PRDs, without running exomecha, install the plugin in Claude Code yourself:
+## A machine that only writes PRDs
+
+Without running exomecha, install the plugin in Claude Code yourself:
 
 ```
 /plugin marketplace add LeeShinYeoung/exomecha
 /plugin install exomecha@exomecha
 ```
 
-## Update
-
-Update exomecha and its plugin to the latest release:
-
-```
-exomecha update
-```
-
-On a machine that only writes PRDs, update the plugin on its own:
+Update the plugin on its own:
 
 ```
 claude plugin marketplace update exomecha
@@ -101,11 +91,12 @@ You write PRDs in Claude Code with the skills.
 - `/exomecha:summary-all-drafts`: shows each draft's title and a summary of up to three lines.
 - `/exomecha:complete-prd`: makes every decision and sets the PRD to status:ready.
 
-When a PRD reaches status:approved, merge its PRs. If there are several, merge them in the order builder's summary gives. If something needs fixing, write it on the PR or the PRD and set it back to status:ready.
+What you do on a PRD:
 
-When a PRD reaches status:stuck, the comment says why. Answer in a comment and change the label to the one the comment names. If there is nothing left to do, close the issue.
+- status:approved: merge the PRs in the order builder's summary gives, or write what to fix and set it back to status:ready.
+- status:stuck: answer the comment and set the label it names, or close the issue.
 
-If the token is your own, you are the author of every PR. So a "require approval" protection rule on the base branch blocks your merge.
+With your own token you author every PR, so a "require approval" rule on the base branch blocks your merge.
 
 ## License
 
