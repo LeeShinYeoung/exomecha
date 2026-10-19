@@ -1,6 +1,8 @@
 package github
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -80,4 +82,33 @@ func TestSetStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	want(label.PRD, "priority")
+}
+
+func TestSetStatusLogsOnlyAChange(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	s := githubtest.New(t)
+	client := clientOf(t, s)
+	n := s.AddIssue("PRD", "", label.PRD, string(label.Ready))
+
+	s.Fail(labelsRoute, http.StatusBadGateway)
+	if err := client.SetStatus(t.Context(), n, label.Ready, label.Working); err == nil {
+		t.Fatal("SetStatus returned nil with GitHub failing")
+	}
+	s.Fail(labelsRoute, 0)
+	if err := client.SetStatus(t.Context(), n, label.Ready, label.Working); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ClearStatus(t.Context(), n); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	if strings.Count(got, `msg="status changed"`) != 2 ||
+		!strings.Contains(got, `msg="status changed" from=status:ready to=status:working`) ||
+		!strings.Contains(got, `msg="status changed" from=status:working to=none`) {
+		t.Errorf("log %q, want one line for each change that went through", got)
+	}
 }

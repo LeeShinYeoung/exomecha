@@ -130,14 +130,29 @@ func (c *Client) SendBacks(ctx context.Context, pr int, prd []Comment) (int, err
 	return n, nil
 }
 
-// PRComments returns what was written on the PR, oldest first: comments on the conversation, the
-// bodies of reviews, and comments on lines of the diff.
+// PRComments returns what was written on the PR, oldest first: the description when exomecha wrote
+// it with a Note, comments on the conversation, the bodies of reviews, and comments on lines of the
+// diff.
 func (c *Client) PRComments(ctx context.Context, number int) ([]Comment, error) {
-	// A PR's conversation is its issue's comments.
-	out, err := c.Comments(ctx, number)
+	pr, _, err := c.api.PullRequests.Get(ctx, c.owner, c.repo, number)
 	if err != nil {
 		return nil, err
 	}
+	var out []Comment
+	// The line before the Note links the PRD, and differs between the PRs of a PRD in several
+	// repositories, so it is left out.
+	if i := strings.Index(pr.GetBody(), markerStart); i >= 0 {
+		cm := commentFrom(pr.GetBody()[i:], pr.GetAuthorAssociation(), pr.GetCreatedAt().Time)
+		if cm.Exomecha {
+			out = append(out, cm)
+		}
+	}
+	// A PR's conversation is its issue's comments.
+	comments, err := c.Comments(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, comments...)
 	reviews, err := c.reviews(ctx, number)
 	if err != nil {
 		return nil, err

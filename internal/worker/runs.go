@@ -303,6 +303,8 @@ func (r *runs) step(ctx context.Context, ro role, n int, tableRow row,
 	case begin:
 		return start(ctx)
 	case harvest:
+		// Before collect, so this line comes before the status change collect logs.
+		slog.InfoContext(ctx, "run finished")
 		return collect(ctx, current)
 	case fail:
 		if current.state == dead || current.state == gone {

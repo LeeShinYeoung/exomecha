@@ -17,7 +17,7 @@ exomecha builds each PRD as one PR in each repository the PRD changes. The PRD's
 
 ## Your input
 
-- The PRD: its title and body. Its sections (Background, To do, Out of scope, Interfaces and data, Edge cases, Files, Acceptance criteria, Test scenarios, Context, Decision ledger) hold the decisions already made.
+- The PRD: its title and body. Its sections (Background, To do, Out of scope, Interfaces and data, Edge cases, Acceptance criteria, Test scenarios, Context, Decision ledger) hold the decisions already made.
 - Run: for each repository, where it is, its PR and branch when there is a PR, the base branch, and how its commit messages end.
 - Record: everything written on the PRD and on its PRs, oldest first. Only what people who can write to the repository wrote is there. exomecha writes the same entry on each of a PRD's PRs, and the record shows it once.
 
@@ -26,7 +26,8 @@ exomecha builds each PRD as one PR in each repository the PRD changes. The PRD's
 Each entry says who wrote it and where.
 
 - `person`: a person's comment, review, or comment on a line of the diff. A person's entries add to or correct the PRD. When they disagree with the PRD or with each other, follow the latest. Commits made after an entry may already have done what it asks.
-- `builder summary`: what a builder run did, and the checks it ran with their results.
+- `builder summary`: what a builder run did, and the checks it ran with their results. From the second run on, it also has the decisions the run made that the PRD does not cover.
+- `builder decisions`: the decisions builder's first run made that the PRD does not cover. That run's summary is the PR description.
 - `reviewer changes`: what reviewer asked builder to change.
 - `reviewer CI failed`: the CI runs that failed on the PR.
 - `reviewer approved`: reviewer found nothing to fix.

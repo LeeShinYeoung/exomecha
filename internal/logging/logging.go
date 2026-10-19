@@ -29,6 +29,8 @@ const (
 	Model    = "model"
 	User     = "user"
 	Result   = "result"
+	From     = "from"
+	To       = "to"
 
 	// Only in the start line.
 	Repos            = "repos"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,7 +21,20 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/template"
 )
 
-const builderDone = `{"result": "done", "summary": "did it", "stuck_reason": ""}`
+const builderDone = `{"result": "done", "summary": "did it", "product_decisions": "", "code_decisions": "", "stuck_reason": ""}`
+
+// noDecisions is builder's decisions for a run that decided nothing, as builderDone does.
+const noDecisions = "### Product decisions\n\nNone\n\n### Code decisions\n\nNone"
+
+// wantDecisionsOnly checks that the PR has one comment, the decisions of the run that opened it, since
+// its description has the summary.
+func wantDecisionsOnly(t *testing.T, comments []githubtest.Comment, decisions string) {
+	t.Helper()
+	want := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindDecisions}, decisions)
+	if len(comments) != 1 || comments[0].Body != want {
+		t.Errorf("PR comments = %+v, want only builder's decisions %q: the description has the summary", comments, decisions)
+	}
+}
 
 func (e *env) builder() *builder { return &builder{e.deps, e.runs} }
 
@@ -214,10 +228,54 @@ func TestBuilderPushesAndOpensPR(t *testing.T) {
 		t.Fatalf("pulls = %+v, want one", pulls)
 	}
 	p := pulls[0]
-	if p.Head != branch || p.Base != "main" || p.Title != "Add feature" || p.Body != fmt.Sprintf("Closes #%d\n\ndid it", prd) {
+	summary := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary}, "did it")
+	if p.Head != branch || p.Base != "main" || p.Title != "Add feature" || p.Body != fmt.Sprintf("Closes #%d\n\n%s", prd, summary) {
 		t.Errorf("PR = head %q base %q title %q body %q", p.Head, p.Base, p.Title, p.Body)
 	}
-	e.wantSummary(p.Number, "did it")
+	wantDecisionsOnly(t, p.Comments, noDecisions)
+}
+
+func TestBuilderLeavesItsDecisions(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd := e.addPRD("Add feature", "do it", label.PRD, string(label.Ready))
+	name := e.builderBox(prd)
+
+	e.step(prd)
+	e.step(prd)
+	e.play(name, commit(t, "feat: add feature", map[string]string{"feature.txt": "hello\n"}),
+		`{"result": "done", "summary": "did it", "product_decisions": "- The empty list says \"Nothing yet\".", "code_decisions": "", "stuck_reason": ""}`)
+	e.step(prd)
+
+	wantDecisionsOnly(t, e.gh.Pulls()[0].Comments,
+		"### Product decisions\n\n- The empty list says \"Nothing yet\".\n\n### Code decisions\n\nNone")
+}
+
+func TestBuilderLogsTheRun(t *testing.T) {
+	log := captureLog(t)
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd := e.addPRD("Add feature", "do it", label.PRD, string(label.Ready))
+	name := e.builderBox(prd)
+
+	e.step(prd)
+	e.step(prd)
+	e.play(name, commit(t, "feat: add feature", map[string]string{"feature.txt": "hello\n"}), builderDone)
+	e.step(prd)
+
+	var got []string
+	for line := range strings.Lines(log.String()) {
+		_, msg, _ := strings.Cut(line, " level=")
+		got = append(got, strings.TrimSpace(msg))
+	}
+	want := []string{
+		`INFO msg="status changed" from=status:ready to=status:working`,
+		`INFO msg="run started"`,
+		`INFO msg="run finished"`,
+		`INFO msg="status changed" from=status:working to=status:review`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("log lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 }
 
 func TestBuilderStuck(t *testing.T) {
@@ -379,11 +437,12 @@ func TestBuilderContinuesExistingPR(t *testing.T) {
 	e.wantSummary(pr, "did it")
 }
 
-// wantSummary checks that builder's last run left its summary on the PR, where the next run reads it.
+// wantSummary checks that builder's last run left its summary and decisions on the PR, where the next
+// run reads them.
 func (e *env) wantSummary(pr int, summary string) {
 	e.t.Helper()
 	comments := e.gh.Pull(pr).Comments
-	want := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary}, summary)
+	want := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary}, summary+"\n\n"+noDecisions)
 	if len(comments) == 0 || comments[len(comments)-1].Body != want {
 		e.t.Errorf("PR comments = %+v, want the last one to be builder's summary %q", comments, summary)
 	}

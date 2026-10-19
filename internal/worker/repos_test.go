@@ -150,14 +150,17 @@ func TestBuilderBuildsAcrossRepositories(t *testing.T) {
 
 	e.wantStatus(prd, label.Review)
 	e.wantRemoved(name)
+	summary := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary}, "did it")
+	var shown []repoWithPR
 	for _, c := range []struct {
+		repo   *Repo
 		gh     *githubtest.Server
 		origin string
 		file   string
 		body   string
 	}{
-		{e.gh, e.origin, "app.txt", "Part of #1\n\ndid it"},
-		{api.gh, api.origin, "api.txt", "Part of owner/repo#1\n\ndid it"},
+		{e.repo, e.gh, e.origin, "app.txt", "Part of #1\n\n" + summary},
+		{api.Repo, api.gh, api.origin, "api.txt", "Part of owner/repo#1\n\n" + summary},
 	} {
 		if got := gittest.ReadFile(t, c.origin, branchName(prd), c.file); got != "v2" {
 			t.Errorf("%s on the branch = %q", c.file, got)
@@ -166,10 +169,17 @@ func TestBuilderBuildsAcrossRepositories(t *testing.T) {
 		if len(pulls) != 1 || pulls[0].Body != c.body || pulls[0].Title != "Add feature" {
 			t.Fatalf("PRs = %+v, want one with body %q", pulls, c.body)
 		}
-		if comments := pulls[0].Comments; len(comments) != 1 || !strings.Contains(comments[0].Body, "did it") {
-			t.Errorf("PR comments = %+v, want builder's summary", comments)
-		}
+		wantDecisionsOnly(t, pulls[0].Comments, noDecisions)
+		shown = append(shown, repoWithPR{c.repo, pulls[0].Number})
 	}
+	record, err := sharedInput(t.Context(), e.deps, e.issue(prd), shown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(record, "did it"); n != 1 {
+		t.Errorf("builder's summary is in the record %d times, want once:\n%s", n, record)
+	}
+	wantContains(t, "record", record, fmt.Sprintf("(builder summary, PR #%d)\n\ndid it", shown[0].pr))
 }
 
 // A repository the PRD lists but the AI did not need to change gets no PR.
