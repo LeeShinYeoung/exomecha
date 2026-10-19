@@ -44,7 +44,7 @@
     <text class="zone" x="312" y="398">WORKERS</text>
 
     <rect x="576" y="376" width="224" height="208" rx="8" fill="#ffffff" stroke="rgba(17,17,17,0.20)" stroke-width="1"/>
-    <text class="zone" x="592" y="398">SANDBOXES</text>
+    <text class="zone" x="592" y="398">DOCKER SANDBOXES</text>
 
     <!-- Connections -->
     <g fill="none" stroke="#555555" stroke-width="1.2">
