@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1040" height="888" viewBox="0 0 1040 888" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="exomecha-overview-title exomecha-overview-desc">
+    <title id="exomecha-overview-title">exomecha's parts and how they connect</title>
+    <desc id="exomecha-overview-desc">Architecture diagram: a human writes PRDs on GitHub with the exomecha plugin in Claude Code and comments on and merges the pull requests, and sets a project up with exomecha init and the setup skill; builder, reviewer and resolver read and write GitHub only through the GitHub client, wait on a usage gate, take their config from the settings file, and run Claude Code in sandboxes prepared by the setup files; code moves between the sandboxes and the shared clones, which push to the pull requests.</desc>
+    <defs>
+    <style>
+      text {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      font-size: 12px;
+    }
+      .zone { font-weight: 600; fill: #555555; letter-spacing: 0.04em; }
+      .name { font-weight: 600; fill: #111111; }
+      .center { text-anchor: middle; }
+      .sub { fill: #888888; }
+      .mono { fill: #555555; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace !important; }
+      .say { fill: #555555; }
+    </style>
+      <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto-start-reverse"><polygon points="0 0, 8 3, 0 6" fill="#555555"/></marker>
+      <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+      <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#333333"/></marker>
+      <g id="claude">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#111111" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5l-5 5" /> <path d="M12 19l7 0" /></svg>
+      </g>
+      <g id="user">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#111111" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7a4 4 0 1 0 8 0a4 4 0 0 0 -8 0" /> <path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /></svg>
+      </g>
+    </defs>
+
+    <rect width="100%" height="100%" fill="#ffffff"/>
+
+    <!-- Zones -->
+    <rect x="24" y="24" width="208" height="212" rx="8" fill="#ffffff" stroke="rgba(17,17,17,0.20)" stroke-width="0.8"/>
+    <rect x="24" y="632" width="208" height="232" rx="8" fill="#ffffff" stroke="rgba(17,17,17,0.20)" stroke-width="0.8"/>
+
+    <rect x="272" y="24" width="744" height="176" rx="8" fill="#fbfbfb" stroke="rgba(17,17,17,0.12)" stroke-width="0.8"/>
+    <rect x="288" y="16" width="64" height="16" fill="#ffffff"/>
+    <text class="zone" x="296" y="29">GITHUB</text>
+
+    <rect x="272" y="264" width="744" height="600" rx="8" fill="#f6f6f6" stroke="rgba(17,17,17,0.12)" stroke-width="0.8"/>
+    <rect x="288" y="256" width="88" height="16" fill="#ffffff"/>
+    <text class="zone" x="296" y="269">EXOMECHA</text>
+
+    <rect x="296" y="376" width="224" height="256" rx="8" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+    <text class="zone" x="312" y="398">WORKERS</text>
+
+    <rect x="576" y="376" width="224" height="208" rx="8" fill="#ffffff" stroke="rgba(17,17,17,0.20)" stroke-width="1"/>
+    <text class="zone" x="592" y="398">SANDBOXES</text>
+
+    <!-- Connections -->
+    <g fill="none" stroke="#555555" stroke-width="1.2">
+      <line x1="216" y1="120" x2="360" y2="120" marker-end="url(#arrow)"/>
+      <path d="M 232,48 H 832 Q 840,48 840,56 V 88" marker-end="url(#arrow)"/>
+      <!-- One API line from the GitHub client splits to the PRD and the pull requests -->
+      <line x1="472" y1="232" x2="472" y2="296" marker-end="url(#arrow)"/>
+      <path d="M 472,232 H 448 Q 440,232 440,224 V 152" marker-end="url(#arrow)"/>
+      <path d="M 472,232 H 792 Q 800,232 800,224 V 152" marker-end="url(#arrow)"/>
+      <line x1="408" y1="376" x2="408" y2="344" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+      <line x1="496" y1="428" x2="600" y2="428" marker-end="url(#arrow)"/>
+      <line x1="496" y1="484" x2="600" y2="484" marker-end="url(#arrow)"/>
+      <line x1="496" y1="540" x2="600" y2="540" marker-end="url(#arrow)"/>
+      <line x1="800" y1="480" x2="848" y2="480" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+      <line x1="920" y1="456" x2="920" y2="152" marker-end="url(#arrow)"/>
+      <line x1="408" y1="676" x2="408" y2="632" marker-end="url(#arrow)"/>
+      <line x1="688" y1="716" x2="688" y2="584" marker-end="url(#arrow)"/>
+      <line x1="216" y1="704" x2="320" y2="704" marker-end="url(#arrow)"/>
+      <line x1="216" y1="824" x2="560" y2="824" marker-end="url(#arrow)"/>
+    </g>
+    <circle cx="472" cy="232" r="3" fill="#555555"/>
+
+    <text class="say center" x="316" y="112">write PRD</text>
+    <text class="say center" x="760" y="68">comment / merge</text>
+    <text class="say center" x="636" y="224">read / write</text>
+    <text class="say center" x="548" y="420">run</text>
+    <text class="say center" x="824" y="472">code</text>
+    <text class="say" x="932" y="236">push</text>
+    <text class="say" x="420" y="660">config</text>
+    <text class="say" x="700" y="656">prepare</text>
+
+    <!-- Human who writes the PRDs -->
+    <use href="#user" x="40" y="36"/>
+    <text class="name" x="64" y="49">Human</text>
+    <rect x="40" y="72" width="176" height="148" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+    <use href="#claude" x="56" y="88"/>
+    <text class="name" x="80" y="101">Claude Code</text>
+    <text class="sub" x="56" y="124">exomecha plugin</text>
+    <line x1="56" y1="136" x2="200" y2="136" stroke="rgba(17,17,17,0.08)" stroke-width="0.8"/>
+    <text class="mono" x="56" y="160">/draft-prd</text>
+    <text class="mono" x="56" y="180">/complete-prd</text>
+    <text class="mono" x="56" y="200">/summary-all-drafts</text>
+
+    <!-- Human who sets up the project -->
+    <use href="#user" x="40" y="644"/>
+    <text class="name" x="64" y="657">Human</text>
+    <rect x="40" y="680" width="176" height="48" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+    <text class="mono" x="56" y="709">$ exomecha init</text>
+    <rect x="40" y="740" width="176" height="108" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+    <use href="#claude" x="56" y="756"/>
+    <text class="name" x="80" y="769">Claude Code</text>
+    <text class="sub" x="56" y="792">exomecha plugin</text>
+    <line x1="56" y1="804" x2="200" y2="804" stroke="rgba(17,17,17,0.08)" stroke-width="0.8"/>
+    <text class="mono" x="56" y="828">/setup &lt;project&gt;</text>
+
+    <!-- GitHub -->
+    <g fill="#ffffff" stroke="#111111" stroke-width="1">
+      <rect x="360" y="88" width="200" height="64" rx="6"/>
+      <rect x="744" y="88" width="200" height="64" rx="6"/>
+    </g>
+    <text class="name center" x="460" y="116">PRD</text>
+    <text class="sub center" x="460" y="134">issue · status label</text>
+    <text class="name center" x="844" y="124">Pull requests</text>
+
+    <!-- The only way the workers reach GitHub -->
+    <rect x="320" y="296" width="176" height="48" rx="6" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+    <text class="name center" x="408" y="324">GitHub client</text>
+
+    <!-- Workers, and the gate every start waits on -->
+    <g fill="#000000">
+      <rect x="320" y="408" width="176" height="40" rx="6"/>
+      <rect x="320" y="464" width="176" height="40" rx="6"/>
+      <rect x="320" y="520" width="176" height="40" rx="6"/>
+    </g>
+    <g class="name center" style="fill:#ffffff">
+      <text x="408" y="432">builder</text>
+      <text x="408" y="488">reviewer</text>
+      <text x="408" y="544">resolver</text>
+    </g>
+    <rect x="320" y="576" width="176" height="40" rx="6" fill="#f2f2f2" stroke="#555555" stroke-width="1"/>
+    <text class="name center" x="408" y="600">Usage gate</text>
+
+    <!-- Sandboxes: the copy behind each one stands for the other PRDs -->
+    <g fill="#ffffff" stroke="#bbbbbb" stroke-width="1" stroke-dasharray="4,3">
+      <rect x="606" y="414" width="176" height="40" rx="6"/>
+      <rect x="606" y="470" width="176" height="40" rx="6"/>
+      <rect x="606" y="526" width="176" height="40" rx="6"/>
+    </g>
+    <g fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="4,3">
+      <rect x="600" y="408" width="176" height="40" rx="6"/>
+      <rect x="600" y="464" width="176" height="40" rx="6"/>
+      <rect x="600" y="520" width="176" height="40" rx="6"/>
+    </g>
+    <use href="#claude" x="640" y="420"/>
+    <use href="#claude" x="640" y="476"/>
+    <use href="#claude" x="640" y="532"/>
+    <g class="name">
+      <text x="664" y="432">Claude Code</text>
+      <text x="664" y="488">Claude Code</text>
+      <text x="664" y="544">Claude Code</text>
+    </g>
+
+    <!-- Files on this machine -->
+    <g fill="#ffffff" stroke="#555555" stroke-width="1">
+      <rect x="848" y="456" width="144" height="48" rx="6"/>
+      <rect x="320" y="676" width="176" height="56" rx="6"/>
+      <rect x="560" y="716" width="240" height="120" rx="6"/>
+    </g>
+    <text class="name center" x="920" y="484">Shared clones</text>
+    <text class="name center" x="408" y="698">Settings</text>
+    <text class="mono center" x="408" y="716">&lt;project&gt;.yaml</text>
+
+    <text class="name" x="576" y="738">Setup files</text>
+    <line x1="576" y1="750" x2="784" y2="750" stroke="rgba(17,17,17,0.08)" stroke-width="0.8"/>
+    <text class="mono" x="576" y="770">Dockerfile</text>
+    <text class="mono" x="576" y="788">setup.sh</text>
+    <text class="mono" x="576" y="806">allowed-hosts</text>
+    <text class="mono" x="576" y="824">sandbox.md</text>
+    <g class="sub">
+      <text x="688" y="770">sandbox template</text>
+      <text x="688" y="788">install</text>
+      <text x="688" y="806">network</text>
+      <text x="688" y="824">rules for AI</text>
+    </g>
+  </svg>
