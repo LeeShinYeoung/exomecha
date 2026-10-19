@@ -4,7 +4,7 @@ PRD-driven Agent Orchestrator
 
 ## Overview
 
-File a PRD as a GitHub issue, and agents write the code, review it and open the PRs. The agents run on your Claude Code subscription, each in an isolated Docker sandbox. You only review the final code and decide whether to merge.
+Write a PRD as a GitHub issue, and agents write the code, review it and open the PRs. The agents run on your Claude Code subscription, each in an isolated Docker sandbox. You only review the final code and decide whether to merge.
 
 ![exomecha's parts and how they connect](docs/diagrams/overview.svg)
 
