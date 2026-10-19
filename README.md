@@ -4,109 +4,120 @@ PRD-driven Agent Orchestrator
 
 ## Overview
 
-A PRD is an issue in the PRD repository. It gets one PR in each repository it changes. exomecha reads the PRD's labels and hands the work to builder, reviewer and resolver.
+File a PRD as a GitHub issue, and agents write the code, review it and open the PRs. The agents run on your Claude Code subscription, each in an isolated Docker sandbox. All you do is the final code review and the call to merge.
 
-```
-[person]    /exomecha:complete-prd → the PRD is status:ready
-[builder]   ready → writes the code in a sandbox → PR → status:review
-[reviewer]  review → checks CI, reviews the code → status:approved (ready if something needs fixing)
-[person]    approved → merges the PRs → the PRD closes
-[resolver]  a conflicting PR → merges the base branch to resolve it → stays in review
-```
+![exomecha's parts and how they connect](docs/diagrams/overview.svg)
 
-When a worker cannot go on, it moves the PRD to status:stuck and leaves the reason in a comment.
+### Working on PRDs
 
-For each run, a worker runs Claude Code in a Docker Sandboxes (sbx) sandbox of its own. The GitHub token never enters a sandbox.
+You make PRDs in Claude Code with the exomecha plugin's skills. Use them however you like. All you need in the end is complete-prd, which files the PRD. You can record several problems with draft-prd and sort them out together later with summary-all-drafts, or talk one problem through in depth and call complete-prd right away.
+
+- `/exomecha:draft-prd`: records a problem as a draft. Workers don't take drafts.
+- `/exomecha:summary-all-drafts`: shows each draft's title and a summary of up to three lines.
+- `/exomecha:complete-prd`: makes every decision and sets the PRD to status:ready.
+  - When one PR would be too big, it splits the work into PRDs that can each be merged alone. A PRD that has to wait for another is marked as blocked by it on GitHub. PRDs with nothing blocking them are built at the same time, and a blocked PRD starts once its blockers are merged. You decide the split and its order when you approve.
+  - It labels each PRD with a tier by how complex the work is. The workers' model and effort are set by the tier.
+    - light
+    - normal
+    - heavy
+
+![How the PRD skills make a PRD](docs/diagrams/prd-skills.svg)
+
+### Workers
+
+builder, reviewer and resolver handle a filed PRD by its status label.
+
+![How the workers move a PRD](docs/diagrams/workers.svg)
+
+- `status:draft`: a draft. No worker takes it.
+- `status:ready`: builder writes the code and opens the PRs, once no open issue blocks the PRD.
+- `status:working`: builder is writing the code and running the tests.
+- `status:review`: reviewer reviews the PRs once CI passes, and moves the PRD to status:approved, or back to status:ready when something needs fixing. resolver merges the base branch into a conflicting PR.
+- `status:approved`: you merge the PRs in the order builder's summary gives. When a PR conflicts, resolver sends the PRD back to status:review.
+- `status:stuck`: a worker waits for your decision. Answer its comment and set the label it names.
 
 ## Requirements
 
 - macOS or Linux
-- Claude Code and a Claude account
-- sbx (Docker Sandboxes). You don't need Docker Desktop.
-- A GitHub fine-grained token that reaches only the PRD repository and the repositories PRDs change, with these permissions:
-  - Issues: read and write
-  - Pull requests: read and write
-  - Contents: read and write
-  - Actions: read
+- git
+- Claude Code and a Claude subscription
+- sbx (Docker Sandboxes), signed in to Docker and started from the balanced network policy. You don't need Docker Desktop.
+
+  ```
+  sbx login
+  sbx policy init balanced
+  ```
+
+- A GitHub fine-grained token. `exomecha init` links to the form that makes it.
+- In each repository's CLAUDE.md, how to install the dependencies and run the tests. builder follows it in its sandbox.
 
 ## Installation
 
-1. Install exomecha in `~/.local/bin`, where Claude Code installs itself. On an Intel Mac, replace `arm64` with `amd64`. On an ARM Linux machine, replace `amd64` with `arm64`.
+### The machine that runs exomecha
+
+1. Install exomecha.
 
    ```
-   # macOS
+   # macOS (Apple silicon)
    curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_darwin_arm64.tar.gz
    tar -xzf exomecha_darwin_arm64.tar.gz
    mkdir -p ~/.local/bin
    install exomecha ~/.local/bin/
 
-   # Linux
+   # Linux (x86_64)
    curl -fsSLO https://github.com/LeeShinYeoung/exomecha/releases/latest/download/exomecha_linux_amd64.tar.gz
    tar -xzf exomecha_linux_amd64.tar.gz
    mkdir -p ~/.local/bin
    install exomecha ~/.local/bin/
    ```
 
-2. Sign sbx in to Docker and start from the balanced network policy. claude on this machine and sbx must use the same Claude account.
-
-   ```
-   sbx login
-   sbx policy init balanced
-   ```
-
-3. In each repository's CLAUDE.md, write how to install the dependencies and run the tests. builder reads it to run the tests in its sandbox.
-
-4. Create the project. It asks for the repositories, the PRD repository, the base branch and the token, and writes them to a settings file. The optional settings are in that file as comments. Then it checks this machine, and installs the exomecha plugin in Claude Code for your user.
+2. Create the project. It asks for the settings, checks this machine and installs the exomecha plugin. When it signs sbx in to Claude, use the same account as claude on this machine.
 
    ```
    exomecha init <project>
+   # Asks for:
+   # * Repositories exomecha works on
+   # * Repository where you file PRDs (with several repositories)
+   # * Base branch
+   # * GitHub token
    ```
 
-5. In Claude Code, run `/exomecha:setup <project>`. It writes the files that prepare each PRD's sandbox to the project folder and proves them in a real sandbox. Answer its questions.
+3. Prepare the sandbox in Claude Code, and answer its questions.
 
-On a machine that only writes PRDs, without running exomecha, install the plugin in Claude Code yourself:
+   ```
+   /exomecha:setup <project>
+   # Reads each repository's CLAUDE.md, CI and config, and prepares the sandbox to run the tests:
+   # * Runtimes and system packages
+   # * Dependencies, and config files git ignores (such as .env)
+   # * Services such as databases, and migrations
+   # * Hosts the sandbox may reach, and access to private package registries
+   # * What to do with checks the sandbox cannot run
+   # Last, it starts a real sandbox, runs every check CLAUDE.md and CI ask for, and makes sure they all pass.
+   ```
 
-```
-/plugin marketplace add LeeShinYeoung/exomecha
-/plugin install exomecha@exomecha
-```
+4. Run exomecha. It runs in this terminal until Ctrl-C.
 
-## Update
+   ```
+   exomecha run <project>
+   ```
 
-Update exomecha and its plugin to the latest release:
+### A machine that only writes PRDs
 
-```
-exomecha update
-```
-
-On a machine that only writes PRDs, update the plugin on its own:
-
-```
-claude plugin marketplace update exomecha
-claude plugin update exomecha@exomecha
-```
-
-## Usage
+Install the plugin in Claude Code.
 
 ```
-exomecha run <project>   # runs in this terminal until Ctrl-C
-exomecha list            # lists the projects and whether each is running
-exomecha update          # updates exomecha and its plugin to the latest release
-exomecha --version       # prints the installed version
+claude plugin marketplace add LeeShinYeoung/exomecha
+claude plugin install exomecha@exomecha
 ```
 
-You write PRDs in Claude Code with the skills.
+## Commands
 
-- `/exomecha:draft-prd`: records a problem as a draft. Workers don't take drafts.
-- `/exomecha:summary-all-drafts`: shows each draft's title and a summary of up to three lines.
-- `/exomecha:complete-prd`: makes the decisions the code cannot answer and sets the PRD to status:ready.
-
-When a PRD reaches status:approved, merge its PRs. If there are several, merge them in the order builder's summary gives. builder lists what it decided on its own, apart from the PRD, in a comment on the PR each run, so read those first. If something needs fixing, write it on the PR or the PRD and set it back to status:ready.
-
-When a PRD reaches status:stuck, the comment says why. Answer in a comment and change the label to the one the comment names. If there is nothing left to do, close the issue.
-
-If the token is your own, you are the author of every PR. So a "require approval" protection rule on the base branch blocks your merge.
+```
+exomecha list        # lists the projects and whether each is running
+exomecha update      # updates exomecha and its plugin to the latest release
+exomecha --version   # prints the installed version
+```
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[MIT](LICENSE)
