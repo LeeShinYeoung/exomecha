@@ -44,7 +44,8 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' .claude-plugin/plugin.json > plugin.json
           mv plugin.json .claude-plugin/plugin.json
           # A first install takes the plugin from the tag, not from unreleased commits on main.
-          jq --arg t "$tag" '.plugins[0].source = {source: "github", repo: "LeeShinYeoung/exomecha", ref: $t}' .claude-plugin/marketplace.json > marketplace.json
+          # Not a github source: claude plugin update clones that over SSH only, and most people have no SSH key.
+          jq --arg t "$tag" '.plugins[0].source = {source: "url", url: "https://github.com/LeeShinYeoung/exomecha.git", ref: $t}' .claude-plugin/marketplace.json > marketplace.json
           mv marketplace.json .claude-plugin/marketplace.json
 
           git config user.name "github-actions[bot]"
