@@ -17,6 +17,7 @@ type Stream struct {
 	Weekly         Window // as the last rate limit event reports it
 
 	ended      bool // claude wrote its result line
+	resumed    bool // claude went on after its result line and wrote another
 	isError    bool
 	subtype    string
 	text       string
@@ -88,6 +89,7 @@ func ReadStream(r io.Reader) (Stream, error) {
 				s.FiveHour, s.Weekly = window("five_hour"), window("seven_day")
 			}
 		case "result":
+			s.resumed = s.ended
 			s.ended = true
 			s.isError = line.IsError
 			s.subtype = line.Subtype
@@ -97,10 +99,15 @@ func ReadStream(r io.Reader) (Stream, error) {
 	}
 }
 
+var ErrResumed = errors.New("claude went on after its result")
+
 func (s Stream) Result() (json.RawMessage, error) {
 	switch {
 	case !s.ended:
 		return nil, errors.New("claude ended without a result")
+	// The result it gave may no longer describe the work.
+	case s.resumed:
+		return nil, ErrResumed
 	case s.isError:
 		return nil, fmt.Errorf("claude returned an error (%s): %s", s.subtype, s.text)
 	case len(s.structured) == 0 || string(s.structured) == "null":

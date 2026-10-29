@@ -20,7 +20,7 @@ Each repository is a new branch off its base branch until it has a PR. With a PR
 - If something still needs installing, install it as CLAUDE.md says.
 - Change only the repositories the PRD needs changed. Leave the others as they are, and exomecha opens no PR for them.
 - Run **only the tests you can run right here in this directory**, and fix things until they pass. Meet every acceptance criterion and cover every test scenario in the PRD.
-- Run commands in the foreground. When you give your result, claude ends and stops anything still running in the background.
+- Background tasks are off here, so commands and subagents run in the foreground. Give a command that may run over 2 minutes a longer timeout.
 - A 403 response that says "Approval required for <host>" means the sandbox's network policy blocked that host. Report stuck and name the host, so a person can allow it.
 - Do not do what Out of scope excludes.
 - Do not use `git push` or `gh`. exomecha pushes and opens the PR.

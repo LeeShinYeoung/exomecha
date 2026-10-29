@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -120,6 +121,8 @@ func (r *runs) outcome(name string) (res json.RawMessage, failure string, limite
 	switch {
 	case s.PermissionMode != "auto":
 		return res, "claude did not run in auto permission mode", false, nil
+	case errors.Is(err, agent.ErrResumed):
+		return res, "claude went on working after it gave its result, so the result may not match the branch", false, nil
 	case err != nil:
 		return res, "claude ended with an error or without a result", false, nil
 	case code != 0:

@@ -21,7 +21,7 @@ Each repository with a list of conflicted files is a working copy of its PR bran
 - Run the tests you can run in this directory. If a test fails because of the merge, fix it until it passes, even in a file without conflict markers. For example, this PR may still call a function that the base branch renamed.
 - A test that also fails on the base branch alone is not yours to fix. To tell, run it on the base branch in a separate worktree. Leave it as it is and name it in `reason`.
 - Change only what the conflicts and those failing tests need. Do not add features or fix unrelated things.
-- Run commands in the foreground. When you give your result, claude ends and stops anything still running in the background.
+- Background tasks are off here, so commands and subagents run in the foreground. Give a command that may run over 2 minutes a longer timeout.
 - A 403 response that says "Approval required for <host>" means the sandbox's network policy blocked that host. Report stuck and name the host, so a person can allow it.
 - Do not use `git push`, `gh`, or `git merge --abort`, and do not amend, rebase, or reset commits that are already on the branch. exomecha pushes.
 - If the two sides contradict each other and a person has to choose, stop and report stuck without committing.
