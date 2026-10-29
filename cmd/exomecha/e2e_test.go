@@ -701,7 +701,7 @@ func (w *world) seedApproved(p prdText, commits ...map[string]string) (prd, pr i
 	w.t.Helper()
 	prd, pr = w.seedReview(p, commits...)
 	w.gh.AddReview(pr, github.NoteBody(github.Note{Worker: "reviewer", Kind: github.KindApproved},
-		approvedLine+" A person reviews and merges it.\n\nThe PR does what the PRD asks."))
+		"The PR does what the PRD asks."))
 	w.relabel(prd, label.Review, label.Approved)
 	return prd, pr
 }

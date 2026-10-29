@@ -16,9 +16,10 @@ const reviewerSchema = `{
   "type": "object",
   "properties": {
     "verdict": {"type": "string", "enum": ["approve", "changes"]},
-    "body": {"type": "string"}
+    "body": {"type": "string"},
+    "details": {"type": "string"}
   },
-  "required": ["verdict", "body"],
+  "required": ["verdict", "body", "details"],
   "additionalProperties": false
 }`
 
@@ -127,7 +128,7 @@ func (r *reviewer) Handle(ctx context.Context, n int) error {
 	case closed:
 		// Retrying never brings a closed PR back, and exomecha never closes one itself, so a
 		// person closed it. Only they know whether the work is still wanted.
-		return toStuck(ctx, r.GitHub, n, reviewerRole.name, prd.Status(), label.Ready, r.closedReason(n, prs), "")
+		return toStuck(ctx, r.GitHub, n, reviewerRole.name, prd.Status(), label.Ready, r.closedReason(n, prs), "", "")
 	case failing:
 		var b strings.Builder
 		b.WriteString("CI failed.\n\n")
@@ -255,10 +256,12 @@ func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) 
 	var out struct {
 		Verdict string `json:"verdict"`
 		Body    string `json:"body"`
+		Details string `json:"details"`
 	}
 	if ok, err := r.runs.result(ctx, reviewerRole, n, &out); err != nil || !ok {
 		return err
 	}
+	body := github.Fold(out.Body, "Details", out.Details)
 	open := openPRs(prs)
 	for _, rr := range in.Repos {
 		now := ""
@@ -273,20 +276,20 @@ func (r *reviewer) collect(ctx context.Context, n int, prs []repoPR, in inputs) 
 	}
 	switch out.Verdict {
 	case "changes":
-		if err := r.requeue(ctx, n, open, github.KindChanges, out.Body); err != nil {
+		if err := r.requeue(ctx, n, open, github.KindChanges, body); err != nil {
 			return err
 		}
 	case "approve":
 		note := github.Note{Worker: reviewerRole.name, Kind: github.KindApproved}
 		for _, p := range open {
-			already, err := posted(ctx, p.repo.GitHub, p.open.Number, note, out.Body)
+			already, err := posted(ctx, p.repo.GitHub, p.open.Number, note, body)
 			if err != nil {
 				return err
 			}
 			if already {
 				continue
 			}
-			if err := p.repo.GitHub.AddApproval(ctx, p.open.Number, out.Body); err != nil {
+			if err := p.repo.GitHub.AddApproval(ctx, p.open.Number, body); err != nil {
 				return err
 			}
 		}
@@ -345,7 +348,7 @@ func (r *reviewer) requeue(ctx context.Context, n int, open []repoPR, kind, revi
 		// A review sent for a failed CI has no run, and keeps nothing.
 		kept := r.runs.keepOutputs(ctx, reviewerRole, n, nil)
 		return toStuck(ctx, r.GitHub, n, reviewerRole.name, label.Review, label.Ready, fmt.Sprintf(
-			"reviewer sent %s back to builder %d times, the limit, and its latest review on the PR still asks for changes.", r.prRefs(open), sent), kept)
+			"reviewer sent %s back to builder %d times, the limit, and its latest review on the PR still asks for changes.", r.prRefs(open), sent), "", kept)
 	}
 	return r.GitHub.SetStatus(ctx, n, label.Review, label.Ready)
 }

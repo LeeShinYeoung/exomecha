@@ -19,4 +19,5 @@ The PRD, Run and the record. Each repository with a PR is a working copy of the 
 ## Result
 
 - `verdict`: `approve` if nothing needs fixing, `changes` if something does
-- `body`: for changes, what to fix, where, and why, written so it can be fixed from this text alone. For approve, a short summary for the person who reviews and merges the PRs: what they change and what you checked. Approving does not merge them. The same body goes on each PR.
+- `body`: for people. For approve, say that you approved and that a person merges the PRs, since approving does not merge them. Then say what the person should check before merging: what you could not check and the risks left. Do not repeat what builder's summary says the PRs change. For changes, each thing to fix in one line.
+- `details`: for the workers. For approve, what you checked. For changes, what to fix, where, and why, written so builder can fix it from this text alone. exomecha folds it under `body`, and the same review goes on each PR.

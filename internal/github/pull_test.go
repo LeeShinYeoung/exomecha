@@ -57,6 +57,27 @@ func TestParseNote(t *testing.T) {
 	}
 }
 
+func TestFold(t *testing.T) {
+	for _, c := range []struct{ text, folded, want string }{
+		{"did it\n", "\nran the tests\n", "did it\n\n<details>\n<summary>Details</summary>\n\nran the tests\n\n</details>"},
+		{"did it", "  ", "did it"},
+		{"", "ran the tests", "<details>\n<summary>Details</summary>\n\nran the tests\n\n</details>"},
+	} {
+		if got := Fold(c.text, "Details", c.folded); got != c.want {
+			t.Errorf("Fold(%q, %q) = %q, want %q", c.text, c.folded, got, c.want)
+		}
+	}
+}
+
+func TestWithoutApproval(t *testing.T) {
+	if got := WithoutApproval(approval + "\n\nadds the greeting"); got != "adds the greeting" {
+		t.Errorf("WithoutApproval of an older approval = %q", got)
+	}
+	if got := WithoutApproval("adds the greeting"); got != "adds the greeting" {
+		t.Errorf("WithoutApproval of a newer approval = %q", got)
+	}
+}
+
 func TestSendBacks(t *testing.T) {
 	s := githubtest.New(t)
 	client := clientOf(t, s)

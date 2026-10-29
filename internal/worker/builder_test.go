@@ -24,7 +24,7 @@ import (
 const builderDone = `{"result": "done", "summary": "did it", "product_decisions": "", "code_decisions": "", "stuck_reason": ""}`
 
 // noDecisions is builder's decisions for a run that decided nothing, as builderDone does.
-const noDecisions = "### Product decisions\n\nNone\n\n### Code decisions\n\nNone"
+const noDecisions = "### Product decisions\n\nNone\n\n<details>\n<summary>Code decisions</summary>\n\nNone\n\n</details>"
 
 // wantDecisionsOnly checks that the PR has one comment, the decisions of the run that opened it, since
 // its description has the summary.
@@ -248,7 +248,29 @@ func TestBuilderLeavesItsDecisions(t *testing.T) {
 	e.step(prd)
 
 	wantDecisionsOnly(t, e.gh.Pulls()[0].Comments,
-		"### Product decisions\n\n- The empty list says \"Nothing yet\".\n\n### Code decisions\n\nNone")
+		"### Product decisions\n\n- The empty list says \"Nothing yet\".\n\n<details>\n<summary>Code decisions</summary>\n\nNone\n\n</details>")
+}
+
+// A person reads the summary, and the workers read the details folded under it.
+func TestBuilderFoldsItsDetails(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd := e.addPRD("Add feature", "do it", label.PRD, string(label.Ready))
+	name := e.builderBox(prd)
+
+	e.step(prd)
+	e.step(prd)
+	e.play(name, commit(t, "feat: add feature", map[string]string{"feature.txt": "hello\n"}),
+		`{"result": "done", "summary": "The list shows the feature.", "details": "- feature.txt\n- go test: passed", "product_decisions": "", "code_decisions": "", "stuck_reason": ""}`)
+	e.step(prd)
+
+	p := e.gh.Pulls()[0]
+	summary := github.NoteBody(github.Note{Worker: "builder", Kind: github.KindSummary},
+		"The list shows the feature.\n\n<details>\n<summary>Details</summary>\n\n- feature.txt\n- go test: passed\n\n</details>")
+	if want := fmt.Sprintf("Closes #%d\n\n%s", prd, summary); p.Body != want {
+		t.Errorf("PR body = %q, want %q", p.Body, want)
+	}
+	wantDecisionsOnly(t, p.Comments, noDecisions)
 }
 
 func TestBuilderLogsTheRun(t *testing.T) {
@@ -289,7 +311,9 @@ func TestBuilderStuck(t *testing.T) {
 
 	e.wantStatus(prd, label.Stuck)
 	comment := e.lastComment(prd)
-	wantStuckComment(t, comment, "need a decision on X\n\nThe output of this run is kept on the machine running exomecha, in `"+e.kept(name)[0]+"`.", label.Ready)
+	wantStuckComment(t, comment, "need a decision on X\n\nIf there is nothing left to do", label.Ready)
+	wantContains(t, "stuck comment", comment,
+		"<details>\n<summary>Details</summary>\n\nThe output of this run is kept on the machine running exomecha, in `"+e.kept(name)[0]+"`.\n\n</details>")
 	wantNotContains(t, "stuck comment", comment, "</stuck_reason>", "</invoke>")
 	wantContains(t, "kept output", e.wantKept(name, "stream.jsonl"), `need a decision on X</stuck_reason>\n</invoke>`)
 	e.wantRemoved(name)
@@ -308,6 +332,7 @@ func TestBuilderStuckWhenNothingChanged(t *testing.T) {
 
 	e.wantStatus(prd, label.Stuck)
 	wantStuckComment(t, e.lastComment(prd), "Nothing to change", label.Ready)
+	wantContains(t, "stuck comment", e.lastComment(prd), "<summary>Details</summary>\n\ndid it")
 	if len(e.gh.Pulls()) != 0 {
 		t.Errorf("a PR was opened with no changes")
 	}
@@ -506,7 +531,7 @@ func TestBuilderReadsWhoWroteEachEntry(t *testing.T) {
 	gittest.Commit(t, e.origin, branch, "main", map[string]string{"feature.txt": "first\n"})
 	pr := e.gh.AddPull(branch, "main")
 	gh := e.deps.GitHub
-	if err := gh.AddComment(t.Context(), pr, github.Note{Worker: "builder", Kind: github.KindSummary}, "added X"); err != nil {
+	if err := gh.AddComment(t.Context(), pr, github.Note{Worker: "builder", Kind: github.KindSummary}, github.Fold("added X", "Details", "ran the tests")); err != nil {
 		t.Fatal(err)
 	}
 	if err := gh.AddReview(t.Context(), pr, github.Note{Worker: "reviewer", Kind: github.KindChanges}, "please rename X"); err != nil {
@@ -522,9 +547,9 @@ func TestBuilderReadsWhoWroteEachEntry(t *testing.T) {
 	input := e.readCtl(e.builderBox(prd), "input.md")
 	onPR := fmt.Sprintf("PR #%d", pr)
 	in := []string{
-		"(builder summary, " + onPR + ")\n\nadded X",
+		"(builder summary, " + onPR + ")\n\nadded X\n\n<details>\n<summary>Details</summary>\n\nran the tests\n\n</details>",
 		"(reviewer changes, " + onPR + ")\n\nplease rename X",
-		"(reviewer approved, " + onPR + ")\n\nexomecha's reviewer approved this PR.",
+		"(reviewer approved, " + onPR + ")\n\nrenames X",
 		"(person, " + onPR + ")\n\nuse a shorter name",
 	}
 	wantContains(t, "claude input", input, in...)

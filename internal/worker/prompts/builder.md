@@ -50,7 +50,8 @@ Stop and report stuck instead when:
 ## Result
 
 - `result`: `done` if finished, `stuck` if you cannot do it
-- `summary`: what you did in this run, and every check you ran with its result, such as which tests passed or which could not run here and why. When you changed several repositories, also say in which order a person should merge their PRs, and why. It becomes the description of each PR this run opens, and goes as a comment on each PR that is already open. reviewer does not run the tests, so it reads the checks you list here. Leave the decisions out of it.
-- `product_decisions`: each product decision you made in this run, with its reason. Empty string if none.
-- `code_decisions`: each code decision you made in this run, with its reason. Empty string if none.
-- `stuck_reason`: if stuck, why, and what a person needs to decide. Empty string if done.
+- `summary`: for people. What changes for the user in this run, and what a person should check by hand because the checks here could not. When you changed several repositories, also say in which order a person should merge their PRs, and why. It starts the description of each PR this run opens, and goes as a comment on each PR that is already open. Leave the decisions out of it.
+- `details`: for the workers. What you changed in the code, and every check you ran with its result, such as which tests passed or which could not run here and why. reviewer does not run the tests, so it reads the checks you list here. exomecha folds it under `summary`.
+- `product_decisions`: for people. Each product decision you made in this run, with its reason, in the words people see on the screen. Empty string if none.
+- `code_decisions`: for the workers. Each code decision you made in this run, with its reason. Empty string if none.
+- `stuck_reason`: for people. If stuck, why, and what a person needs to decide. Empty string if done.

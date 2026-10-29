@@ -80,12 +80,17 @@ func (c *Client) AddReview(ctx context.Context, number int, n Note, body string)
 	return err
 }
 
-// approval starts the review exomecha leaves when reviewer approves. Before reviews had a Note, it
-// was all that told an approval apart.
+// approval started the reviews exomecha left when reviewer approved, until reviewer said it in the
+// PRD's language. Before reviews had a Note, it was all that told an approval apart.
 const approval = "exomecha's reviewer approved this PR. A person reviews and merges it."
 
 func (c *Client) AddApproval(ctx context.Context, number int, summary string) error {
-	return c.AddReview(ctx, number, Note{Worker: "reviewer", Kind: KindApproved}, approval+"\n\n"+summary)
+	return c.AddReview(ctx, number, Note{Worker: "reviewer", Kind: KindApproved}, summary)
+}
+
+// WithoutApproval drops the sentence an older approval starts with.
+func WithoutApproval(body string) string {
+	return strings.TrimPrefix(body, approval+"\n\n")
 }
 
 func isApproval(cm Comment) bool {

@@ -351,17 +351,18 @@ func (r *runs) remove(ctx context.Context, name string) error {
 }
 
 // stuck sends the issue to stuck and keeps what the run printed for the person it goes to.
-func (r *runs) stuck(ctx context.Context, ro role, n int, reason string) error {
+// said is what the AI said about its work, or "".
+func (r *runs) stuck(ctx context.Context, ro role, n int, reason, said string) error {
 	kept := r.keepOutputs(ctx, ro, n, nil)
 	// Stuck goes first. With the run gone and the label as it was, a failed GitHub call would start another run.
-	if err := toStuck(ctx, r.GitHub, n, ro.name, ro.from, ro.back, reason, kept); err != nil {
+	if err := toStuck(ctx, r.GitHub, n, ro.name, ro.from, ro.back, reason, said, kept); err != nil {
 		return err
 	}
 	return r.remove(ctx, r.name(ro, n))
 }
 
 func (r *runs) failed(ctx context.Context, ro role, n int, why string) error {
-	return r.stuck(ctx, ro, n, fmt.Sprintf("The AI's run failed because %s.", why))
+	return r.stuck(ctx, ro, n, fmt.Sprintf("The AI's run failed because %s.", why), "")
 }
 
 // restart removes the run without counting it as a failure. builder's PRD goes back to ready.
@@ -381,7 +382,7 @@ func (r *runs) invalid(ctx context.Context, ro role, prd github.Issue, why strin
 	if err := r.drop(ctx, ro, prd.Number); err != nil {
 		return err
 	}
-	return toStuck(ctx, r.GitHub, prd.Number, ro.name, prd.Status(), ro.back, why, "")
+	return toStuck(ctx, r.GitHub, prd.Number, ro.name, prd.Status(), ro.back, why, "", "")
 }
 
 // drop removes a run its issue no longer needs: one a collect is done with, or one whose issue

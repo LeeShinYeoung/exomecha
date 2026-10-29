@@ -3,7 +3,6 @@ package worker
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -294,8 +293,7 @@ func (e *env) wantApproved(prd, pr int) {
 	}
 	last := p.Reviews[len(p.Reviews)-1]
 	n, text, _ := github.ParseNote(last.Body)
-	if last.Event != "COMMENT" || n != (github.Note{Worker: "reviewer", Kind: github.KindApproved}) ||
-		!strings.HasPrefix(text, "exomecha's reviewer approved this PR.") || !strings.HasSuffix(text, "fine") {
+	if last.Event != "COMMENT" || n != (github.Note{Worker: "reviewer", Kind: github.KindApproved}) || text != "fine" {
 		e.t.Errorf("last review = %+v, want exomecha's approval with the AI's summary", last)
 	}
 }
@@ -404,7 +402,7 @@ func TestReviewerChangesRequeues(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
 	prd, pr, _, name := e.reviewing()
-	e.play(name, nil, `{"verdict": "changes", "body": "rename the function"}`)
+	e.play(name, nil, `{"verdict": "changes", "body": "rename the function", "details": "parse.go: call it parseLine"}`)
 
 	e.review(prd)
 
@@ -413,10 +411,28 @@ func TestReviewerChangesRequeues(t *testing.T) {
 	if p.Merged {
 		t.Error("PR merged despite requested changes")
 	}
-	if len(p.Reviews) != 1 || p.Reviews[0].Body != github.NoteBody(github.Note{Worker: "reviewer", Kind: github.KindChanges}, "rename the function") {
+	want := github.NoteBody(github.Note{Worker: "reviewer", Kind: github.KindChanges},
+		"rename the function\n\n<details>\n<summary>Details</summary>\n\nparse.go: call it parseLine\n\n</details>")
+	if len(p.Reviews) != 1 || p.Reviews[0].Body != want {
 		t.Errorf("reviews = %+v", p.Reviews)
 	}
 	e.wantRemoved(name)
+}
+
+func TestReviewerApprovalFoldsWhatItChecked(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t, map[string]string{"app.txt": "v1\n"})
+	prd, pr, _, name := e.reviewing()
+	e.play(name, nil, `{"verdict": "approve", "body": "Approved. A person merges it.", "details": "checked the edge cases"}`)
+
+	e.review(prd)
+
+	e.wantStatus(prd, label.Approved)
+	want := github.NoteBody(github.Note{Worker: "reviewer", Kind: github.KindApproved},
+		"Approved. A person merges it.\n\n<details>\n<summary>Details</summary>\n\nchecked the edge cases\n\n</details>")
+	if reviews := e.gh.Pull(pr).Reviews; len(reviews) != 1 || reviews[0].Body != want {
+		t.Errorf("reviews = %+v, want the approval with what reviewer checked folded", reviews)
+	}
 }
 
 // The review was of a head that is no longer the PR's. The next round reviews the new head.

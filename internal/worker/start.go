@@ -153,7 +153,7 @@ func (r *runs) start(ctx context.Context, ro role, n int, build func(context.Con
 	cleanup := context.WithoutCancel(ctx)
 	if p != nil {
 		kept := r.keepOutputs(cleanup, ro, n, p.outputs)
-		if err := toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, kept); err != nil {
+		if err := toStuck(cleanup, r.GitHub, n, ro.name, ro.from, ro.back, p.why, "", kept); err != nil {
 			return err
 		}
 		return r.remove(cleanup, name)
