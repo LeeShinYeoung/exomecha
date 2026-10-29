@@ -144,10 +144,16 @@ The tier picks the models that builder, reviewer and resolver run on for the PRD
 
 exomecha reads the Repositories section to know which repositories to put in the sandbox and where to open PRs, so it comes first, with one `- owner/name` item per repository and nothing else in the list.
 
+A person follows the work on GitHub alone. The sections from Summary to Acceptance criteria are for that person: use the words people see on the screen, and give each fact a sentence of its own. The Summary says nothing the sections below it do not. Test scenarios, Context and the Decision ledger are for the workers, so they go inside `<details>`, which GitHub shows folded. Keep the blank line after `</summary>`, or GitHub does not render the Markdown inside.
+
 ```markdown
 ## Repositories
 
 - owner/name
+
+## Summary
+
+(what changes for the user, in one sentence. When it helps, add a table of how it is now and how it will be)
 
 ## Background
 
@@ -174,6 +180,9 @@ exomecha reads the Repositories section to know which repositories to put in the
 - (a result you can see and check)
 - Existing behavior: (what must not break)
 
+<details>
+<summary>Test scenarios, Context, Decision ledger</summary>
+
 ## Test scenarios
 
 - (scenario name)
@@ -192,4 +201,6 @@ exomecha reads the Repositories section to know which repositories to put in the
 
 | Category | Status | Decision | Source or reason |
 |---|---|---|---|
+
+</details>
 ```
