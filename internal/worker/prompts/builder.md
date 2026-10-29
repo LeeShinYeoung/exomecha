@@ -40,9 +40,9 @@ Stop and report stuck instead when:
 
 ## Commit
 
-- When the work is done and the tests pass, commit it with `git commit`. Make one commit in each repository you changed. When you continue an existing PR, add a new commit on top of it.
+- When all the work is done, run the tests once and make them pass. Then commit the changes with `git commit`, split into several commits, one for each part a person can read on its own (for example the data change, the API on it, and the screen that uses it). Do not run the tests again for each commit. A small change stays one commit. When you continue an existing PR, add the new commits on top of it.
 - If a commit check rejects the commit, fix what it reports and commit again. Never skip the checks (`--no-verify`).
-- If the project has commit message rules (in CLAUDE.md, or enforced by a commit check), follow them. Otherwise:
+- If the project has commit message rules (in CLAUDE.md, or enforced by a commit check), follow them. Otherwise, in every commit:
   - First line: `<type>: <summary>`. `type` is one of feat, fix, refactor, test, docs, chore. Write the summary in the same language as the PRD, in 50 characters or fewer, with no period at the end.
   - Add a body after a blank line only when the reason for the change is not obvious. Say why, in 3 lines or fewer.
   - Last line: `PRD: <reference>`, with the reference Run gives for the repository.
