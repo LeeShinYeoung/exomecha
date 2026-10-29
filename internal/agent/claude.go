@@ -1,13 +1,18 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Claude struct{}
+
+const ForegroundLimit = 30 * time.Minute
 
 type Model struct {
 	Name   string
@@ -38,14 +43,23 @@ func ParseModel(s string) (Model, error) {
 
 // Args are the arguments of a worker's claude run. Its output goes to a file that ReadStream reads.
 func Args(instructions, schema string, m Model) []string {
+	settings, _ := json.Marshal(map[string]any{
+		// Commits follow the project's own message rules, without claude's Co-Authored-By line.
+		"attribution": map[string]string{"commit": ""},
+		"env": map[string]string{
+			// A background task that ends after the result wakes claude again, and the run then
+			// ends on a second result line that has no structured output.
+			"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+			"BASH_MAX_TIMEOUT_MS":                  strconv.FormatInt(ForegroundLimit.Milliseconds(), 10),
+		},
+	})
 	return []string{
 		"-p",
 		"--permission-mode", "auto",
 		"--model", m.Name,
 		"--effort", m.Effort,
 		"--append-system-prompt", instructions,
-		// Commits follow the project's own message rules, without claude's Co-Authored-By line.
-		"--settings", `{"attribution":{"commit":""}}`,
+		"--settings", string(settings),
 		"--json-schema", schema,
 		// Partial messages keep the output growing while the model writes a long answer, so a
 		// silent run can be told apart from a busy one.

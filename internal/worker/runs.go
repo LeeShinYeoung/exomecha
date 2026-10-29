@@ -29,8 +29,8 @@ const (
 	// claude's user settings, under the project's own settings.
 	claudeHome = homeDir + "/.claude"
 
-	// A foreground command is capped at 10 minutes, so a run that is working still writes within this.
-	stallAfter = 15 * time.Minute
+	// A command is capped at agent.ForegroundLimit, so a run that is working still writes within this.
+	stallAfter = agent.ForegroundLimit + 5*time.Minute
 
 	// A create takes seconds. The first one may pull sbx's own template, which takes longer.
 	createTimeout = 15 * time.Minute

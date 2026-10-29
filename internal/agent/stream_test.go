@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -89,6 +91,18 @@ func TestReadStreamWithoutStructuredResult(t *testing.T) {
 	}
 }
 
+// A background task that ended after the result woke claude, which wrote a second result.
+func TestReadStreamResumedAfterResult(t *testing.T) {
+	stream := streamDone + `{"type":"result","subtype":"success","is_error":false,"result":"more text"}` + "\n"
+	s, err := ReadStream(strings.NewReader(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Result(); !errors.Is(err, ErrResumed) {
+		t.Errorf("Result error = %v, want ErrResumed", err)
+	}
+}
+
 func TestReadStreamSkipsLinesOfOtherShapes(t *testing.T) {
 	stream := `{"type":"tool_progress","result":{"not":"a string"}}
 ` + streamDone
@@ -112,6 +126,16 @@ func TestArgs(t *testing.T) {
 		if strings.Contains(a, "dangerously") || strings.Contains(a, "bypass") {
 			t.Errorf("args contain %q: %q", a, args)
 		}
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	i := slices.Index(args, "--settings")
+	if i < 0 || i+1 >= len(args) || json.Unmarshal([]byte(args[i+1]), &settings) != nil {
+		t.Fatalf("args %q lack --settings with JSON", args)
+	}
+	if settings.Env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] != "1" || settings.Env["BASH_MAX_TIMEOUT_MS"] != "1800000" {
+		t.Errorf("settings env = %v, want background tasks off and a 30 minute command limit", settings.Env)
 	}
 }
 
