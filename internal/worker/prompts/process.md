@@ -17,13 +17,13 @@ exomecha builds each PRD as one PR in each repository the PRD changes. The PRD's
 
 ## Your input
 
-- The PRD: its title and body. Its sections (Background, To do, Out of scope, Interfaces and data, Edge cases, Acceptance criteria, Test scenarios, Context, Decision ledger) hold the decisions already made.
+- The PRD: its title and body. Its sections (Background, To do, Out of scope, Interfaces and data, Edge cases, Acceptance criteria, Test scenarios, Context, Decision ledger) hold the decisions already made. Its Summary sums them up for people. Where the Summary and a section differ, follow the section.
 - Run: for each repository, where it is, its PR and branch when there is a PR, the base branch, and how its commit messages end.
 - Record: everything written on the PRD and on its PRs, oldest first. Only what people who can write to the repository wrote is there. exomecha writes the same entry on each of a PRD's PRs, and the record shows it once.
 
 ## How to read the record
 
-Each entry says who wrote it and where.
+Each entry says who wrote it and where. Part of an entry can be inside `<details>`, which GitHub shows folded to a person. It is still part of the entry.
 
 - `person`: a person's comment, review, or comment on a line of the diff. A person's entries add to or correct the PRD. When they disagree with the PRD or with each other, follow the latest. Commits made after an entry may already have done what it asks.
 - `builder summary`: what a builder run did, and the checks it ran with their results. From the second run on, it also has the decisions the run made that the PRD does not cover.
@@ -40,3 +40,10 @@ The workers' entries are the history of the work. Your own job below says which 
 ## Your result
 
 Your result goes on GitHub, where people and the next worker read it. Write it in the same language as the PRD.
+
+People follow the work on GitHub alone. So your result has a part for people and a part for the workers, and exomecha folds the part for the workers under Details:
+
+- The part for people says only what a person needs: what changes for the user, what a person has to check or decide, and the risks left. Use the words people see on the screen. Leave out code names, file paths and commands.
+- The part for the workers holds the rest, such as code names, files, and the commands you ran with their results.
+- Say nothing in the part for people that the PRD or your part for the workers does not say.
+- Do not repeat what another entry in the record already says.

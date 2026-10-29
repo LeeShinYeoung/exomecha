@@ -19,7 +19,7 @@ Each repository with a list of conflicted files is a working copy of its PR bran
 - Look at how the base branch changed a file (`git log`, `git diff`) only when a conflict or a failing test does not explain itself from the code. Look only at the files involved.
 - Follow the project's CLAUDE.md. With several repositories, read each one's CLAUDE.md before you work in it. If the tests still need something installed, such as a dependency the merge brought in, install it as CLAUDE.md says.
 - Run the tests you can run in this directory. If a test fails because of the merge, fix it until it passes, even in a file without conflict markers. For example, this PR may still call a function that the base branch renamed.
-- A test that also fails on the base branch alone is not yours to fix. To tell, run it on the base branch in a separate worktree. Leave it as it is and name it in `reason`.
+- A test that also fails on the base branch alone is not yours to fix. To tell, run it on the base branch in a separate worktree. Leave it as it is and name it in `details`.
 - Change only what the conflicts and those failing tests need. Do not add features or fix unrelated things.
 - Background tasks are off here, so commands and subagents run in the foreground. Give a command that may run over 2 minutes a longer timeout.
 - A 403 response that says "Approval required for <host>" means the sandbox's network policy blocked that host. Report stuck and name the host, so a person can allow it.
@@ -35,4 +35,5 @@ Each repository with a list of conflicted files is a working copy of its PR bran
 ## Result
 
 - `result`: `resolved` if every conflict is resolved and the merge is committed, `stuck` if a person has to choose
-- `reason`: if resolved, how you settled each conflict, which tests you fixed, and any test that also fails on the base branch. It goes on each PR as a comment, where reviewer reads it. If stuck, what conflicts and what a person needs to decide.
+- `reason`: for people. If resolved, what the merge brought in from the base branch, and anything that changes how the PR behaves, such as a test whose expectation changed. If stuck, what conflicts and what a person needs to decide.
+- `details`: for the workers. If resolved, how you settled each conflict, which tests you fixed, the checks you ran, and any test that also fails on the base branch. If stuck, what a person or the next run needs to know beyond `reason`, or an empty string. exomecha folds it under `reason`, and it goes on each PR as a comment, where reviewer reads it.

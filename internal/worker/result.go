@@ -26,7 +26,7 @@ func (r *runs) take(ctx context.Context, ro role, n int, repos []repoRun, said s
 	for _, rr := range repos {
 		repo, found := r.repo(rr.Repo)
 		if !found {
-			return nil, false, r.stuck(ctx, ro, n, fmt.Sprintf("The run changed %s, which is no longer one of the repositories exomecha may change, so nothing was pushed.\n\n%s", rr.Repo, said))
+			return nil, false, r.stuck(ctx, ro, n, fmt.Sprintf("The run changed %s, which is no longer one of the repositories exomecha may change, so nothing was pushed.", rr.Repo), said)
 		}
 		// rev-parse exits 1 for an unborn HEAD, which sh would report as an error.
 		out, err := r.sh(ctx, ro, n, rr.Dir, "git rev-parse -q --verify HEAD || true")
@@ -35,7 +35,7 @@ func (r *runs) take(ctx context.Context, ro role, n int, repos []repoRun, said s
 		}
 		// A fetch would fail the same way on every try.
 		if strings.TrimSpace(out) == "" {
-			return nil, false, r.stuck(ctx, ro, n, "The AI left its repository"+rr.where()+" with no commit checked out, so there is nothing to push.\n\n"+said)
+			return nil, false, r.stuck(ctx, ro, n, "The AI left its repository"+rr.where()+" with no commit checked out, so there is nothing to push.", said)
 		}
 		head, err := repo.Git.FetchFrom(ctx, r.Sandboxes.GitURL(name, rr.Dir), name)
 		if err != nil {
@@ -57,7 +57,7 @@ func (r *runs) take(ctx context.Context, ro role, n int, repos []repoRun, said s
 			return nil, false, err
 		}
 		if !kept {
-			return nil, false, r.stuck(ctx, ro, n, "The AI rewrote commits that were already on the branch"+rr.where()+", so they cannot be pushed.\n\n"+said)
+			return nil, false, r.stuck(ctx, ro, n, "The AI rewrote commits that were already on the branch"+rr.where()+", so they cannot be pushed.", said)
 		}
 		heads = append(heads, head)
 	}
@@ -81,7 +81,7 @@ func (r *runs) result(ctx context.Context, ro role, n int, out any) (ok bool, er
 	if err != nil {
 		slog.ErrorContext(ctx, "exomecha could not read the run", logging.Sandbox, name, logging.Err, err)
 		// The AI can write the run's files, so reading them again is not sure to work.
-		return false, r.stuck(ctx, ro, n, fmt.Sprintf("exomecha could not read the run's result: %s. The error is in exomecha's log.", failure))
+		return false, r.stuck(ctx, ro, n, fmt.Sprintf("exomecha could not read the run's result: %s. The error is in exomecha's log.", failure), "")
 	}
 	if failure != "" {
 		return false, r.failed(ctx, ro, n, failure)

@@ -430,14 +430,20 @@ func holds(i github.Issue, status label.Status) bool {
 }
 
 // back is where the person sends the PRD after answering, so it returns to the worker that
-// owns the problem: ready leads back to builder, review leads back to resolver. kept is where the
-// run's output is kept, or "" for none. The comment names the place and never holds the output.
-func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason, kept string) error {
-	body := "This PRD is blocked and needs a person.\n\n" + trimClosingTags(reason)
-	if kept != "" {
-		body += "\n\nThe output of this run is kept on the machine running exomecha, in `" + tilde(kept) + "`."
+// owns the problem: ready leads back to builder, review leads back to resolver. said is what the
+// AI said about its work, or "". kept is where the run's output is kept, or "" for none. The
+// comment names the place and never holds the output.
+func toStuck(ctx context.Context, gh *github.Client, n int, worker string, from, back label.Status, reason, said, kept string) error {
+	body := "This PRD is blocked and needs a person.\n\n" + trimClosingTags(reason) +
+		"\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
+	var details []string
+	if said = trimClosingTags(said); said != "" {
+		details = append(details, said)
 	}
-	body += "\n\nIf there is nothing left to do, close this issue. Otherwise, answer in a comment and relabel it `" + string(back) + "`."
+	if kept != "" {
+		details = append(details, "The output of this run is kept on the machine running exomecha, in `"+tilde(kept)+"`.")
+	}
+	body = github.Fold(body, "Details", strings.Join(details, "\n\n"))
 	if err := gh.AddComment(ctx, n, github.Note{Worker: worker, Kind: github.KindStuck}, body); err != nil {
 		return err
 	}
@@ -458,8 +464,7 @@ func posted(ctx context.Context, gh *github.Client, pr int, n github.Note, text 
 		}
 		said := c.Body
 		if n.Kind == github.KindApproved {
-			// AddApproval puts a sentence of its own, with no blank line in it, before text.
-			_, said, _ = strings.Cut(said, "\n\n")
+			said = github.WithoutApproval(said)
 		}
 		return said == strings.TrimSpace(text), nil
 	}

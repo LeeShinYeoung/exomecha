@@ -18,11 +18,12 @@ const builderSchema = `{
   "properties": {
     "result": {"type": "string", "enum": ["done", "stuck"]},
     "summary": {"type": "string"},
+    "details": {"type": "string"},
     "product_decisions": {"type": "string"},
     "code_decisions": {"type": "string"},
     "stuck_reason": {"type": "string"}
   },
-  "required": ["result", "summary", "product_decisions", "code_decisions", "stuck_reason"],
+  "required": ["result", "summary", "details", "product_decisions", "code_decisions", "stuck_reason"],
   "additionalProperties": false
 }`
 
@@ -202,6 +203,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	var out struct {
 		Result           string `json:"result"`
 		Summary          string `json:"summary"`
+		Details          string `json:"details"`
 		ProductDecisions string `json:"product_decisions"`
 		CodeDecisions    string `json:"code_decisions"`
 		StuckReason      string `json:"stuck_reason"`
@@ -211,7 +213,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	}
 	switch out.Result {
 	case "stuck":
-		return b.runs.stuck(ctx, builderRole, n, out.StuckReason)
+		return b.runs.stuck(ctx, builderRole, n, out.StuckReason, "")
 	case "done":
 	default:
 		return b.runs.failed(ctx, builderRole, n, badResult)
@@ -234,10 +236,10 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 				return err
 			}
 			if changes != "" {
-				return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes"+rr.where()+".\n\n"+out.Summary)
+				return b.runs.stuck(ctx, builderRole, n, "The AI finished without committing its changes"+rr.where()+".", out.Summary)
 			}
 		}
-		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).\n\n"+out.Summary)
+		return b.runs.stuck(ctx, builderRole, n, "Nothing to change (it may already be done).", out.Summary)
 	}
 	// Merging one PR finishes the PRD only when it changes a single repository. With several,
 	// exomecha closes the PRD once all its PRs are merged.
@@ -246,6 +248,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		keyword = "Part of"
 	}
 	note := github.Note{Worker: builderRole.name, Kind: github.KindSummary}
+	summary := github.Fold(out.Summary, "Details", out.Details)
 	var prs []repoWithPR
 	for i, rr := range in.Repos {
 		repo, _ := b.runs.repo(rr.Repo)
@@ -262,7 +265,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 		}
 		if !hasPR && slices.Contains(changed, i) {
 			// The keyword is what makes GitHub link the PR and the PRD to each other.
-			body := fmt.Sprintf("%s %s\n\n%s", keyword, b.ref(repo.Name, n), github.NoteBody(note, out.Summary))
+			body := fmt.Sprintf("%s %s\n\n%s", keyword, b.ref(repo.Name, n), github.NoteBody(note, summary))
 			if pr, err = repo.GitHub.CreatePR(ctx, branch, repo.Git.Base(), prd.Title, body); err != nil {
 				return err
 			}
@@ -277,11 +280,11 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 	// already, which posted reads, so its comment has the decisions alone.
 	decisions := decisionsBody(out.ProductDecisions, out.CodeDecisions)
 	for _, p := range prs {
-		opened, err := posted(ctx, p.repo.GitHub, p.pr, note, out.Summary)
+		opened, err := posted(ctx, p.repo.GitHub, p.pr, note, summary)
 		if err != nil {
 			return err
 		}
-		said, text := note, out.Summary+"\n\n"+decisions
+		said, text := note, summary+"\n\n"+decisions
 		if opened {
 			said, text = github.Note{Worker: builderRole.name, Kind: github.KindDecisions}, decisions
 		}
@@ -303,7 +306,7 @@ func (b *builder) collect(ctx context.Context, prd github.Issue, in inputs) erro
 }
 
 func decisionsBody(product, code string) string {
-	return "### Product decisions\n\n" + orNone(product) + "\n\n### Code decisions\n\n" + orNone(code)
+	return github.Fold("### Product decisions\n\n"+orNone(product), "Code decisions", orNone(code))
 }
 
 // A run that decided nothing still says so, so a person can tell it from a section left empty.

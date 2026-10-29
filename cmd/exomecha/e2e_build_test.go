@@ -11,8 +11,6 @@ import (
 	"github.com/LeeShinYeoung/exomecha/internal/label"
 )
 
-const approvedLine = "exomecha's reviewer approved this PR."
-
 func TestE2EHappyPath(t *testing.T) {
 	e2e(t, true)
 	const grace = 10 * time.Second

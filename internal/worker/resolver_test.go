@@ -173,11 +173,12 @@ func TestResolverReadsThePRAndLeavesHowItResolved(t *testing.T) {
 	wantContains(t, "claude input", e.readCtl(name, "input.md"),
 		fmt.Sprintf("(person, PR #%d, on app.txt line 1)\n\nkeep main's line first", pr))
 
-	e.play(name, resolveWith(t, "main\nfeature\n"), resolverDone)
+	e.play(name, resolveWith(t, "main\nfeature\n"), `{"result": "resolved", "reason": "kept both lines", "details": "app.txt: main's line first"}`)
 	e.resolve(prd)
 
 	comments := e.gh.Pull(pr).Comments
-	want := github.NoteBody(github.Note{Worker: "resolver", Kind: github.KindResolved}, "kept both lines")
+	want := github.NoteBody(github.Note{Worker: "resolver", Kind: github.KindResolved},
+		"kept both lines\n\n<details>\n<summary>Details</summary>\n\napp.txt: main's line first\n\n</details>")
 	if len(comments) != 1 || comments[0].Body != want {
 		t.Errorf("PR comments = %+v, want resolver's reason", comments)
 	}

@@ -15,9 +15,10 @@ const resolverSchema = `{
   "type": "object",
   "properties": {
     "result": {"type": "string", "enum": ["resolved", "stuck"]},
-    "reason": {"type": "string"}
+    "reason": {"type": "string"},
+    "details": {"type": "string"}
   },
-  "required": ["result", "reason"],
+  "required": ["result", "reason", "details"],
   "additionalProperties": false
 }`
 
@@ -162,8 +163,9 @@ func (r *resolver) start(ctx context.Context, prd github.Issue, prs []repoPR) er
 
 func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	var out struct {
-		Result string `json:"result"`
-		Reason string `json:"reason"`
+		Result  string `json:"result"`
+		Reason  string `json:"reason"`
+		Details string `json:"details"`
 	}
 	if ok, err := r.runs.result(ctx, resolverRole, n, &out); err != nil || !ok {
 		return err
@@ -171,7 +173,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	switch out.Result {
 	case "stuck":
 		// Removing the sandbox throws the unfinished merge away.
-		return r.runs.stuck(ctx, resolverRole, n, out.Reason)
+		return r.runs.stuck(ctx, resolverRole, n, out.Reason, out.Details)
 	case "resolved":
 	default:
 		return r.runs.failed(ctx, resolverRole, n, badResult)
@@ -194,7 +196,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 			return err
 		}
 		if wrong != "" {
-			return r.runs.stuck(ctx, resolverRole, n, wrong+"\n\n"+out.Reason)
+			return r.runs.stuck(ctx, resolverRole, n, wrong, out.Reason)
 		}
 	}
 	for i, rr := range merges {
@@ -205,6 +207,7 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 	}
 	// The record shows reviewer and the next workers how the merge was settled.
 	note := github.Note{Worker: resolverRole.name, Kind: github.KindResolved}
+	text := github.Fold(out.Reason, "Details", out.Details)
 	for _, rr := range in.Repos {
 		repo, ok := r.runs.repo(rr.Repo)
 		if !ok {
@@ -217,14 +220,14 @@ func (r *resolver) collect(ctx context.Context, n int, in inputs) error {
 		if !open {
 			continue
 		}
-		already, err := posted(ctx, repo.GitHub, pr, note, out.Reason)
+		already, err := posted(ctx, repo.GitHub, pr, note, text)
 		if err != nil {
 			return err
 		}
 		if already {
 			continue
 		}
-		if err := repo.GitHub.AddComment(ctx, pr, note, out.Reason); err != nil {
+		if err := repo.GitHub.AddComment(ctx, pr, note, text); err != nil {
 			return err
 		}
 	}

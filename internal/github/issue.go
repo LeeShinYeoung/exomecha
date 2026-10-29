@@ -175,6 +175,21 @@ func NoteBody(n Note, body string) string {
 
 func header(worker string) string { return "**exomecha " + worker + "**" }
 
+// Fold puts folded after text, in a block GitHub shows closed under title. The workers read the
+// record as plain text, so they still see all of it.
+func Fold(text, title, folded string) string {
+	text, folded = strings.TrimSpace(text), strings.TrimSpace(folded)
+	if folded == "" {
+		return text
+	}
+	// GitHub renders the Markdown inside the block only after a blank line.
+	block := "<details>\n<summary>" + title + "</summary>\n\n" + folded + "\n\n</details>"
+	if text == "" {
+		return block
+	}
+	return text + "\n\n" + block
+}
+
 // ParseNote reads what NoteBody wrote, or a body that starts with Marker alone. ok is false for a
 // body without either, and text is then body as it is.
 func ParseNote(body string) (n Note, text string, ok bool) {
