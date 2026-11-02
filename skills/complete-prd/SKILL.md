@@ -71,17 +71,21 @@ A PRD leaves out the files and functions to change, line numbers, the commands t
          ```
          gh issue edit <draft number> --title "<title>" --body-file <body file>
          ```
-    2. Explain the plan with an artifact. Publish it with the Artifact tool, following this instruction from the /eli5 skill as is:
+    2. Explain the plan with an HTML artifact on the issue. Follow this instruction from the /eli5 skill as is, but save the HTML to a file outside the repository instead of publishing it with the Artifact tool:
 
        > Explain like I'm someone who knows nothing about this topic, using a HTML artifact with big pictures and few words.
        >
        > Topic: how things work now (ASIS) and how they will work once this PRD is built (TOBE), from the text under its heading
 
-       Then comment only its URL on the issue. Do this before the labels, since builder reads the comments only when it starts.
+       GitHub shows the file in a restricted sandbox, in a panel about 768px wide, and reads each `@name` in it as a mention of that account. So:
+       - Put everything in the file. Do not load scripts, fonts or images from other sites.
+       - Lay it out to fit 768px.
+       - Use no `@` word other than `@media` and `@keyframes`, whose accounts are organizations. `@font-face`, `@charset`, `@page` and `@container` are real people.
+
        ```
-       gh issue comment <PRD number> --body "<artifact URL>"
+       gh api --method POST repos/{owner}/{repo}/issues/<PRD number>/artifacts -f type=embedded_html -f name="ASIS and TOBE" -F body=@<HTML file>
        ```
-       Without the Artifact tool, skip this and tell the person.
+       If this fails, tell the person and go on. No worker reads the artifact, so the PRD does not need it.
     3. For each PRD it is blocked by, attach the blocker. Blockers are attached by **issue ID**, not issue number.
        ```
        BLOCKER_ID=$(gh api repos/{owner}/{repo}/issues/<blocker number> --jq .id)
